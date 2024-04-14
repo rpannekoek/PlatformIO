@@ -13,34 +13,10 @@
 #include <WiFiStateMachine.h>
 #include <HtmlWriter.h>
 #include <Navigation.h>
+#include "Constants.h"
 #include "PersistentData.h"
 #include "EnergyLog.h"
-
-constexpr int DEBUG_BAUDRATE = 115200;
-
-constexpr uint32_t POLL_INTERVAL_DAY = 6;
-constexpr uint32_t POLL_INTERVAL_NIGHT = 5 * SECONDS_PER_MINUTE;
-constexpr int POWER_LOG_AGGREGATIONS = SECONDS_PER_MINUTE / POLL_INTERVAL_DAY;
-constexpr int POWER_LOG_PAGE_SIZE = 50;
-constexpr int MAX_EVENT_LOG_SIZE = 50;
-constexpr int MAX_BAR_LENGTH = 50;
-constexpr int FTP_RETRY_INTERVAL = 15 * SECONDS_PER_MINUTE;
-constexpr int FTP_TIMEOUT_MS = 2000;
-
-constexpr uint8_t NRF_CS_PIN = 3;
-constexpr uint8_t NRF_EN_PIN = 5;
-constexpr uint8_t NRF_IRQ_PIN = 12;
-
-constexpr uint8_t LED_ON = 1;
-constexpr uint8_t LED_OFF = 0;
-
-#define TIMEFRAME_PARAM "timeframe"
-#define INVERTER_PARAM "inverter"
-#define CHANNEL_PARAM "channel"
-
-const char* ContentTypeHtml = "text/html;charset=UTF-8";
-const char* ContentTypeText = "text/plain";
-const char* ButtonClass = "button";
+#include "PowerLog.h"
 
 enum FileId
 {
@@ -443,22 +419,22 @@ bool pollInverters()
 
 void writePowerLogEntriesCsv(Print& output)
 {
-    std::vector<size_t> inverterChannels;
+    std::vector<size_t> dcChannels;
     for (int i = 0; i < Hoymiles.getNumInverters(); i++)
     {
         auto inverterPtr = Hoymiles.getInverterByPos(i);
         if (inverterPtr == nullptr) continue;
         size_t dcChannelCount = inverterPtr->Statistics()->getChannelsByType(TYPE_DC).size();
-        inverterChannels.push_back(dcChannelCount);
+        dcChannels.push_back(dcChannelCount);
     }
 
     PowerLogEntry* powerLogEntryPtr = PowerLog.getEntryFromEnd(powerLogEntriesToSync);
     while (powerLogEntryPtr != nullptr)
     {
         output.print(formatTime("%F %H:%M", powerLogEntryPtr->time));
-        for (int i = 0; i < inverterChannels.size(); i++)
+        for (int i = 0; i < dcChannels.size(); i++)
         {
-            int dcChannelCount = inverterChannels[i];
+            int dcChannelCount = dcChannels[i];
             for (int ch = 0; ch < dcChannelCount; ch++)
                 output.printf(";%0.1f", powerLogEntryPtr->power[i][ch]);            
         }
@@ -999,7 +975,7 @@ void handleHttpPowerLogRequest()
 {
     Tracer tracer(F("handleHttpOpenThermLogRequest"));
 
-    std::vector<size_t> inverterChannels;
+    std::vector<size_t> dcChannels;
 
     Html.writeHeader("Power log", Nav);
     
@@ -1015,12 +991,12 @@ void handleHttpPowerLogRequest()
         auto inverterPtr = Hoymiles.getInverterByPos(i);
         if (inverterPtr == nullptr) continue;
         size_t dcChannelCount = inverterPtr->Statistics()->getChannelsByType(TYPE_DC).size();
-        inverterChannels.push_back(dcChannelCount);
+        dcChannels.push_back(dcChannelCount);
         Html.writeHeaderCell(inverterPtr->name(), dcChannelCount);
     }
     Html.writeRowEnd();
     Html.writeRowStart();
-    for (int dcChannelCount : inverterChannels)
+    for (int dcChannelCount : dcChannels)
         for (int ch = 1; ch <= dcChannelCount; ch++)
             HttpResponse.printf(F("<td>P<sub>dc%d</sub> (W)</td>"), ch);
     Html.writeRowEnd();
@@ -1035,9 +1011,9 @@ void handleHttpPowerLogRequest()
     {
         Html.writeRowStart();
         Html.writeCell(formatTime("%a %H:%M", powerLogEntryPtr->time));
-        for (int i = 0; i < inverterChannels.size(); i++)
+        for (int i = 0; i < dcChannels.size(); i++)
         {
-            int dcChannelCount = inverterChannels[i];
+            int dcChannelCount = dcChannels[i];
             for (int ch = 0; ch < dcChannelCount; ch++)
                 Html.writeCell(powerLogEntryPtr->power[i][ch]);
         }

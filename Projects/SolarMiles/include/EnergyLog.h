@@ -1,8 +1,7 @@
 #include <Log.h>
 #include <TimeUtils.h>
 #include <Tracer.h>
-
-constexpr uint32_t TODAY_LOG_INTERVAL = SECONDS_PER_HOUR / 2;
+#include "Constants.h"
 
 struct EnergyLogEntry
 {
