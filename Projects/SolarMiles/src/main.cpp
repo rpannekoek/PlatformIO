@@ -1,5 +1,5 @@
 #include <Arduino.h>
-#include <math.h>
+#include <ESPCoreDump.h>
 #include <ESPWiFi.h>
 #include <ESPWebServer.h>
 #include <ESPFileSystem.h>
@@ -87,7 +87,7 @@ void handleHttpConfigFormRequest();
 void handleHttpConfigFormPost();
 void handleHttpInvertersFormRequest();
 void handleHttpInvertersFormPost();
-void handleHttpNotFound();
+bool trySyncFTP(Print* printTo);
 
 
 bool addInverter(const char* name, uint64_t serial)
@@ -126,7 +126,6 @@ void removeInverter(int index)
     PowerLog.clear();
 }
 
-
 // Boot code
 void setup() 
 {
@@ -134,6 +133,7 @@ void setup()
     digitalWrite(LED_BUILTIN, LED_ON);
 
     Serial.begin(DEBUG_BAUDRATE);
+    Serial.setDebugOutput(true);
     Serial.println();
 
     #ifdef DEBUG_ESP_PORT
@@ -193,8 +193,6 @@ void setup()
     };
     Nav.registerHttpHandlers(WebServer);
 
-    WebServer.onNotFound(handleHttpNotFound);
-
     WiFiSM.registerStaticFiles(Files, _LastFile);
     WiFiSM.on(WiFiInitState::TimeServerSynced, onTimeServerSynced);
     WiFiSM.on(WiFiInitState::Initialized, onWiFiInitialized);
@@ -246,17 +244,34 @@ void loop()
     WiFiSM.run();
 }
 
-
 void handleSerialRequest()
 {
     Tracer tracer("handleSerialRequest");
-    Serial.setTimeout(10);
+    Serial.setTimeout(100);
 
     String cmd = Serial.readStringUntil('\n');
     cmd.trim();
     Serial.println(cmd);
 
-    if (cmd.startsWith("testF"))
+    if (cmd.startsWith("testC"))
+        writeCoreDump(Serial);
+    else if (cmd.startsWith("testE"))
+    {
+        TRACE("Testing exception...\n");
+        const char* nullPtr = nullptr;
+        Serial.printf("Nullptr: %s\n", nullPtr);
+        TRACE("Done.");
+    }
+    else if (cmd.startsWith("testW"))
+    {
+        TRACE("Testing watchdog...\n");
+        uint64_t i = 0;
+        while (true)
+        {
+            i++;
+        }
+    }
+    else if (cmd.startsWith("testF"))
     {
         for (int i = 0; i < POWER_LOG_SIZE; i++)
         {
@@ -282,6 +297,14 @@ void handleSerialRequest()
                 inverterLogPtr->dcEnergyLogPtrs[0]->update(time, power1);
             if (i > 1)
                 inverterLogPtr->dcEnergyLogPtrs[1]->update(time, power2);
+        }
+    }
+    else if (cmd.startsWith("ftp"))
+    {
+        for (int i = 0; i < 10; i++)
+        {
+            bool success = trySyncFTP(&Serial);
+            TRACE(F("----> %s\n"), success ? "Success" : "Failed");
         }
     }
 }
@@ -353,10 +376,10 @@ bool pollInverters()
             if (startTime > inverterLogPtr->lastUpdateTime)
             {
                 WiFiSM.logEvent(
-                    "%s: %s @ %s",
+                    "%s @ %s: %s",
                     inverterPtr->name(),
-                    logEntry.Message.c_str(),
-                    formatTime("%H:%M", startTime));
+                    formatTime("%H:%M", startTime),
+                    logEntry.Message.c_str());
             }
         }
         inverterLogPtr->lastUpdateTime = currentTime;
@@ -546,7 +569,11 @@ void onWiFiInitialized()
         if (pollInverters())
             pollInterval = POLL_INTERVAL_DAY;
         else if (pollInterval < POLL_INTERVAL_NIGHT)
+        {
             pollInterval = std::min(pollInterval * 2, POLL_INTERVAL_NIGHT);
+            if ((pollInterval == POLL_INTERVAL_NIGHT) && (PersistentData.ftpSyncEntries != 0) && PersistentData.isFTPEnabled())
+                syncFTPTime = currentTime; // Force FTP sync at end of day 
+        }
         Hoymiles.setPollInterval(pollInterval);
         pollInvertersTime = currentTime + pollInterval;
         delay(100); // Ensure LED blink is visible
@@ -1212,11 +1239,4 @@ void handleHttpInvertersFormPost()
     PersistentData.writeToEEPROM();
  
     handleHttpInvertersFormRequest();
-}
-
-
-void handleHttpNotFound()
-{
-    TRACE("Unexpected HTTP request: %s\n", WebServer.uri().c_str());
-    WebServer.send(404, ContentTypeText, "Unexpected request.");
 }

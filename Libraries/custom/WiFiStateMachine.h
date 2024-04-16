@@ -117,6 +117,8 @@ class WiFiStateMachine
         void blinkLED(int tOn, int tOff);
         String getResetReason();
         void scanForBetterAccessPoint();
+        void handleHttpCoreDump();
+        void handleHttpNotFound();
         
 #ifdef ESP8266
         WiFiEventHandler _staDisconnectedEvent; 

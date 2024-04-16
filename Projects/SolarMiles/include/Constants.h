@@ -23,7 +23,7 @@ constexpr int MAX_EVENT_LOG_SIZE = 50;
 constexpr int MAX_BAR_LENGTH = 50;
 
 constexpr int FTP_RETRY_INTERVAL = 15 * SECONDS_PER_MINUTE;
-constexpr int FTP_TIMEOUT_MS = 2000;
+constexpr int FTP_TIMEOUT_MS = 5000;
 
 constexpr uint8_t NRF_CS_PIN = 3;
 constexpr uint8_t NRF_EN_PIN = 5;

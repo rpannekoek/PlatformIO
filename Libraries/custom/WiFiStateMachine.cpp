@@ -3,10 +3,14 @@
 #include <ArduinoOTA.h>
 #include <ESPWiFi.h>
 #include <ESPFileSystem.h>
+#include <ESPCoreDump.h>
 #include <Tracer.h>
+#include <StringBuilder.h>
 
 #ifdef ESP32
     #include <rom/rtc.h>
+    #include <esp_task_wdt.h>
+    constexpr int TASK_WDT_TIMEOUT = 30;
 #else
     #define U_SPIFFS U_FS
 #endif
@@ -17,7 +21,7 @@
 #define MAX_RETRY_INTERVAL_MS 300000U
 
 bool WiFiStateMachine::_staDisconnected = false;
-
+StringBuilder _coreDumpBuilder(256);
 
 // Constructor
 WiFiStateMachine::WiFiStateMachine(WiFiNTP& timeServer, ESPWebServer& webServer, Log<const char>& eventLog)
@@ -75,12 +79,21 @@ void WiFiStateMachine::begin(String ssid, String password, String hostName, uint
 
     logEvent(F("Booted from %s"), getResetReason().c_str());
 
+#ifdef ESP32
+    esp_core_dump_init();
+    esp_task_wdt_init(TASK_WDT_TIMEOUT, true);
+    enableLoopWDT();
+#endif
+
     ArduinoOTA.onStart(
         [this]() 
         {
             TRACE(F("OTA start %d\n"), ArduinoOTA.getCommand());
             if (ArduinoOTA.getCommand() == U_SPIFFS)
                 SPIFFS.end();
+#ifdef ESP32
+            disableLoopWDT();
+#endif                
             setState(WiFiInitState::Updating, true);
         });
 
@@ -105,6 +118,9 @@ void WiFiStateMachine::begin(String ssid, String password, String hostName, uint
 #else
     _staDisconnectedEvent = WiFi.onEvent(WiFiStateMachine::onStationDisconnected, ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
 #endif
+
+    _webServer.on("/coredump", std::bind(&WiFiStateMachine::handleHttpCoreDump, this));
+    _webServer.onNotFound(std::bind(&WiFiStateMachine::handleHttpNotFound, this));
 
     setState(WiFiInitState::Initializing);
 }
@@ -471,6 +487,7 @@ void WiFiStateMachine::run()
 
 void WiFiStateMachine::scanForBetterAccessPoint()
 {
+
     time_t currentTime = getCurrentTime();
     if (currentTime >= _scanAccessPointsTime)
     {
@@ -507,7 +524,7 @@ void WiFiStateMachine::scanForBetterAccessPoint()
         TRACE(F("Found %d Access Points:\n"), scannedAPs);
 
         int8_t bestRSSI = -100;
-        int8_t currentRSSI;
+        int8_t currentRSSI = 0;
         String bestBSSID;
         String currentBSSID = WiFi.BSSIDstr();
 
@@ -626,3 +643,19 @@ void WiFiStateMachine::onStationDisconnected(arduino_event_id_t event, arduino_e
     _staDisconnected = true;
 }
 #endif
+
+
+void WiFiStateMachine::handleHttpCoreDump()
+{
+    Tracer tracer("WiFiStateMachine::handleHttpCoreDump");
+
+    _coreDumpBuilder.clear();
+    writeCoreDump(_coreDumpBuilder);
+    _webServer.send(200, "text/plain", _coreDumpBuilder.c_str());
+}
+
+void WiFiStateMachine::handleHttpNotFound()
+{
+    logEvent("Unexpected HTTP request: %s", _webServer.uri().c_str());
+    _webServer.send(404, "text/plain", "Unexpected request.");
+}

@@ -35,6 +35,7 @@ class WiFiFTPClient
         void setUnexpectedResponse(const char* response = nullptr);
 
     private:
+        int _timeout;
         WiFiClient _controlClient;
         WiFiClient _dataClient;
         String _lastCommand;

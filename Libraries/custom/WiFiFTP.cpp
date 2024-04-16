@@ -4,6 +4,7 @@
 
 WiFiFTPClient::WiFiFTPClient(int timeout)
 {
+    _timeout = timeout;
     _controlClient.setTimeout(timeout);
     _dataClient.setTimeout(timeout);
 
@@ -149,14 +150,14 @@ int WiFiFTPClient::sendCommand(String cmd, const char* arg, bool awaitResponse)
     _lastCommand = cmd;
     if (arg != nullptr)
     {
-        _lastCommand += " ";
-        _lastCommand += arg;
+        cmd += " ";
+        cmd += arg;
     }
 
     if (_printPtr != nullptr)
-        _printPtr->println(_lastCommand);
+        _printPtr->println(cmd);
 
-    _controlClient.println(_lastCommand);
+    _controlClient.println(cmd);
 
     return awaitResponse ? readServerResponse() : 0;
 }
@@ -170,6 +171,20 @@ int WiFiFTPClient::readServerResponse(char* responseBuffer, size_t responseBuffe
     {
         responseBuffer = _responseBuffer;
         responseBufferSize = sizeof(_responseBuffer);
+    }
+
+    // Work-around for hangs on ESP32S2 (?)
+    int waitedMs = 0;
+    while (!_controlClient.available())
+    {
+        delay(10);
+        waitedMs += 10;
+        if (waitedMs >= _timeout)
+        {
+            TRACE(F("Timeout\n"));
+            responseBuffer[0] = 0;
+            return FTP_ERROR_TIMEOUT;
+        }
     }
 
     size_t bytesRead = _controlClient.readBytesUntil('\n', responseBuffer, responseBufferSize - 1);
