@@ -78,6 +78,7 @@ void WiFiStateMachine::begin(String ssid, String password, String hostName, uint
     _resetTime = 0;
 
     logEvent(F("Booted from %s"), getResetReason().c_str());
+    logEvent(F("CPU @ %d MHz"), ESP.getCpuFreqMHz());
 
 #ifdef ESP32
     esp_core_dump_init();
