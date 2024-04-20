@@ -205,8 +205,8 @@ void setup()
     Hoymiles.init();
     Hoymiles.setPollInterval(pollInterval);
 
-    NRFSPI.begin(SCK, MISO, MOSI, NRF_CS_PIN);
-    Hoymiles.initNRF(&NRFSPI, NRF_EN_PIN, NRF_IRQ_PIN);
+    NRFSPI.begin(NRF_SCK, NRF_MISO, NRF_MOSI, NRF_CS_PIN);
+    Hoymiles.initNRF(&NRFSPI, NRF_CE_PIN, NRF_IRQ_PIN);
     HoymilesRadio_NRF* nrfRadioPtr = Hoymiles.getRadioNrf();
     if (nrfRadioPtr->isConnected())
     {
@@ -363,26 +363,29 @@ bool pollInverters()
 
         AlarmLogParser* inverterEventLogPtr = inverterPtr->EventLog();
         TRACE(
-            "\t%d events in alarm log. Inverter last update: %s\n",
+            "\t%d events in alarm log. Last processed event: %s\n",
             inverterEventLogPtr->getEntryCount(),
-            formatTime("%F %H:%M:%S", inverterLogPtr->lastUpdateTime));
+            formatTime("%F %H:%M:%S", inverterLogPtr->lastEventTime));
         time_t startOfDay = getStartOfDay(currentTime);
+        time_t lastEventTime = 0;
         for (int i = 0; i < inverterEventLogPtr->getEntryCount(); i++)
         {
             AlarmLogEntry_t logEntry;
             inverterEventLogPtr->getLogEntry(i, logEntry);
             time_t startTime = logEntry.StartTime + startOfDay;
             TRACE(F("\t%s - %s\n"), formatTime("%F %H:%M:%S", startTime), logEntry.Message.c_str());
-            if (startTime > inverterLogPtr->lastUpdateTime)
+            if ((startTime > inverterLogPtr->lastEventTime) && (startTime <= currentTime))
             {
                 WiFiSM.logEvent(
                     "%s @ %s: %s",
                     inverterPtr->name(),
                     formatTime("%H:%M", startTime),
                     logEntry.Message.c_str());
+                lastEventTime = std::max(lastEventTime, startTime);
             }
         }
-        inverterLogPtr->lastUpdateTime = currentTime;
+        if (lastEventTime != 0)
+            inverterLogPtr->lastEventTime = lastEventTime;
 
         if (!inverterPtr->isProducing())
         {
