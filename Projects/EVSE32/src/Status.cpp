@@ -91,7 +91,7 @@ StatusLED::StatusLED(int8_t pin)
 {
     _ledStrand.rmtChannel = 0;
     _ledStrand.gpioNum = pin;
-    _ledStrand.ledType = LED_SK6812_V1;
+    _ledStrand.ledType = LED_WS2812B_V3;
     _ledStrand.brightLimit = 255;
     _ledStrand.numPixels = 1;
 }
