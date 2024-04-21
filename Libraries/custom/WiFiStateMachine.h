@@ -42,7 +42,9 @@ class WiFiStateMachine
         void begin(String ssid, String password, String hostName, uint32_t reconnectInterval = 60);
         void run();
         void reset();
+        void forceReconnect();
 
+        void traceDiag();
         void logEvent(String format, ...);
         void logEvent(const char* msg);
         time_t getCurrentTime();
@@ -123,9 +125,6 @@ class WiFiStateMachine
 #ifdef ESP8266
         WiFiEventHandler _staDisconnectedEvent; 
         static void onStationDisconnected(const WiFiEventStationModeDisconnected& evt);
-#elif defined(ESP32V1)
-        wifi_event_id_t _staDisconnectedEvent;
-        static void onStationDisconnected(system_event_id_t event, system_event_info_t info);
 #else
         wifi_event_id_t _staDisconnectedEvent;
         static void onStationDisconnected(arduino_event_id_t event, arduino_event_info_t info);

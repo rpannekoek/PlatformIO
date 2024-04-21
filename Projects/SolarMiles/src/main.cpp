@@ -253,25 +253,7 @@ void handleSerialRequest()
     cmd.trim();
     Serial.println(cmd);
 
-    if (cmd.startsWith("testC"))
-        writeCoreDump(Serial);
-    else if (cmd.startsWith("testE"))
-    {
-        TRACE("Testing exception...\n");
-        const char* nullPtr = nullptr;
-        Serial.printf("Nullptr: %s\n", nullPtr);
-        TRACE("Done.");
-    }
-    else if (cmd.startsWith("testW"))
-    {
-        TRACE("Testing watchdog...\n");
-        uint64_t i = 0;
-        while (true)
-        {
-            i++;
-        }
-    }
-    else if (cmd.startsWith("testF"))
+    if (cmd.startsWith("testF"))
     {
         for (int i = 0; i < POWER_LOG_SIZE; i++)
         {
@@ -306,6 +288,11 @@ void handleSerialRequest()
             bool success = trySyncFTP(&Serial);
             TRACE(F("----> %s\n"), success ? "Success" : "Failed");
         }
+    }
+    else if (cmd.startsWith("wifi"))
+    {
+        WiFiSM.traceDiag();
+        WiFiSM.forceReconnect();
     }
 }
 
