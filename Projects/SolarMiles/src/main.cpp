@@ -142,7 +142,7 @@ void setup()
     #endif
 
     PersistentData.begin();
-    TimeServer.NTPServer = PersistentData.ntpServer;
+    TimeServer.begin(PersistentData.ntpServer);
     Html.setTitlePrefix(PersistentData.hostName);
     
     Nav.menuItems =

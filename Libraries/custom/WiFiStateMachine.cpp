@@ -16,10 +16,9 @@
     #define U_SPIFFS U_FS
 #endif
 
-#define CONNECT_TIMEOUT_MS 10000
-#define NTP_TIMEOUT_MS 5000
-#define NTP_RETRY_INTERVAL_MS 10000
-#define MAX_RETRY_INTERVAL_MS 300000U
+constexpr uint32_t CONNECT_TIMEOUT_MS = 10000;
+constexpr uint32_t MIN_RETRY_INTERVAL_MS = 5000;
+constexpr uint32_t MAX_RETRY_INTERVAL_MS = 300000;
 
 bool WiFiStateMachine::_staDisconnected = false;
 StringBuilder _coreDumpBuilder(256);
@@ -74,9 +73,9 @@ void WiFiStateMachine::begin(String ssid, String password, String hostName, uint
     _ssid = ssid;
     _password = password;
     _hostName = hostName;
-    _retryInterval = 5000; // Start exponential backoff with 5 seconds
+    _retryInterval = MIN_RETRY_INTERVAL_MS;
     _isTimeServerAvailable = false;
-    _resetTime = 0;
+    _resetMillis = 0;
 
     logEvent(F("Booted from %s"), getResetReason().c_str());
     logEvent(F("CPU @ %d MHz"), ESP.getCpuFreqMHz());
@@ -298,6 +297,15 @@ void WiFiStateMachine::run()
     wl_status_t wifiStatus = WiFi.status();
     String event;
 
+    if ((_ledBlinkInterval != 0) && (currentMillis >= _ledBlinkMillis))
+    {
+        _ledBlinkMillis = currentMillis + _ledBlinkInterval;
+        uint8_t ledState = digitalRead(LED_BUILTIN);
+        if (_ledBlinkMillis == 0)
+            _ledInitState = ledState;
+        digitalWrite(LED_BUILTIN, ledState ^ 1);
+    }
+
     // First trigger custom handler (if any)
     void (*handler)(void) = _handlers[static_cast<int>(_state)]; 
     if (handler != nullptr) handler();
@@ -322,6 +330,7 @@ void WiFiStateMachine::run()
             break;
 
         case WiFiInitState::AwaitingConnection:
+            blinkLED(1000);
             if (WiFi.softAPgetStationNum() > 0)
             {
                 traceDiag();
@@ -329,11 +338,10 @@ void WiFiStateMachine::run()
                 // Skip actual time server sync (no internet access), but still trigger TimeServerSynced event.
                 setState(WiFiInitState::TimeServerSynced);
             }
-            else
-                blinkLED(400, 100);
             break;
 
         case WiFiInitState::Connecting:
+            blinkLED(300);
             if (wifiStatus == WL_CONNECTED)
                 setState(WiFiInitState::Connected);
             else if (wifiStatus == WL_CONNECT_FAILED)
@@ -404,6 +412,7 @@ void WiFiStateMachine::run()
             break;
 
         case WiFiInitState::SwitchingAP:
+            blinkLED(300);
             if (_staDisconnected || currentStateMillis > CONNECT_TIMEOUT_MS)
             {
                 _staDisconnected = false;
@@ -418,8 +427,6 @@ void WiFiStateMachine::run()
                 _retryInterval = std::min(_retryInterval * 2, MAX_RETRY_INTERVAL_MS);
                 setState(WiFiInitState::Initializing);
             }
-            else
-                blinkLED(500, 500);
             break;
 
         case WiFiInitState::Connected:
@@ -433,43 +440,26 @@ void WiFiStateMachine::run()
             break;
 
         case WiFiInitState::TimeServerInitializing:
-            if (_timeServer.beginGetServerTime())
-                setState(WiFiInitState::TimeServerSyncing);
-            else
-                setState(WiFiInitState::TimeServerSyncFailed);
+            blinkLED(500);
+            _timeServer.beginGetServerTime(); // Ensure SNTP is initialized
+            setState(WiFiInitState::TimeServerSyncing);
             break;
 
         case WiFiInitState::TimeServerSyncing:
             _initTime = _timeServer.endGetServerTime(); 
-            if (_initTime == 0)
+            if (_initTime != 0)
             {
-                if (currentStateMillis >= NTP_TIMEOUT_MS)
-                {
-                    TRACE(F("Timeout waiting for NTP server response\n"));
-                    setState(WiFiInitState::TimeServerSyncFailed);
-                }
-            }
-            else
-            {
+                logEvent(F("Time synchronized using NTP server: %s"), _timeServer.NTPServer);
                 _isTimeServerAvailable = true;
                 setState(WiFiInitState::TimeServerSynced);
             }
             break;
         
-        case WiFiInitState::TimeServerSyncFailed:
-            if (currentStateMillis >= NTP_RETRY_INTERVAL_MS)
-                setState(WiFiInitState::TimeServerInitializing);
-            else
-                blinkLED(250, 250);
-            break;
-
         case WiFiInitState::TimeServerSynced:
-            if (_isTimeServerAvailable)
-            {
-                logEvent(F("Time synchronized using NTP server: %s"), _timeServer.NTPServer);
-                if (_scanAccessPointsInterval > 0)
-                    _scanAccessPointsTime = getCurrentTime() + _scanAccessPointsInterval;
-            }
+            blinkLED(0);
+            logEvent(F("WiFi initialized"));
+            if (!_isInAccessPointMode && (_scanAccessPointsInterval > 0))
+                _scanAccessPointsTime = getCurrentTime() + _scanAccessPointsInterval;
             setState(WiFiInitState::Initialized);
             break;
 
@@ -507,7 +497,7 @@ void WiFiStateMachine::run()
     else
         delay(100);
 
-    if ((_resetTime > 0) && (currentMillis >= _resetTime))
+    if ((_resetMillis > 0) && (currentMillis >= _resetMillis))
     {
         TRACE(F("Resetting...\n"));
         ESP.restart();
@@ -594,15 +584,14 @@ void WiFiStateMachine::scanForBetterAccessPoint()
 
 void WiFiStateMachine::reset()
 {
-    _resetTime = millis() + 1000;
+    _resetMillis = millis() + 1000;
 }
 
-void WiFiStateMachine::blinkLED(int tOn, int tOff)
+void WiFiStateMachine::blinkLED(uint32_t interval)
 {
-    digitalWrite(LED_BUILTIN, 0);
-    delay(tOn);
-    digitalWrite(LED_BUILTIN, 1);
-    delay(tOff);
+    _ledBlinkInterval = interval;
+    if (interval == 0)
+        digitalWrite(LED_BUILTIN, _ledInitState);
 }
 
 

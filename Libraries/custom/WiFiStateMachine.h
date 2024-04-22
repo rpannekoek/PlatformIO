@@ -19,7 +19,7 @@ enum struct WiFiInitState
     Connected = 8,
     TimeServerInitializing = 9,
     TimeServerSyncing = 10,
-    TimeServerSyncFailed = 11,
+    TimeServerSyncFailed = 11, // Legacy state; no longer used
     TimeServerSynced = 12,
     Initialized = 13,
     Updating = 14
@@ -96,8 +96,11 @@ class WiFiStateMachine
         uint32_t _scanAccessPointsInterval = 0;
         uint32_t _switchAccessPointDelay;
         int8_t _rssiThreshold;
+        uint8_t _ledInitState;
         uint32_t _retryInterval;
-        uint32_t _resetTime = 0;
+        uint32_t _ledBlinkInterval = 0;
+        uint32_t _ledBlinkMillis = 0;
+        uint32_t _resetMillis = 0;
         time_t _initTime = 0;
         time_t _actionPerformedTime = 0;
         String _ssid;
@@ -116,7 +119,7 @@ class WiFiStateMachine
         void initializeAP();
         void initializeSTA();
         void setState(WiFiInitState newState, bool callHandler = false);
-        void blinkLED(int tOn, int tOff);
+        void blinkLED(uint32_t interval);
         String getResetReason();
         void scanForBetterAccessPoint();
         void handleHttpCoreDump();

@@ -1,69 +1,21 @@
 #include <WiFiNTP.h>
-#include <ESPWiFi.h>
-#include <Arduino.h>
 #include <Tracer.h>
-#include <sntp.h>
 
-WiFiNTP* _instancePtr = nullptr;
-
-void _settimeofday_callback()
+bool WiFiNTP::begin(const char* ntpServer, const char* timezone)
 {
-    if (_instancePtr != nullptr)
-        _instancePtr->onServerTimeReceived();
-}
+    Tracer tracer(F("WiFiNTP::begin"), ntpServer);
 
 #ifdef ESP8266
-#include <coredecls.h>  // settimeofday_cb()
-#else 
-void _sntp_sync_time_cb(timeval* tv)
-{
-    _settimeofday_callback();
-}
-#endif
-
-
-// Constructor
-WiFiNTP::WiFiNTP()
-{
-    _serverSyncInterval = 0;
-}
-
-// Constructor
-WiFiNTP::WiFiNTP(int serverSyncInterval)
-{
-    _serverSyncInterval = serverSyncInterval;
-}
-
-// Constructor
-WiFiNTP::WiFiNTP(const char* ntpServer, int serverSyncInterval)
-{
-    NTPServer = ntpServer;
-    _serverSyncInterval = serverSyncInterval;
-}
-
-
-void WiFiNTP::initialize()
-{
-    Tracer tracer(F("WiFiNTP::initialize"));
-    _instancePtr = this;
-    // TODO: use _serverSyncInterval
-    // sntp_set_update_delay(_serverSyncInterval * 1000);
-#ifdef ESP8266
-    settimeofday_cb(_settimeofday_callback);
-    configTime(timeZone, NTPServer);
+    configTime(timezone, ntpServer);
 #else
-    sntp_set_time_sync_notification_cb(_sntp_sync_time_cb);
-    configTzTime(timeZone, NTPServer);
+    if (timezone == nullptr)
+        timezone = "CET-1CEST,M3.5.0,M10.5.0/3"; // Amsterdam TZ        
+    configTzTime(timezone, ntpServer);
 #endif
+
+    NTPServer = ntpServer;
     _isInitialized = true;
-}
-
-
-void WiFiNTP::onServerTimeReceived()
-{
-    Tracer tracer(F("WiFiNTP::onServerTimeReceived"));
-
-    _serverTimeReceived = true;
+    return true;
 }
 
 
@@ -71,18 +23,16 @@ bool WiFiNTP::beginGetServerTime()
 {
     Tracer tracer(F("WiFiNTP::beginGetServerTime"));
 
-    if (!_isInitialized)
-    {
-        initialize();
-    }
-
-    return true;
+    return _isInitialized
+        ? true
+        : begin(NTPServer); // For backwards compatibility
 }
 
 
 time_t WiFiNTP::endGetServerTime()
 {
-    return _serverTimeReceived ? time(nullptr) : (time_t)0;
+    time_t currentTime = time(nullptr);
+    return (currentTime < 100000) ? (time_t)0 : currentTime;
 }
 
 
