@@ -237,8 +237,6 @@ void loop()
     if (Serial.available())
         handleSerialRequest();
 
-    Hoymiles.loop();
-
     // Let WiFi State Machine handle initialization and web requests
     // This also calls the onXXX methods below
     WiFiSM.run();
@@ -553,6 +551,10 @@ void onTimeServerSynced()
 
 void onWiFiInitialized()
 {
+    // Run the Hoymiles loop only after we obtained NTP time,
+    // because an (Epoch) timestamp is included in the messages.
+    Hoymiles.loop();
+
     if (currentTime >= pollInvertersTime)
     {
         digitalWrite(LED_BUILTIN, LED_ON);
