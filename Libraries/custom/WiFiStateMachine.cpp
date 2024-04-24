@@ -456,7 +456,6 @@ void WiFiStateMachine::run()
             break;
         
         case WiFiInitState::TimeServerSynced:
-            blinkLED(0);
             logEvent(F("WiFi initialized"));
             if (!_isInAccessPointMode && (_scanAccessPointsInterval > 0))
                 _scanAccessPointsTime = getCurrentTime() + _scanAccessPointsInterval;
@@ -464,6 +463,7 @@ void WiFiStateMachine::run()
             break;
 
         case WiFiInitState::Initialized:
+            blinkLED(0);
             if (!_isInAccessPointMode && (_staDisconnected || (wifiStatus != WL_CONNECTED)))
             {
                 logEvent(F("WiFi connection lost"));
@@ -587,11 +587,12 @@ void WiFiStateMachine::reset()
     _resetMillis = millis() + 1000;
 }
 
+
 void WiFiStateMachine::blinkLED(uint32_t interval)
 {
-    _ledBlinkInterval = interval;
-    if (interval == 0)
+    if ((interval == 0) && (_ledBlinkInterval != 0))
         digitalWrite(LED_BUILTIN, _ledInitState);
+    _ledBlinkInterval = interval;
 }
 
 
