@@ -87,6 +87,7 @@ void handleHttpConfigFormRequest();
 void handleHttpConfigFormPost();
 void handleHttpInvertersFormRequest();
 void handleHttpInvertersFormPost();
+void handleHttpGridProfileRequest();
 bool trySyncFTP(Print* printTo);
 
 
@@ -192,6 +193,8 @@ void setup()
         },
     };
     Nav.registerHttpHandlers(WebServer);
+
+    WebServer.on("/gridprofile",handleHttpGridProfileRequest);
 
     WiFiSM.registerStaticFiles(Files, _LastFile);
     WiFiSM.on(WiFiInitState::TimeServerSynced, onTimeServerSynced);
@@ -1153,7 +1156,9 @@ void handleHttpInvertersFormRequest()
             inverterSerial,
             registeredInverter.name,
             MAX_INVERTER_NAME_LENGTH - 1);
-        Html.writeCell(inverterType);
+        HttpResponse.printf(
+            F("<td><a href='/gridprofile?inverter=%d'>%s</a></td>"),
+            i, inverterType.c_str());
         Html.writeCell(maxPower);
         Html.writeCell(limitPercent);
         Html.writeRowEnd();
@@ -1231,4 +1236,41 @@ void handleHttpInvertersFormPost()
     PersistentData.writeToEEPROM();
  
     handleHttpInvertersFormRequest();
+}
+
+
+void handleHttpGridProfileRequest()
+{
+    Tracer tracer("handleHttpGridProfileRequest");
+
+    int inverter = WebServer.hasArg("inverter") ? WebServer.arg("inverter").toInt() : 0;
+
+    Html.writeHeader("Grid Profile", Nav);
+
+    auto inverterPtr = Hoymiles.getInverterByPos(inverter);
+    if (inverterPtr != nullptr)
+    {
+        GridProfileParser* gridProfilePtr = inverterPtr->GridProfile();
+        Html.writeHeading(gridProfilePtr->getProfileName(), 2);
+        Html.writeTableStart();
+        for (GridProfileSection_t& section : gridProfilePtr->getProfile())
+        {
+            Html.writeRowStart("grid-profile-section");
+            Html.writeHeaderCell(section.SectionName, 2);
+            Html.writeRowEnd();
+
+            for (GridProfileItem_t item : section.items)
+            {
+                if (item.Unit.equals("bool"))
+                    Html.writeRow(item.Name, "%s", (item.Value == 0) ? "no" : "yes");
+                else
+                    Html.writeRow(item.Name, "%0.1f %s", item.Value, item.Unit.c_str());
+            }
+        }
+        Html.writeTableEnd();
+    }
+
+    Html.writeFooter();
+
+    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
