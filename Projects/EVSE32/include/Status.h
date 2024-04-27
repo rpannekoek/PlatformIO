@@ -1,4 +1,4 @@
-#include <esp32_digital_led_lib.h>
+#include <LED.h>
 #include <Ticker.h>
 
 enum EVSEState
@@ -17,24 +17,26 @@ enum EVSEState
 extern const char* EVSEStateNames[];
 extern const char* EVSEStateColors[];
 
-class StatusLED
+struct LEDColor
+{
+    uint8_t red;
+    uint8_t green;
+    uint8_t blue;
+    uint8_t breathe;
+};
+
+class StatusLED : public RGBLED
 {
     public:
-
-        StatusLED(int8_t pin);
-
-        bool begin();
-
-        bool setColor(pixelColor_t color);
+        StatusLED(uint8_t pin);
         bool setStatus(EVSEState status);
 
     private:
-        static pixelColor_t _statusColors[];
+        static LEDColor _statusColors[];
         static float _breatheTable[];
+        LEDColor _statusColor;
         Ticker _breatheTicker;
         int _breatheIndex;
-        strand_t _ledStrand;
-        pixelColor_t _statusColor;
 
         static void breathe(StatusLED* instancePtr);
         void breathe();

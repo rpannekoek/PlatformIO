@@ -42,7 +42,7 @@ constexpr uint8_t RELAY_START_PIN = 13;
 constexpr uint8_t RELAY_ON_PIN = 11;
 constexpr uint8_t CURRENT_SENSE_PIN = 4;
 constexpr uint8_t VOLTAGE_SENSE_PIN = 2;
-constexpr uint8_t RGB_LED_PIN = 35;
+constexpr uint8_t EXTERNAL_RGBLED_PIN = 35;
 constexpr uint8_t CP_OUTPUT_PIN = 18;
 constexpr uint8_t CP_INPUT_PIN = 10;
 constexpr uint8_t CP_FEEDBACK_PIN = 16;
@@ -52,7 +52,7 @@ constexpr uint8_t RELAY_START_PIN = 12;
 constexpr uint8_t RELAY_ON_PIN = 13;
 constexpr uint8_t CURRENT_SENSE_PIN = 34;
 constexpr uint8_t VOLTAGE_SENSE_PIN = 32;
-constexpr uint8_t RGB_LED_PIN = 17;
+constexpr uint8_t EXTERNAL_RGBLED_PIN = 17;
 constexpr uint8_t CP_OUTPUT_PIN = 15;
 constexpr uint8_t CP_INPUT_PIN = 33;
 constexpr uint8_t CP_FEEDBACK_PIN = 16;
@@ -62,7 +62,7 @@ constexpr uint8_t TEMP_SENSOR_PIN = 14;
 #ifdef DEBUG_ESP_PORT
 constexpr uint8_t STATUS_LED_PIN = LED_BUILTIN;
 #else
-constexpr uint8_t STATUS_LED_PIN = RGB_LEB_PIN;
+constexpr uint8_t STATUS_LED_PIN = EXTERNAL_RGBLED_PIN;
 #endif
 
 constexpr float ZERO_CURRENT_THRESHOLD = 0.2;
@@ -771,13 +771,10 @@ void test(String message)
     }
     else if (message.startsWith("testL"))
     {
-        for (int i = 0; i < 5; i++)
+        for (int j = 0; j < 8; j++)
         {
-            for (int j = 0; j < 8; j++)
-            {
-                StateLED.setStatus(static_cast<EVSEState>(j));
-                delay(1000);
-            }
+            StateLED.setStatus(static_cast<EVSEState>(j));
+            delay(2000);
         }
     }
     else if (message.startsWith("testR"))

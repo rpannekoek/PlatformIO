@@ -1,18 +1,18 @@
 #include <Tracer.h>
 #include "Status.h"
 
-#define BLACK pixelFromRGB(0, 0, 0)
-#define BLUE pixelFromRGB(0, 0, 255)
-#define GREEN pixelFromRGB(0, 255, 0)
-#define GREEN_BREATHE pixelFromRGBW(0, 255, 0, 1)
-#define CYAN pixelFromRGB(0, 255, 255)
-#define RED pixelFromRGB(255, 0, 0)
-#define MAGENTA pixelFromRGB(255, 0, 255)
-#define YELLOW pixelFromRGB(255, 255, 0)
-#define YELLOW_BREATHE pixelFromRGBW(255, 255, 0, 2)
-#define ORANGE pixelFromRGB(255, 165, 0)
-#define ORANGE_BREATHE pixelFromRGBW(255, 165, 0, 2)
-#define WHITE pixelFromRGB(255, 255, 255)
+#define BLACK LEDColor { .red = 0, .green = 0, .blue = 0, .breathe = 0 }
+#define BLUE LEDColor { .red = 0, .green = 0, .blue = 255, .breathe = 0 }
+#define GREEN LEDColor { .red = 0, .green = 255, .blue = 0, .breathe = 0 }
+#define GREEN_BREATHE LEDColor { .red = 0, .green = 255, .blue = 0, .breathe = 1 }
+#define CYAN LEDColor { .red = 0, .green = 255, .blue = 255, .breathe = 0 }
+#define RED LEDColor { .red = 255, .green = 0, .blue = 0, .breathe = 0 }
+#define MAGENTA LEDColor { .red = 255, .green = 0, .blue = 255, .breathe = 0 }
+#define YELLOW LEDColor { .red = 255, .green = 255, .blue = 0, .breathe = 0 }
+#define YELLOW_BREATHE { .red = 255, .green = 255, .blue = 0, .breathe = 2 }
+#define ORANGE { .red = 255, .green = 165, .blue = 0, .breathe = 0 }
+#define ORANGE_BREATHE { .red = 255, .green = 165, .blue = 0, .breathe = 2 }
+#define WHITE { .red = 255, .green = 255, .blue = 255, .breathe = 0 }
 
 #define BREATHE_INTERVAL 0.1F
 #define BREATHE_STEPS 48
@@ -44,7 +44,7 @@ const char* EVSEStateColors[] =
     [EVSEState::ChargeCompleted] = "black"
 };
 
-pixelColor_t StatusLED::_statusColors[] =
+LEDColor StatusLED::_statusColors[] =
 {
     [EVSEState::Booting] = BLUE,
     [EVSEState::SelfTest] = MAGENTA,
@@ -87,59 +87,9 @@ float StatusLED::_breatheTable[] =
 };
 
 
-StatusLED::StatusLED(int8_t pin)
+StatusLED::StatusLED(uint8_t pin)
+    : RGBLED(pin)
 {
-    _ledStrand.rmtChannel = 0;
-    _ledStrand.gpioNum = pin;
-    _ledStrand.ledType = LED_WS2812B_V3;
-    _ledStrand.brightLimit = 255;
-    _ledStrand.numPixels = 1;
-}
-
-
-bool StatusLED::begin()
-{
-    Tracer tracer(F("StatusLED::begin"));
-
-    pinMode(_ledStrand.gpioNum, OUTPUT);
-
-    int rc = digitalLeds_initDriver();
-    if (rc != ESP_OK)
-    {
-        TRACE(F("digitalLeds_initDriver returned %d\n"), rc);
-        return false;
-    }
-
-    strand_t* ledStrands[] = { &_ledStrand };
-    rc = digitalLeds_addStrands(ledStrands, 1);
-    if (rc != ESP_OK)
-    {
-        TRACE(F("digitalLeds_addStrands returned %d\n"), rc);
-        return false;
-    }
-   
-    return setStatus(EVSEState::Booting);
-}
-
-
-bool StatusLED::setColor(pixelColor_t color)
-{
-    //TRACE(F("StatusLED::setColor(%d, %d, %d)\n"), color.r, color.g, color.b);
-
-    pixelColor_t& pixel = _ledStrand.pixels[0]; 
-    pixel.r = color.g; // NOTE: Red & Green are swapped
-    pixel.g = color.r;
-    pixel.b = color.b;
-
-    strand_t* ledStrands[] = { &_ledStrand };
-    int rc = digitalLeds_drawPixels(ledStrands, 1);
-    if (rc != 0)
-    {
-        TRACE(F("digitalLeds_drawPixels returned %d\n"), rc);
-        return false;
-    }
-
-    return true;
 }
 
 
@@ -148,16 +98,19 @@ bool StatusLED::setStatus(EVSEState status)
     Tracer tracer(F("StatusLED::setStatus"), EVSEStateNames[status]);
 
     _statusColor = _statusColors[status];
+    TRACE(
+        F("R=%d G=%d B=%d Breathe=%d\n"),
+        _statusColor.red, _statusColor.green, _statusColor.blue, _statusColor.breathe);
 
-    if (_statusColor.w != 0)
+    if (_statusColor.breathe != 0)
     {
         _breatheIndex = 0;
-        _breatheTicker.attach(BREATHE_INTERVAL / _statusColor.w, breathe, this);
+        _breatheTicker.attach(BREATHE_INTERVAL / _statusColor.breathe, breathe, this);
     }
     else
         _breatheTicker.detach();
 
-    return setColor(_statusColor);
+    return setColor(_statusColor.red, _statusColor.green, _statusColor.blue);
 }
 
 
@@ -171,9 +124,8 @@ void StatusLED::breathe()
 {
     int i = (_breatheIndex <= BREATHE_STEPS / 2) ? _breatheIndex : BREATHE_STEPS - _breatheIndex;
     float f = _breatheTable[i];
-    pixelColor_t breatheColor = pixelFromRGB(f * _statusColor.r, f * _statusColor.g, f * _statusColor.b);
 
-    setColor(breatheColor);
+    setColor(f * _statusColor.red, f * _statusColor.green, f * _statusColor.blue);
     
     if (++_breatheIndex == BREATHE_STEPS)
         _breatheIndex = 0;
