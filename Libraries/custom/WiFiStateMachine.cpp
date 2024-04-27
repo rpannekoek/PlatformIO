@@ -24,8 +24,8 @@ bool WiFiStateMachine::_staDisconnected = false;
 StringBuilder _coreDumpBuilder(256);
 
 // Constructor
-WiFiStateMachine::WiFiStateMachine(WiFiNTP& timeServer, ESPWebServer& webServer, Log<const char>& eventLog)
-    : _timeServer(timeServer), _webServer(webServer)
+WiFiStateMachine::WiFiStateMachine(LED& led, WiFiNTP& timeServer, ESPWebServer& webServer, Log<const char>& eventLog)
+    : _led(led), _timeServer(timeServer), _webServer(webServer)
 {
     _eventLogPtr = &eventLog;
     _eventStringLogPtr = nullptr;
@@ -33,8 +33,8 @@ WiFiStateMachine::WiFiStateMachine(WiFiNTP& timeServer, ESPWebServer& webServer,
 }
 
 // Constructor
-WiFiStateMachine::WiFiStateMachine(WiFiNTP& timeServer, ESPWebServer& webServer, StringLog& eventLog)
-    : _timeServer(timeServer), _webServer(webServer)
+WiFiStateMachine::WiFiStateMachine(LED& led, WiFiNTP& timeServer, ESPWebServer& webServer, StringLog& eventLog)
+    : _led(led), _timeServer(timeServer), _webServer(webServer)
 {
     _eventStringLogPtr = &eventLog;
     _eventLogPtr = nullptr;
@@ -300,10 +300,7 @@ void WiFiStateMachine::run()
     if ((_ledBlinkInterval != 0) && (currentMillis >= _ledBlinkMillis))
     {
         _ledBlinkMillis = currentMillis + _ledBlinkInterval;
-        uint8_t ledState = digitalRead(LED_BUILTIN);
-        if (_ledBlinkMillis == 0)
-            _ledInitState = ledState;
-        digitalWrite(LED_BUILTIN, ledState ^ 1);
+        _led.toggle();
     }
 
     // First trigger custom handler (if any)
@@ -591,7 +588,7 @@ void WiFiStateMachine::reset()
 void WiFiStateMachine::blinkLED(uint32_t interval)
 {
     if ((interval == 0) && (_ledBlinkInterval != 0))
-        digitalWrite(LED_BUILTIN, _ledInitState);
+        _led.setOn(false);
     _ledBlinkInterval = interval;
 }
 

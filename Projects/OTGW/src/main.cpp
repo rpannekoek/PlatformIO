@@ -10,6 +10,7 @@
 #include <StringBuilder.h>
 #include <Navigation.h>
 #include <HtmlWriter.h>
+#include <LED.h>
 #include <Log.h>
 #include <AsyncHTTPRequest_Generic.h>
 #include <Wire.h>
@@ -47,12 +48,10 @@ constexpr float MAX_FLOW_RATE = 12.0; // l/min
 #endif
 
 #ifdef ESP8266
-    constexpr uint8_t LED_ON = 0;
-    constexpr uint8_t LED_OFF = 1;
+    constexpr bool LED_INVERTED = true;
     constexpr uint8_t OTGW_RESET_PIN = 14;
 #else
-    constexpr uint8_t LED_ON = 1;
-    constexpr uint8_t LED_OFF = 0;
+    constexpr bool LED_INVERTED = false;
     constexpr uint8_t OTGW_RESET_PIN = 7;
 #endif
 
@@ -139,7 +138,8 @@ Log<const char> EventLog(EVENT_LOG_LENGTH);
 StringLog OTGWMessageLog(OTGW_MESSAGE_LOG_LENGTH, 10);
 StaticLog<OpenThermLogEntry> OpenThermLog(OT_LOG_LENGTH);
 StaticLog<StatusLogEntry> StatusLog(7); // 7 days
-WiFiStateMachine WiFiSM(TimeServer, WebServer, EventLog);
+SimpleLED BuiltinLED(LED_BUILTIN, LED_INVERTED);
+WiFiStateMachine WiFiSM(BuiltinLED, TimeServer, WebServer, EventLog);
 Navigation Nav;
 
 // OpenTherm data values indexed by data ID
@@ -1498,10 +1498,6 @@ void onWiFiInitialized()
 // Boot code
 void setup() 
 {
-    // Turn built-in LED on
-    pinMode(LED_BUILTIN, OUTPUT);
-    digitalWrite(LED_BUILTIN, LED_ON);
-
     OTGW_SERIAL_INIT;
     // TODO: DEBUG_ESP_PORT init
     Serial.println("Boot"); // Flush garbage caused by ESP boot output.
@@ -1510,6 +1506,8 @@ void setup()
     Tracer::traceTo(DEBUG_ESP_PORT);
     Tracer::traceFreeHeap();
     #endif
+
+    BuiltinLED.begin();
 
     PersistentData.begin();
     TimeServer.begin(PersistentData.ntpServer);
@@ -1609,7 +1607,7 @@ void setup()
 
     Tracer::traceFreeHeap();
 
-    digitalWrite(LED_BUILTIN, LED_OFF);
+    BuiltinLED.setOn(false);
 }
 
 
@@ -1630,10 +1628,10 @@ void loop()
 
     if (Serial.available())
     {
-        digitalWrite(LED_BUILTIN, LED_ON);
+        BuiltinLED.setOn(true);
         handleSerialData();
         otgwTimeout = currentTime + OTGW_TIMEOUT;
-        digitalWrite(LED_BUILTIN, LED_OFF);
+        BuiltinLED.setOn(false);
         return;
     }
 

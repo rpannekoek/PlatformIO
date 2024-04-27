@@ -32,9 +32,6 @@ constexpr uint8_t NRF_MISO = 35;
 constexpr uint8_t NRF_MOSI = 18;
 constexpr uint8_t NRF_SCK = 37;
 
-constexpr uint8_t LED_ON = 1;
-constexpr uint8_t LED_OFF = 0;
-
 #define TIMEFRAME_PARAM "timeframe"
 #define INVERTER_PARAM "inverter"
 #define CHANNEL_PARAM "channel"

@@ -9,6 +9,7 @@
 #include <TimeUtils.h>
 #include <Tracer.h>
 #include <StringBuilder.h>
+#include <LED.h>
 #include <Log.h>
 #include <WiFiStateMachine.h>
 #include <HtmlWriter.h>
@@ -55,7 +56,8 @@ WiFiFTPClient FTPClient(FTP_TIMEOUT_MS);
 StringBuilder HttpResponse(16 * 1024); // 16KB HTTP response buffer
 HtmlWriter Html(HttpResponse, Files[Logo], Files[Styles], MAX_BAR_LENGTH);
 Log<const char> EventLog(MAX_EVENT_LOG_SIZE);
-WiFiStateMachine WiFiSM(TimeServer, WebServer, EventLog);
+SimpleLED BuiltinLED(LED_BUILTIN);
+WiFiStateMachine WiFiSM(BuiltinLED, TimeServer, WebServer, EventLog);
 Navigation Nav;
 SPIClass NRFSPI;
 
@@ -130,9 +132,6 @@ void removeInverter(int index)
 // Boot code
 void setup() 
 {
-    pinMode(LED_BUILTIN, OUTPUT);
-    digitalWrite(LED_BUILTIN, LED_ON);
-
     Serial.begin(DEBUG_BAUDRATE);
     Serial.setDebugOutput(true);
     Serial.println();
@@ -141,6 +140,8 @@ void setup()
     Tracer::traceTo(DEBUG_ESP_PORT);
     Tracer::traceFreeHeap();
     #endif
+
+    BuiltinLED.begin();
 
     PersistentData.begin();
     TimeServer.begin(PersistentData.ntpServer);
@@ -227,8 +228,8 @@ void setup()
     }
 
     Tracer::traceFreeHeap();
-    
-    digitalWrite(LED_BUILTIN, LED_OFF);
+
+    BuiltinLED.setOn(false);    
 }
 
 
@@ -560,7 +561,7 @@ void onWiFiInitialized()
 
     if (currentTime >= pollInvertersTime)
     {
-        digitalWrite(LED_BUILTIN, LED_ON);
+        BuiltinLED.setOn(true);
         if (pollInverters())
             pollInterval = POLL_INTERVAL_DAY;
         else if (pollInterval < POLL_INTERVAL_NIGHT)
@@ -572,7 +573,7 @@ void onWiFiInitialized()
         Hoymiles.setPollInterval(pollInterval);
         pollInvertersTime = currentTime + pollInterval;
         delay(100); // Ensure LED blink is visible
-        digitalWrite(LED_BUILTIN, LED_OFF);
+        BuiltinLED.setOn(false);
     }
 
     if ((syncFTPTime != 0) && (currentTime >= syncFTPTime) && WiFiSM.isConnected())

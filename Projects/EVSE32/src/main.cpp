@@ -12,6 +12,7 @@
 #include <StringBuilder.h>
 #include <Navigation.h>
 #include <HtmlWriter.h>
+#include <LED.h>
 #include <Log.h>
 #include <BLE.h>
 #include <OneWire.h>
@@ -36,6 +37,17 @@ constexpr int CHARGE_LOG_SIZE = 200;
 constexpr int CHARGE_LOG_PAGE_SIZE = 50;
 constexpr int EVENT_LOG_LENGTH = 50;
 
+#ifdef ARDUINO_LOLIN_S3_MINI
+constexpr uint8_t RELAY_START_PIN = 13;
+constexpr uint8_t RELAY_ON_PIN = 11;
+constexpr uint8_t CURRENT_SENSE_PIN = 4;
+constexpr uint8_t VOLTAGE_SENSE_PIN = 2;
+constexpr uint8_t RGB_LED_PIN = 35;
+constexpr uint8_t CP_OUTPUT_PIN = 18;
+constexpr uint8_t CP_INPUT_PIN = 10;
+constexpr uint8_t CP_FEEDBACK_PIN = 16;
+constexpr uint8_t TEMP_SENSOR_PIN = 12;
+#else
 constexpr uint8_t RELAY_START_PIN = 12;
 constexpr uint8_t RELAY_ON_PIN = 13;
 constexpr uint8_t CURRENT_SENSE_PIN = 34;
@@ -45,13 +57,17 @@ constexpr uint8_t CP_OUTPUT_PIN = 15;
 constexpr uint8_t CP_INPUT_PIN = 33;
 constexpr uint8_t CP_FEEDBACK_PIN = 16;
 constexpr uint8_t TEMP_SENSOR_PIN = 14;
+#endif
+
+#ifdef DEBUG_ESP_PORT
+constexpr uint8_t STATUS_LED_PIN = LED_BUILTIN;
+#else
+constexpr uint8_t STATUS_LED_PIN = RGB_LEB_PIN;
+#endif
 
 constexpr float ZERO_CURRENT_THRESHOLD = 0.2;
 constexpr float LOW_CURRENT_THRESHOLD = 0.75;
 constexpr float CHARGE_VOLTAGE = 230;
-
-constexpr uint8_t LED_ON = 0;
-constexpr uint8_t LED_OFF = 1;
 
 #define CAL_CURRENT F("ActualCurrent")
 #define CAL_CURRENT_ZERO F("CurrentZero")
@@ -104,11 +120,11 @@ BLE Bluetooth;
 StringBuilder HttpResponse(8192); // 8KB HTTP response buffer
 HtmlWriter Html(HttpResponse, Files[Logo], Files[Styles], 60);
 Log<const char> EventLog(EVENT_LOG_LENGTH);
-WiFiStateMachine WiFiSM(TimeServer, WebServer, EventLog);
+StatusLED StateLED(STATUS_LED_PIN);
+WiFiStateMachine WiFiSM(StateLED, TimeServer, WebServer, EventLog);
 CurrentSensor OutputCurrentSensor(CURRENT_SENSE_PIN);
 VoltageSensor OutputVoltageSensor(VOLTAGE_SENSE_PIN);
 IEC61851ControlPilot ControlPilot(CP_OUTPUT_PIN, CP_INPUT_PIN, CP_FEEDBACK_PIN);
-StatusLED RGBLED(RGB_LED_PIN);
 OneWire OneWireBus(TEMP_SENSOR_PIN);
 DallasTemperature TempSensors(&OneWireBus);
 StaticLog<ChargeLogEntry> ChargeLog(CHARGE_LOG_SIZE);
@@ -162,7 +178,7 @@ void setState(EVSEState newState)
     state = newState;
     stateChangeTime = currentTime;
     WiFiSM.logEvent(F("EVSE State changed to %s"), EVSEStateNames[newState]);
-    if (!RGBLED.setStatus(newState))
+    if (!StateLED.setStatus(newState))
         WiFiSM.logEvent(F("Failed setting RGB LED status"));
 }
 
@@ -224,7 +240,9 @@ bool setRelay(bool on)
         return false;
     }
 
-    WiFiSM.logEvent(F("Relay set %s"), relayState);
+    setCpuFrequencyMhz(on ? 240 : 80);
+
+    WiFiSM.logEvent(F("Relay set %s. CPU @ %d MHz"), relayState, getCpuFrequencyMhz());
     return true;
 }
 
@@ -272,10 +290,6 @@ bool initTempSensor()
 // Boot code
 void setup()
 {
-    // Turn built-in LED on
-    pinMode(LED_BUILTIN, OUTPUT);
-    digitalWrite(LED_BUILTIN, LED_ON);
-
     Serial.begin(115200); // Use same baudrate as bootloader
     Serial.setTimeout(1000);
     Serial.println();
@@ -284,6 +298,9 @@ void setup()
     Tracer::traceTo(DEBUG_ESP_PORT);
     Tracer::traceFreeHeap();
     #endif
+
+    if (!StateLED.begin())
+        setFailure(F("Failed initializing RGB LED"));
 
     PersistentData.begin();
     TimeServer.NTPServer = PersistentData.ntpServer;
@@ -361,9 +378,6 @@ void setup()
     WiFiSM.scanAccessPoints();
     WiFiSM.begin(PersistentData.wifiSSID, PersistentData.wifiKey, PersistentData.hostName);
 
-    if (!RGBLED.begin())
-        setFailure(F("Failed initializing RGB LED"));
-
     if (!OutputCurrentSensor.begin(PersistentData.currentZero, PersistentData.currentScale))
         setFailure(F("Failed initializing current sensor"));
 
@@ -391,8 +405,6 @@ void setup()
     initTempSensor();
 
     Tracer::traceFreeHeap();
-
-    digitalWrite(LED_BUILTIN, LED_OFF);
 }
 
 
@@ -719,9 +731,7 @@ void runEVSEStateMachine()
 
         case EVSEState::Booting:
         case EVSEState::Failure:
-            // Should not come here
             break;
-
     }
 }
 
@@ -757,7 +767,7 @@ void test(String message)
     }
     else if (message.startsWith("testB"))
     {
-        RGBLED.setStatus(EVSEState::Ready); // Color = Breathing Green
+        StateLED.setStatus(EVSEState::Ready); // Color = Breathing Green
     }
     else if (message.startsWith("testL"))
     {
@@ -765,7 +775,7 @@ void test(String message)
         {
             for (int j = 0; j < 8; j++)
             {
-                RGBLED.setStatus(static_cast<EVSEState>(j));
+                StateLED.setStatus(static_cast<EVSEState>(j));
                 delay(1000);
             }
         }
@@ -940,9 +950,11 @@ void onWiFiTimeSynced()
 
 void onWiFiInitialized()
 {
+    if ((state == EVSEState::Failure) && !StateLED.isOn())
+        StateLED.setOn(true);
+
     if (currentTime >= tempPollTime && TempSensors.getDS18Count() > 0)
     {
-        digitalWrite(LED_BUILTIN, LED_ON);
         isMeasuringTemp = true;
         tempPollTime = currentTime + TEMP_POLL_INTERVAL;
         TempSensors.requestTemperatures();
@@ -967,7 +979,6 @@ void onWiFiInitialized()
         }
         
         isMeasuringTemp = false;
-        digitalWrite(LED_BUILTIN, LED_OFF);
     }
 
     if ((ftpSyncTime != 0) && (currentTime >= ftpSyncTime) && WiFiSM.isConnected())

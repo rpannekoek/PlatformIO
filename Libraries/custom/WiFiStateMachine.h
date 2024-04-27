@@ -5,6 +5,7 @@
 #include <ESPWebServer.h>
 #include <WiFiNTP.h>
 #include <Log.h>
+#include <LED.h>
 
 enum struct WiFiInitState
 {
@@ -30,10 +31,10 @@ class WiFiStateMachine
 {
     public:
         // Constructor
-        WiFiStateMachine(WiFiNTP& timeServer, ESPWebServer& webServer, Log<const char>& eventLog);
+        WiFiStateMachine(LED& led, WiFiNTP& timeServer, ESPWebServer& webServer, Log<const char>& eventLog);
 
         // Constructor
-        WiFiStateMachine(WiFiNTP& timeServer, ESPWebServer& webServer, StringLog& eventLog);
+        WiFiStateMachine(LED& led, WiFiNTP& timeServer, ESPWebServer& webServer, StringLog& eventLog);
 
         void on(WiFiInitState state, void (*handler)(void));
 
@@ -89,14 +90,12 @@ class WiFiStateMachine
 
     private:
         WiFiInitState _state = WiFiInitState::Booting;
-        static bool _staDisconnected;
-        uint32_t _reconnectInterval = 0;
+        static bool _staDisconnected;        uint32_t _reconnectInterval = 0;
         uint32_t _stateChangeTime = 0;
         time_t _scanAccessPointsTime = 0;
         uint32_t _scanAccessPointsInterval = 0;
         uint32_t _switchAccessPointDelay;
         int8_t _rssiThreshold;
-        uint8_t _ledInitState;
         uint32_t _retryInterval;
         uint32_t _ledBlinkInterval = 0;
         uint32_t _ledBlinkMillis = 0;
@@ -106,6 +105,7 @@ class WiFiStateMachine
         String _ssid;
         String _password;
         String _hostName;
+        LED& _led;
         WiFiNTP& _timeServer;
         ESPWebServer& _webServer;
         Log<const char>* _eventLogPtr;
