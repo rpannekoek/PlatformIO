@@ -260,8 +260,8 @@ void handleSerialRequest()
         for (int i = 0; i < POWER_LOG_SIZE; i++)
         {
             newPowerLogEntry.time = currentTime + i * SECONDS_PER_MINUTE;
-            newPowerLogEntry.power[0][0] = i;
-            newPowerLogEntry.power[0][1] = (POWER_LOG_SIZE - i);
+            newPowerLogEntry.dcPower[0][0] = i;
+            newPowerLogEntry.dcPower[0][1] = (POWER_LOG_SIZE - i);
             lastPowerLogEntryPtr = PowerLog.add(&newPowerLogEntry);
         }
         powerLogEntriesToSync = 10;
@@ -386,7 +386,7 @@ bool pollInverters()
         {
             float stringPower = inverterStatsPtr->getChannelFieldValue(TYPE_DC, channel, FLD_PDC);
             TRACE("\tDC channel #%d: %0.1f W\n", channel, stringPower);
-            newPowerLogEntry.update(i, channel, stringPower);
+            newPowerLogEntry.updateDC(i, channel, stringPower);
             if (inverterLogPtr->dcEnergyLogPtrs.size() <= channel)
             {
                 for (int k = inverterLogPtr->dcEnergyLogPtrs.size(); k == channel; k++)
@@ -396,13 +396,20 @@ bool pollInverters()
         }
 
         float inverterPower = 0;
-        for (ChannelNum_t channel : inverterStatsPtr->getChannelsByType(TYPE_AC))
+        float acVoltage = 0;
+        std::list<ChannelNum_t> acChannels = inverterStatsPtr->getChannelsByType(TYPE_AC);
+        for (ChannelNum_t channel : acChannels)
         {
-            float phasePower = inverterStatsPtr->getChannelFieldValue(TYPE_AC, channel, FLD_PAC); 
-            TRACE("\tAC phase #%d: %0.1f W\n", channel, phasePower);
+            float phasePower = inverterStatsPtr->getChannelFieldValue(TYPE_AC, channel, FLD_PAC);
+            float phaseVoltage = inverterStatsPtr->getChannelFieldValue(TYPE_AC, channel, FLD_UAC); 
+            TRACE("\tAC phase #%d: %0.1f W %0.1f V\n", channel, phasePower, phaseVoltage);
             inverterPower += phasePower;
             totalPower += phasePower;
+            acVoltage += phaseVoltage;
         }
+        if (acChannels.size() > 0)
+            acVoltage /= acChannels.size();
+        newPowerLogEntry.updateAC(i, inverterPower, acVoltage);
         inverterLogPtr->acEnergyLogPtr->update(currentTime, inverterPower);
     }
 
@@ -451,7 +458,9 @@ void writePowerLogEntriesCsv(Print& output)
         {
             int dcChannelCount = dcChannels[i];
             for (int ch = 0; ch < dcChannelCount; ch++)
-                output.printf(";%0.1f", powerLogEntryPtr->power[i][ch]);            
+                output.printf(";%0.1f", powerLogEntryPtr->dcPower[i][ch]);
+            output.printf(";%0.1f", powerLogEntryPtr->acPower[i]);
+            output.printf(";%0.1f", powerLogEntryPtr->acVoltage[i]);
         }
         output.println();
 
@@ -641,7 +650,7 @@ void writeInverterDCRow(int inverter, StatisticsParser* inverterStatsPtr, Channe
     HttpResponse.printf(
         F("<td><a href='/?channel=%d&inverter=%d'>DC #%d</a></td>"),
         TYPE_DC, inverter, channel + 1);
-    Html.writeCell("%0.0f V", inverterStatsPtr->getChannelFieldValue(TYPE_DC, channel, FLD_UDC)); 
+    Html.writeCell("%0.1f V", inverterStatsPtr->getChannelFieldValue(TYPE_DC, channel, FLD_UDC)); 
     Html.writeCell("%0.2f A", inverterStatsPtr->getChannelFieldValue(TYPE_DC, channel, FLD_IDC)); 
     Html.writeCell("%0.1f W", inverterStatsPtr->getChannelFieldValue(TYPE_DC, channel, FLD_PDC)); 
     Html.writeCell("%0.1f Wh", inverterStatsPtr->getChannelFieldValue(TYPE_DC, channel, FLD_YD)); 
@@ -655,7 +664,7 @@ void writeInverterACRow(int inverter, StatisticsParser* inverterStatsPtr, Channe
     HttpResponse.printf(
         F("<td><a href='/?channel=%d&inverter=%d'>AC</a></td>"),
         TYPE_AC, inverter);
-    Html.writeCell("%0.0f V", inverterStatsPtr->getChannelFieldValue(TYPE_AC, channel, FLD_UAC)); 
+    Html.writeCell("%0.1f V", inverterStatsPtr->getChannelFieldValue(TYPE_AC, channel, FLD_UAC)); 
     Html.writeCell("%0.2f A", inverterStatsPtr->getChannelFieldValue(TYPE_AC, channel, FLD_IAC)); 
     Html.writeCell("%0.1f W", inverterStatsPtr->getChannelFieldValue(TYPE_AC, channel, FLD_PAC)); 
     Html.writeCell("%0.1f VAr", inverterStatsPtr->getChannelFieldValue(TYPE_AC, channel, FLD_Q));
@@ -974,7 +983,7 @@ void handleHttpSyncFTPRequest()
     else
         Html.writeParagraph("Failed: %s", FTPClient.getLastError());
 
-    Html.writeHeading("CSV headers");
+    Html.writeHeading("CSV headers", 2);
     Html.writePreStart();
     HttpResponse.print("Time");
     for (int i = 0; i < Hoymiles.getNumInverters(); i++)
@@ -983,6 +992,8 @@ void handleHttpSyncFTPRequest()
         if (inverterPtr == nullptr) continue;
         for (ChannelNum_t channel : inverterPtr->Statistics()->getChannelsByType(TYPE_DC))
             HttpResponse.printf(F(";%s Pdc%d (W)"), inverterPtr->name(), channel + 1);
+        HttpResponse.printf(F(";%s Pac (W)"), inverterPtr->name());
+        HttpResponse.printf(F(";%s Vac (V)"), inverterPtr->name());
     }
     HttpResponse.println();
     HttpResponse.println("Date;On time (h);Max Power (W);Energy (kWh)");
@@ -1015,13 +1026,17 @@ void handleHttpPowerLogRequest()
         if (inverterPtr == nullptr) continue;
         size_t dcChannelCount = inverterPtr->Statistics()->getChannelsByType(TYPE_DC).size();
         dcChannels.push_back(dcChannelCount);
-        Html.writeHeaderCell(inverterPtr->name(), dcChannelCount);
+        Html.writeHeaderCell(inverterPtr->name(), dcChannelCount + 2);
     }
     Html.writeRowEnd();
     Html.writeRowStart();
     for (int dcChannelCount : dcChannels)
+    {
         for (int ch = 1; ch <= dcChannelCount; ch++)
             HttpResponse.printf(F("<td>P<sub>dc%d</sub> (W)</td>"), ch);
+        Html.writeCell("P<sub>ac</sub> (W)");
+        Html.writeCell("V<sub>ac</sub> (V)");
+    }
     Html.writeRowEnd();
 
     PowerLogEntry* powerLogEntryPtr = PowerLog.getFirstEntry();
@@ -1038,7 +1053,9 @@ void handleHttpPowerLogRequest()
         {
             int dcChannelCount = dcChannels[i];
             for (int ch = 0; ch < dcChannelCount; ch++)
-                Html.writeCell(powerLogEntryPtr->power[i][ch]);
+                Html.writeCell(powerLogEntryPtr->dcPower[i][ch]);
+            Html.writeCell(powerLogEntryPtr->acPower[i]);
+            Html.writeCell(powerLogEntryPtr->acVoltage[i]);
         }
         Html.writeRowEnd();
 

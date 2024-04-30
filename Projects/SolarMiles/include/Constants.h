@@ -18,6 +18,7 @@ constexpr int POWER_LOG_SIZE = 200;
 constexpr int POWER_LOG_PAGE_SIZE = 50;
 constexpr int POWER_LOG_AGGREGATIONS = SECONDS_PER_MINUTE / POLL_INTERVAL_DAY;
 constexpr float POWER_EQUALS_MARGIN = 1.0F;
+constexpr float VOLTAGE_EQUALS_MARGIN = 0.5F;
 
 constexpr int MAX_EVENT_LOG_SIZE = 50;
 constexpr int MAX_BAR_LENGTH = 50;
