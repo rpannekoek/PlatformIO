@@ -5,11 +5,12 @@ bool WiFiNTP::begin(const char* ntpServer, const char* timezone)
 {
     Tracer tracer(F("WiFiNTP::begin"), ntpServer);
 
+    if (timezone == nullptr)
+        timezone = "CET-1CEST,M3.5.0,M10.5.0/3"; // Amsterdam TZ
+        
 #ifdef ESP8266
     configTime(timezone, ntpServer);
 #else
-    if (timezone == nullptr)
-        timezone = "CET-1CEST,M3.5.0,M10.5.0/3"; // Amsterdam TZ        
     configTzTime(timezone, ntpServer);
 #endif
 
