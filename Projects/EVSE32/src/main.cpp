@@ -47,6 +47,13 @@ constexpr uint8_t CP_OUTPUT_PIN = 18;
 constexpr uint8_t CP_INPUT_PIN = 10;
 constexpr uint8_t CP_FEEDBACK_PIN = 16;
 constexpr uint8_t TEMP_SENSOR_PIN = 12;
+
+#ifdef DEBUG_ESP_PORT
+constexpr uint8_t STATUS_LED_PIN = RGB_BUILTIN;
+#else
+constexpr uint8_t STATUS_LED_PIN = EXTERNAL_RGBLED_PIN;
+#endif
+
 #else
 constexpr uint8_t RELAY_START_PIN = 12;
 constexpr uint8_t RELAY_ON_PIN = 13;
@@ -57,21 +64,17 @@ constexpr uint8_t CP_OUTPUT_PIN = 15;
 constexpr uint8_t CP_INPUT_PIN = 33;
 constexpr uint8_t CP_FEEDBACK_PIN = 16;
 constexpr uint8_t TEMP_SENSOR_PIN = 14;
-#endif
-
-#ifdef DEBUG_ESP_PORT
-constexpr uint8_t STATUS_LED_PIN = LED_BUILTIN;
-#else
 constexpr uint8_t STATUS_LED_PIN = EXTERNAL_RGBLED_PIN;
 #endif
+
 
 constexpr float ZERO_CURRENT_THRESHOLD = 0.2;
 constexpr float LOW_CURRENT_THRESHOLD = 0.75;
 constexpr float CHARGE_VOLTAGE = 230;
 
-#define CAL_CURRENT F("ActualCurrent")
-#define CAL_CURRENT_ZERO F("CurrentZero")
-#define CAL_TEMP_OFFSET F("TempOffset")
+#define CAL_CURRENT "ActualCurrent"
+#define CAL_CURRENT_ZERO "CurrentZero"
+#define CAL_TEMP_OFFSET "TempOffset"
 
 enum FileId
 {
@@ -177,9 +180,10 @@ void setState(EVSEState newState)
 {
     state = newState;
     stateChangeTime = currentTime;
-    WiFiSM.logEvent(F("EVSE State changed to %s"), EVSEStateNames[newState]);
+    WiFiSM.logEvent("EVSE State changed to %s", EVSEStateNames[newState]);
     if (!StateLED.setStatus(newState))
-        WiFiSM.logEvent(F("Failed setting RGB LED status"));
+        WiFiSM.logEvent("Failed setting RGB LED status");
+    delay(10);
 }
 
 
@@ -201,8 +205,8 @@ void setFailure(const String& reason)
 
 void setUnexpectedControlPilotStatus()
 {
-    WiFiSM.logEvent(F("Control Pilot: %0.1f V"), ControlPilot.getVoltage());
-    String message = F("Unexpected Control Pilot status: ");
+    WiFiSM.logEvent("Control Pilot: %0.1f V", ControlPilot.getVoltage());
+    String message = "Unexpected Control Pilot status: ";
     message += ControlPilot.getStatusName();
     setFailure(message); 
 }
@@ -233,7 +237,7 @@ bool setRelay(bool on)
     {
         if (state != EVSEState::Failure)
         {
-            String message = F("Failed setting relay ");
+            String message = "Failed setting relay ";
             message += relayState; 
             setFailure(message);
         }
@@ -242,7 +246,7 @@ bool setRelay(bool on)
 
     setCpuFrequencyMhz(on ? 240 : 80);
 
-    WiFiSM.logEvent(F("Relay set %s. CPU @ %d MHz"), relayState, getCpuFrequencyMhz());
+    WiFiSM.logEvent("Relay set %s. CPU @ %d MHz", relayState, getCpuFrequencyMhz());
     return true;
 }
 
@@ -254,8 +258,8 @@ bool initTempSensor()
     TempSensors.begin();
     TempSensors.setWaitForConversion(false);
 
-    TRACE(F("Found %d OneWire devices.\n"), TempSensors.getDeviceCount());
-    TRACE(F("Found %d temperature sensors.\n"), TempSensors.getDS18Count());
+    TRACE("Found %d OneWire devices.\n", TempSensors.getDeviceCount());
+    TRACE("Found %d temperature sensors.\n", TempSensors.getDS18Count());
 
     if (TempSensors.getDS18Count() > 0 && !TempSensors.validFamily(PersistentData.tempSensorAddress))
     {
@@ -264,7 +268,7 @@ bool initTempSensor()
             PersistentData.writeToEEPROM();
         else
         {
-            setFailure(F("Unable to obtain temperature sensor address."));
+            setFailure("Unable to obtain temperature sensor address.");
             return false;
         }
     }
@@ -272,14 +276,14 @@ bool initTempSensor()
     DeviceAddress& addr = PersistentData.tempSensorAddress;
     if (!TempSensors.isConnected(addr))
     {
-        setFailure(F("Temperature sensor is not connected"));
+        setFailure("Temperature sensor is not connected");
         memset(PersistentData.tempSensorAddress, 0, sizeof(DeviceAddress));
         PersistentData.writeToEEPROM();
         return false;
     }
 
     WiFiSM.logEvent(
-        F("Temperature sensor address: %02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X. Offset: %0.2f"),
+        "Temperature sensor address: %02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X. Offset: %0.2f",
         addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], addr[6], addr[7],
         PersistentData.tempSensorOffset);
 
@@ -300,13 +304,13 @@ void setup()
     #endif
 
     if (!StateLED.begin())
-        setFailure(F("Failed initializing RGB LED"));
+        setFailure("Failed initializing RGB LED");
 
     PersistentData.begin();
-    TimeServer.NTPServer = PersistentData.ntpServer;
+    TimeServer.begin(PersistentData.ntpServer);
     Html.setTitlePrefix(PersistentData.hostName);
 
-    Nav.width = F("8em");
+    Nav.width = "8em";
     Nav.menuItems = 
     {
         MenuItem
@@ -379,27 +383,27 @@ void setup()
     WiFiSM.begin(PersistentData.wifiSSID, PersistentData.wifiKey, PersistentData.hostName);
 
     if (!OutputCurrentSensor.begin(PersistentData.currentZero, PersistentData.currentScale))
-        setFailure(F("Failed initializing current sensor"));
+        setFailure("Failed initializing current sensor");
 
     if (!OutputVoltageSensor.begin())
-        setFailure(F("Failed initializing voltage sensor"));
+        setFailure("Failed initializing voltage sensor");
 
     pinMode(RELAY_START_PIN, OUTPUT);
     pinMode(RELAY_ON_PIN, OUTPUT);
     setRelay(false);
 
     if (!ControlPilot.begin())
-        setFailure(F("Failed initializing Control Pilot"));
+        setFailure("Failed initializing Control Pilot");
 
     if (Bluetooth.begin(PersistentData.hostName))
         Bluetooth.registerBeacons(PersistentData.registeredBeaconCount, PersistentData.registeredBeacons);
     else
-        setFailure(F("Failed initializing Bluetooth"));
+        setFailure("Failed initializing Bluetooth");
 
     if (PersistentData.dsmrMonitor[0] != 0)
     {
         if (!SmartMeter.begin(PersistentData.dsmrMonitor))
-            setFailure(F("Failed initializing Smart Meter"));
+            setFailure("Failed initializing Smart Meter");
     }
 
     initTempSensor();
@@ -412,20 +416,20 @@ bool isChargingAuthorized()
 {
     if (isWebAuthorized)
     {
-        WiFiSM.logEvent(F("Charging authorized through web"));
+        WiFiSM.logEvent("Charging authorized through web");
         return true;
     }
 
     if (Bluetooth.isDeviceDetected())
     {
-        WiFiSM.logEvent(F("Charging authorized through Bluetooth"));
+        WiFiSM.logEvent("Charging authorized through Bluetooth");
         return true;
     } 
 
     if ((PersistentData.authorizeTimeout != 0) && (currentTime - stateChangeTime > PersistentData.authorizeTimeout))
     {
         WiFiSM.logEvent(
-            F("Charging authorized by timeout (%s)"),
+            "Charging authorized by timeout (%s)",
             formatTimeSpan(PersistentData.authorizeTimeout));
         return true;
     }
@@ -442,7 +446,7 @@ bool stopCharging(const char* cause)
 {
     Tracer tracer(F(__func__), cause);
 
-    WiFiSM.logEvent(F("Charging stopped by %s."), cause);
+    WiFiSM.logEvent("Charging stopped by %s.", cause);
 
     ControlPilot.setOff();
     ControlPilot.awaitStatus(ControlPilotStatus::NoPower);
@@ -456,7 +460,7 @@ bool stopCharging(const char* cause)
     }
     while (outputCurrent > LOW_CURRENT_THRESHOLD && --timeout > 0);
     if (timeout == 0)
-        WiFiSM.logEvent(F("Vehicle keeps drawing current: %0.1f A"), outputCurrent);
+        WiFiSM.logEvent("Vehicle keeps drawing current: %0.1f A", outputCurrent);
 
     if (!setRelay(false)) return false;    
 
@@ -512,7 +516,7 @@ float determineCurrentLimit()
 
     if (SmartMeter.requestData() != HTTP_CODE_OK)
     {
-        WiFiSM.logEvent(F("Smart Meter: %s"), SmartMeter.getLastError().c_str());
+        WiFiSM.logEvent("Smart Meter: %s", SmartMeter.getLastError().c_str());
         return (temperature > PersistentData.tempLimit) ? deratedCurrentLimit : 0;
     }
 
@@ -531,7 +535,7 @@ void chargeControl()
 
     if (!OutputVoltageSensor.detectSignal())
     {
-        setFailure(F("Output voltage lost"));
+        setFailure("Output voltage lost");
         return;        
     }
 
@@ -541,14 +545,14 @@ void chargeControl()
         outputCurrent = OutputCurrentSensor.getRMS();
         if (outputCurrent > currentLimit * 1.25)
         {
-            setFailure(F("Output current too high"));
+            setFailure("Output current too high");
             return;
         }
         float cl = determineCurrentLimit();
         if (cl > 0) currentLimit = ControlPilot.setCurrentLimit(cl);
     }
     else
-        WiFiSM.logEvent(F("Insufficient current samples: %d"), OutputCurrentSensor.getSampleCount());
+        WiFiSM.logEvent("Insufficient current samples: %d", OutputCurrentSensor.getSampleCount());
 
     lastChargeStatsPtr->update(currentTime, outputCurrent * CHARGE_VOLTAGE, temperature);
 
@@ -575,23 +579,23 @@ bool selfTest()
     Tracer tracer(F(__func__));
 
     int cpStandbyLevel = ControlPilot.calibrate();
-    WiFiSM.logEvent(F("Control Pilot standby level: %d"), cpStandbyLevel);
+    WiFiSM.logEvent("Control Pilot standby level: %d", cpStandbyLevel);
     if (cpStandbyLevel < MIN_CP_STANDBY_LEVEL)
     {
-        WiFiSM.logEvent(F("Control Pilot standby level too low"));
+        WiFiSM.logEvent("Control Pilot standby level too low");
         return false;
     }
 
     ControlPilot.setOff();
     if (!ControlPilot.awaitStatus(ControlPilotStatus::NoPower))
     {
-        WiFiSM.logEvent(F("Control Pilot off: %0.1f V"), ControlPilot.getVoltage());
+        WiFiSM.logEvent("Control Pilot off: %0.1f V", ControlPilot.getVoltage());
         return false;
     }
 
     if (OutputVoltageSensor.detectSignal())
     {
-        WiFiSM.logEvent(F("Output voltage present before relay activation"));
+        WiFiSM.logEvent("Output voltage present before relay activation");
         return false;
     }
 
@@ -599,7 +603,7 @@ bool selfTest()
     float outputCurrent = OutputCurrentSensor.getRMS(); 
     if (outputCurrent > ZERO_CURRENT_THRESHOLD)
     {
-        WiFiSM.logEvent(F("Output current before relay activation: %0.2f A"), outputCurrent);
+        WiFiSM.logEvent("Output current before relay activation: %0.2f A", outputCurrent);
         return false;
     }
 
@@ -609,7 +613,7 @@ bool selfTest()
     outputCurrent = OutputCurrentSensor.getRMS(); 
     if (outputCurrent > ZERO_CURRENT_THRESHOLD)
     {
-        WiFiSM.logEvent(F("Output current after relay activation: %0.2f A"), outputCurrent);
+        WiFiSM.logEvent("Output current after relay activation: %0.2f A", outputCurrent);
         setRelay(false);
         return false;
     }
@@ -620,14 +624,14 @@ bool selfTest()
     outputCurrent = OutputCurrentSensor.getRMS(); 
     if (outputCurrent > ZERO_CURRENT_THRESHOLD)
     {
-        WiFiSM.logEvent(F("Output current after relay deactivation: %0.2f A"), outputCurrent);
+        WiFiSM.logEvent("Output current after relay deactivation: %0.2f A", outputCurrent);
         return false;
     }
 
     ControlPilot.setReady();
     if (!ControlPilot.awaitStatus(ControlPilotStatus::Standby))
     {
-        WiFiSM.logEvent(F("Control Pilot standby: %0.1f V\n"), ControlPilot.getVoltage());
+        WiFiSM.logEvent("Control Pilot standby: %0.1f V\n", ControlPilot.getVoltage());
         return false;
     }
 
@@ -644,11 +648,11 @@ void runEVSEStateMachine()
         case EVSEState::SelfTest:
             if (selfTest())
             {
-                WiFiSM.logEvent(F("Self-test passed"));
+                WiFiSM.logEvent("Self-test passed");
                 setState(EVSEState::Ready);
             }
             else
-                setFailure(F("Self-test failed"));
+                setFailure("Self-test failed");
             break;
 
         case EVSEState::Ready: // Await vehicle connection
@@ -658,7 +662,7 @@ void runEVSEStateMachine()
                 if (Bluetooth.startDiscovery())
                     setState(EVSEState::Authorize);
                 else
-                    setFailure(F("Bluetooth discovery failed"));
+                    setFailure("Bluetooth discovery failed");
             }
             else if (cpStatus != ControlPilotStatus::Standby)
                 setUnexpectedControlPilotStatus();
@@ -700,7 +704,7 @@ void runEVSEStateMachine()
                 }
             }
             else if ((currentTime - stateChangeTime) > 60)
-                setFailure(F("Timeout waiting for charging to start"));
+                setFailure("Timeout waiting for charging to start");
             break;
 
         case EVSEState::Charging:
@@ -743,7 +747,7 @@ void test(String message)
     if (message.startsWith("testF"))
     {
         for (int i = 0; i < EVENT_LOG_LENGTH; i++)
-            WiFiSM.logEvent(F("Test entry to fill up the event log."));
+            WiFiSM.logEvent("Test entry to fill up the event log.");
 
         for (int i = 0; i < CHARGE_LOG_SIZE; i++)
         {
@@ -789,23 +793,23 @@ void test(String message)
     {
         if (OutputVoltageSensor.detectSignal(100))
         {
-            TRACE(F("Output voltage detected.\n"));
+            TRACE("Output voltage detected.\n");
         }
     }
     else if (message.startsWith("testC"))
     {
-        TRACE(F("CP Off Voltage: %0.2f V\n"), ControlPilot.getVoltage());
+        TRACE("CP Off Voltage: %0.2f V\n", ControlPilot.getVoltage());
 
         ControlPilot.setReady();
         delay(10);
-        TRACE(F("CP Idle Voltage: %0.2f V\n"), ControlPilot.getVoltage());
+        TRACE("CP Idle Voltage: %0.2f V\n", ControlPilot.getVoltage());
         delay(1000);
 
         for (int i = 20; i >= 5; i--)
         {
             ControlPilot.setCurrentLimit(i);
             delay(500);
-            TRACE(F("CP Voltage @ %d A: %0.2f V\n"), i, ControlPilot.getVoltage());
+            TRACE("CP Voltage @ %d A: %0.2f V\n", i, ControlPilot.getVoltage());
             delay(1500);
         }
 
@@ -895,7 +899,7 @@ bool trySyncFTP(Print* printTo)
             logEntriesToSync = 0;
         }
         else if (printTo != nullptr)
-            printTo->println(F("Nothing to sync."));
+            printTo->println("Nothing to sync.");
         dataClient.stop();
 
         if (FTPClient.readServerResponse() == 226)
@@ -963,16 +967,16 @@ void onWiFiInitialized()
         if (tMeasured == DEVICE_DISCONNECTED_C)
         {
             if (state != EVSEState::Failure)
-                setFailure(F("Temperature sensor disconnected"));
+                setFailure("Temperature sensor disconnected");
         }
         else if (tMeasured == 85)
-            WiFiSM.logEvent(F("Invalid temperature sensor reading"));
+            WiFiSM.logEvent("Invalid temperature sensor reading");
         else
         {
             temperature = tMeasured + PersistentData.tempSensorOffset;
             DayStats.update(currentTime, temperature);
             if (temperature > (PersistentData.tempLimit + 10) && state != EVSEState::Failure)
-                setFailure(F("Temperature too high"));
+                setFailure("Temperature too high");
         }
         
         isMeasuringTemp = false;
@@ -982,12 +986,12 @@ void onWiFiInitialized()
     {
         if (trySyncFTP(nullptr))
         {
-            WiFiSM.logEvent(F("FTP sync"));
+            WiFiSM.logEvent("FTP sync");
             ftpSyncTime = 0;
         }
         else
         {
-            WiFiSM.logEvent(F("FTP sync failed: %s"), FTPClient.getLastError());
+            WiFiSM.logEvent("FTP sync failed: %s", FTPClient.getLastError());
             ftpSyncTime = currentTime + FTP_RETRY_INTERVAL;
         }
     }
@@ -1035,43 +1039,43 @@ void handleHttpRootRequest()
         return;
     }
 
-    Html.writeHeader(F("Home"), Nav, HTTP_POLL_INTERVAL);
+    Html.writeHeader("Home", Nav, HTTP_POLL_INTERVAL);
 
     Html.writeTableStart();
 
     Html.writeRow(
-        F("EVSE State"),
-        F("<span style=\"color: %s; font-weight: bold\">%s</span>"),
+        "EVSE State",
+        "<span style=\"color: %s; font-weight: bold\">%s</span>",
         EVSEStateColors[state],
         EVSEStateNames[state]);
-    Html.writeRow(F("Control Pilot"), F("%s"), ControlPilot.getStatusName());
+    Html.writeRow("Control Pilot", "%s", ControlPilot.getStatusName());
 
     if (state == EVSEState::Charging)
     {
-        Html.writeRow(F("Current limit"), F("%0.1f A"), currentLimit);
-        Html.writeRow(F("Output current"), F("%0.1f A"), outputCurrent);
+        Html.writeRow("Current limit", "%0.1f A", currentLimit);
+        Html.writeRow("Output current", "%0.1f A", outputCurrent);
     }
 
-    Html.writeRow(F("Temperature"), F("%0.1f °C"), temperature);
-    Html.writeRow(F("T<sub>max</sub>"), F("%0.1f °C @ %s"), DayStats.tMax, formatTime("%H:%M", DayStats.tMaxTime));
-    Html.writeRow(F("T<sub>min</sub>"), F("%0.1f °C @ %s"), DayStats.tMin, formatTime("%H:%M", DayStats.tMinTime));
+    Html.writeRow("Temperature", "%0.1f °C", temperature);
+    Html.writeRow("T<sub>max</sub>", "%0.1f °C @ %s", DayStats.tMax, formatTime("%H:%M", DayStats.tMaxTime));
+    Html.writeRow("T<sub>min</sub>", "%0.1f °C @ %s", DayStats.tMin, formatTime("%H:%M", DayStats.tMinTime));
 
-    Html.writeRow(F("WiFi RSSI"), F("%d dBm"), static_cast<int>(WiFi.RSSI()));
-    Html.writeRow(F("WiFi AP"), F("%s"), WiFi.BSSIDstr().c_str());
-    Html.writeRow(F("Free Heap"), F("%0.1f kB"), float(ESP.getFreeHeap()) / 1024);
-    Html.writeRow(F("Uptime"), F("%0.1f days"), float(WiFiSM.getUptime()) / SECONDS_PER_DAY);
+    Html.writeRow("WiFi RSSI", "%d dBm", static_cast<int>(WiFi.RSSI()));
+    Html.writeRow("WiFi AP", "%s", WiFi.BSSIDstr().c_str());
+    Html.writeRow("Free Heap", "%0.1f kB", float(ESP.getFreeHeap()) / 1024);
+    Html.writeRow("Uptime", "%0.1f days", float(WiFiSM.getUptime()) / SECONDS_PER_DAY);
 
     String ftpSync;
     if (!PersistentData.isFTPEnabled())
-        ftpSync = F("Disabled");
+        ftpSync = "Disabled";
     else if (lastFTPSyncTime == 0)
-        ftpSync = F("Not yet");
+        ftpSync = "Not yet";
     else
         ftpSync = formatTime("%H:%M", lastFTPSyncTime);
 
-    Html.writeRow(F("FTP Sync"), ftpSync);
+    Html.writeRow("FTP Sync", ftpSync);
     if (PersistentData.isFTPEnabled())
-        Html.writeRow(F("Sync entries"), F("%d / %d"), logEntriesToSync, PersistentData.ftpSyncEntries);
+        Html.writeRow("Sync entries", "%d / %d", logEntriesToSync, PersistentData.ftpSyncEntries);
 
     Html.writeTableEnd();
 
@@ -1079,36 +1083,36 @@ void handleHttpRootRequest()
     {
         case EVSEState::Ready:
         case EVSEState::Failure:
-            if (WiFiSM.shouldPerformAction(F("selftest")))
+            if (WiFiSM.shouldPerformAction("selftest"))
             {
-                Html.writeParagraph(F("Performing self-test..."));
+                Html.writeParagraph("Performing self-test...");
                 setState(EVSEState::SelfTest);
             }
             else
-                Html.writeActionLink(F("selftest"), F("Perform self-test"), currentTime, ButtonClass, Files[CalibrateIcon]);
+                Html.writeActionLink("selftest", "Perform self-test", currentTime, ButtonClass, Files[CalibrateIcon]);
             break;
 
         case EVSEState::Authorize:
-            if (WiFiSM.shouldPerformAction(F("authorize")))
+            if (WiFiSM.shouldPerformAction("authorize"))
             {
-                Html.writeParagraph(F("Charging authorized."));
+                Html.writeParagraph("Charging authorized.");
                 isWebAuthorized = true;
             }
             else if (!isWebAuthorized)
-                Html.writeActionLink(F("authorize"), F("Start charging"), currentTime, ButtonClass, Files[FlashIcon]);
+                Html.writeActionLink("authorize", "Start charging", currentTime, ButtonClass, Files[FlashIcon]);
             break;
 
         case EVSEState::AwaitCharging:
         case EVSEState::Charging:
-            if (WiFiSM.shouldPerformAction(F("stop")))
+            if (WiFiSM.shouldPerformAction("stop"))
             {
                 if (stopCharging("EVSE"))
-                    Html.writeParagraph(F("Charging stopped."));
+                    Html.writeParagraph("Charging stopped.");
                 else
-                    Html.writeParagraph(F("Stop charging failed."));
+                    Html.writeParagraph("Stop charging failed.");
             }
             else
-                Html.writeActionLink(F("stop"), F("Stop charging"), currentTime, ButtonClass, Files[CancelIcon]);
+                Html.writeActionLink("stop", "Stop charging", currentTime, ButtonClass, Files[CancelIcon]);
             break;
 
         default:
@@ -1130,9 +1134,9 @@ void handleHttpBluetoothRequest()
     BluetoothState btState = Bluetooth.getState();
     uint16_t refreshInterval = (btState == BluetoothState::Discovering) ? 5 : 0;
 
-    Html.writeHeader(F("Bluetooth"), Nav, refreshInterval);
+    Html.writeHeader("Bluetooth", Nav, refreshInterval);
 
-    if (WiFiSM.shouldPerformAction(F("startDiscovery")))
+    if (WiFiSM.shouldPerformAction("startDiscovery"))
     {
         if (Bluetooth.startDiscovery())
         {
@@ -1140,17 +1144,17 @@ void handleHttpBluetoothRequest()
             return;
         }
         else
-            Html.writeParagraph(F("Scanning for devices failed."));
+            Html.writeParagraph("Scanning for devices failed.");
     }
     else if (btState == BluetoothState::Initialized || btState == BluetoothState::DiscoveryComplete)
-        Html.writeActionLink(F("startDiscovery"), F("Scan for devices"), currentTime, ButtonClass);
+        Html.writeActionLink("startDiscovery", "Scan for devices", currentTime, ButtonClass);
 
     if (Bluetooth.isDeviceDetected())
-        Html.writeParagraph(F("Registered device detected"));
+        Html.writeParagraph("Registered device detected");
 
-    Html.writeFormStart(F("/bt"));
+    Html.writeFormStart("/bt");
 
-    Html.writeHeading(F("Registered beacons"), 2);
+    Html.writeHeading("Registered beacons", 2);
     for (int i = 0; i < PersistentData.registeredBeaconCount; i++)
     {
         UUID128 uuid = UUID128(PersistentData.registeredBeacons[i]);
@@ -1163,13 +1167,13 @@ void handleHttpBluetoothRequest()
 
     if (btState == BluetoothState::DiscoveryComplete)
     {
-        Html.writeHeading(F("Discovered beacons"), 2);
+        Html.writeHeading("Discovered beacons", 2);
         Html.writeTableStart();
         Html.writeRowStart();
-        Html.writeHeaderCell(F(""));
-        Html.writeHeaderCell(F("Address"));
-        Html.writeHeaderCell(F("UUID"));
-        Html.writeHeaderCell(F("RSSI"));
+        Html.writeHeaderCell("");
+        Html.writeHeaderCell("Address");
+        Html.writeHeaderCell("UUID");
+        Html.writeHeaderCell("RSSI");
         Html.writeRowEnd();
         for (BluetoothDeviceInfo& btDeviceInfo : Bluetooth.getDiscoveredDevices())
         {
@@ -1189,9 +1193,9 @@ void handleHttpBluetoothRequest()
         Html.writeTableEnd();
     }
     else if (btState == BluetoothState::Discovering)
-        Html.writeParagraph(F("Discovery in progress..."));
+        Html.writeParagraph("Discovery in progress...");
 
-    Html.writeSubmitButton(F("Update registration"), ButtonClass);
+    Html.writeSubmitButton("Update registration", ButtonClass);
     Html.writeFormEnd();
     Html.writeFooter();
 
@@ -1211,7 +1215,7 @@ void handleHttpBluetoothFormPost()
             if (n == MAX_BT_DEVICES) continue;
 
             String uuidStr = WebServer.arg(i);
-            TRACE(F("UUID: '%s'\n"), uuidStr.c_str());
+            TRACE("UUID: '%s'\n", uuidStr.c_str());
 
             UUID128 uuid = UUID128(uuidStr);
             memcpy(PersistentData.registeredBeacons[n++], uuid.data, sizeof(uuid128_t));
@@ -1241,14 +1245,14 @@ void handleHttpBluetoothJsonRequest()
     }
 
     HttpResponse.clear();
-    HttpResponse.print(F("[ "));
+    HttpResponse.print("[ ");
     bool first = true;
     for (BluetoothDeviceInfo& btDevice : Bluetooth.getDiscoveredDevices())
     {
         if (first)
             first = false;
         else
-            HttpResponse.print(F(", "));
+            HttpResponse.print(", ");
 
         HttpResponse.printf(
             F("{ \"rssi\": %d, \"bda\": \"%s\", \"name\": \"%s\", \"uuid\": \"%s\", \"manufacturer\": \"%s\", \"isRegistered\": %s }"),
@@ -1260,7 +1264,7 @@ void handleHttpBluetoothJsonRequest()
             btDevice.isRegistered ? "true" : "false"
             );
     }
-    HttpResponse.println(F(" ]"));
+    HttpResponse.println(" ]");
 
     WebServer.send(200, ContentTypeJson, HttpResponse.c_str());
 }
@@ -1273,15 +1277,15 @@ void handleHttpChargeLogRequest()
     int currentPage = WebServer.hasArg("page") ? WebServer.arg("page").toInt() : 0;
     int totalPages = ((ChargeLog.count() - 1) / CHARGE_LOG_PAGE_SIZE) + 1;
 
-    Html.writeHeader(F("Charge log"), Nav);
+    Html.writeHeader("Charge log", Nav);
     Html.writePager(totalPages, currentPage);
     Html.writeTableStart();
 
     Html.writeRowStart();
-    Html.writeHeaderCell(F("Time"));
-    Html.writeHeaderCell(F("I<sub>limit</sub> (A)"));
-    Html.writeHeaderCell(F("I<sub>output</sub> (A)"));
-    Html.writeHeaderCell(F("T (°C)"));
+    Html.writeHeaderCell("Time");
+    Html.writeHeaderCell("I<sub>limit</sub> (A)");
+    Html.writeHeaderCell("I<sub>output</sub> (A)");
+    Html.writeHeaderCell("T (°C)");
     Html.writeRowEnd();
 
     ChargeLogEntry* logEntryPtr = ChargeLog.getFirstEntry();
@@ -1312,22 +1316,22 @@ void handleHttpEventLogRequest()
 {
     Tracer tracer(F(__func__));
 
-    if (WiFiSM.shouldPerformAction(F("clear")))
+    if (WiFiSM.shouldPerformAction("clear"))
     {
         EventLog.clear();
-        WiFiSM.logEvent(F("Event log cleared."));
+        WiFiSM.logEvent("Event log cleared.");
     }
 
-    Html.writeHeader(F("Event log"), Nav);
+    Html.writeHeader("Event log", Nav);
 
     const char* event = EventLog.getFirstEntry();
     while (event != nullptr)
     {
-        Html.writeDiv(F("%s"), event);
+        Html.writeDiv("%s", event);
         event = EventLog.getNextEntry();
     }
 
-    Html.writeActionLink(F("clear"), F("Clear event log"), currentTime, ButtonClass);
+    Html.writeActionLink("clear", "Clear event log", currentTime, ButtonClass);
 
     Html.writeFooter();
 
@@ -1337,9 +1341,9 @@ void handleHttpEventLogRequest()
 
 void handleHttpSyncFTPRequest()
 {
-    Tracer tracer(F("handleHttpSyncFTPRequest"));
+    Tracer tracer("handleHttpSyncFTPRequest");
 
-    Html.writeHeader(F("FTP Sync"), Nav);
+    Html.writeHeader("FTP Sync", Nav);
 
     HttpResponse.println("<pre>");
     bool success = trySyncFTP(&HttpResponse); 
@@ -1347,17 +1351,17 @@ void handleHttpSyncFTPRequest()
 
     if (success)
     {
-        Html.writeParagraph(F("Success!"));
+        Html.writeParagraph("Success!");
         ftpSyncTime = 0; // Cancel scheduled sync (if any)
     }
     else
-        Html.writeParagraph(F("Failed: %s"), FTPClient.getLastError());
+        Html.writeParagraph("Failed: %s", FTPClient.getLastError());
 
-    Html.writeHeading(F("CSV header"), 2);
-    HttpResponse.print(F("<pre>"));
-    HttpResponse.println(F("Time;Current Limit;Output Current;Temperature"));
-    HttpResponse.println(F("Start;Hours;Temperature;P (kW);E (kWh)"));
-    HttpResponse.println(F("</pre>"));
+    Html.writeHeading("CSV header", 2);
+    HttpResponse.print("<pre>");
+    HttpResponse.println("Time;Current Limit;Output Current;Temperature");
+    HttpResponse.println("Start;Hours;Temperature;P (kW);E (kWh)");
+    HttpResponse.println("</pre>");
 
     Html.writeFooter();
 
@@ -1369,7 +1373,7 @@ void handleHttpSmartMeterRequest()
 {
     Tracer tracer(F(__func__));
 
-    Html.writeHeader(F("Smart Meter"), Nav);
+    Html.writeHeader("Smart Meter", Nav);
 
     if (SmartMeter.isInitialized)
     {
@@ -1380,11 +1384,11 @@ void handleHttpSmartMeterRequest()
 
             Html.writeTableStart();
             Html.writeRowStart();
-            Html.writeHeaderCell(F("Phase"));
-            Html.writeHeaderCell(F("Voltage"));
-            Html.writeHeaderCell(F("Current"));
-            Html.writeHeaderCell(F("P<sub>delivered</sub>"));
-            Html.writeHeaderCell(F("P<sub>returned</sub>"));
+            Html.writeHeaderCell("Phase");
+            Html.writeHeaderCell("Voltage");
+            Html.writeHeaderCell("Current");
+            Html.writeHeaderCell("P<sub>delivered</sub>");
+            Html.writeHeaderCell("P<sub>returned</sub>");
             Html.writeRowEnd();
             for (PhaseData& phaseData : electricity)
             {
@@ -1398,35 +1402,35 @@ void handleHttpSmartMeterRequest()
             }
             Html.writeTableEnd();
 
-            TRACE(F("DSMR phase: %d\n"), PersistentData.dsmrPhase);
+            TRACE("DSMR phase: %d\n", PersistentData.dsmrPhase);
 
             PhaseData& monitoredPhaseData = electricity[PersistentData.dsmrPhase - 1];
             Html.writeParagraph(
-                F("Phase '%s' current: %0.1f A"),
+                "Phase '%s' current: %0.1f A",
                 monitoredPhaseData.Name.c_str(),
                 monitoredPhaseData.Pdelivered / CHARGE_VOLTAGE);
         }
         else
             Html.writeParagraph(
-                F("%s returned %d: %s"),
+                "%s returned %d: %s",
                 PersistentData.dsmrMonitor,
                 dsmrResult,
                 SmartMeter.getLastError().c_str());
     }
     else
-        Html.writeParagraph(F("Smart Meter is not enabled."));
+        Html.writeParagraph("Smart Meter is not enabled.");
 
     Html.writeParagraph(
-        F("Configured current limit: %d A"),
+        "Configured current limit: %d A",
         static_cast<int>(PersistentData.currentLimit));
 
     Html.writeParagraph(
-        F("Temperature: %0.1f °C => derated current limit: %0.1f A"),
+        "Temperature: %0.1f °C => derated current limit: %0.1f A",
         temperature,
         getDeratedCurrentLimit());
 
     Html.writeParagraph(
-        F("Effective current limit: %0.1f A"),
+        "Effective current limit: %0.1f A",
          determineCurrentLimit());
 
     Html.writeFooter();
@@ -1492,32 +1496,32 @@ void handleHttpCalibrateRequest()
     float cpDutyCycle = ControlPilot.getDutyCycle();
     float tMeasured = TempSensors.getTempC(PersistentData.tempSensorAddress);
 
-    Html.writeHeader(F("Calibrate"), Nav);
+    Html.writeHeader("Calibrate", Nav);
 
-    Html.writeHeading(F("Control Pilot"), 2);
+    Html.writeHeading("Control Pilot", 2);
     Html.writeTableStart();
-    Html.writeRow(F("Measured"), F("%0.2f V"), cpVoltage);
-    Html.writeRow(F("Duty Cycle"), F("%0.0f %%"), cpDutyCycle * 100);
+    Html.writeRow("Measured", F("%0.2f V"), cpVoltage);
+    Html.writeRow("Duty Cycle", F("%0.0f %%"), cpDutyCycle * 100);
     Html.writeTableEnd();
 
-    Html.writeHeading(F("Output current"), 2);
-    Html.writeFormStart(F("/calibrate"), F("grid"));
+    Html.writeHeading("Output current", 2);
+    Html.writeFormStart("/calibrate", "grid");
     HttpResponse.printf(F("<label>Samples</label><div>%d</div>\r\n"), OutputCurrentSensor.getSampleCount());
     HttpResponse.printf(F("<label>Measured (DC)</labeL><div>%0.1f mA "), outputCurrentDC * 1000);
-    Html.writeActionLink(CAL_CURRENT_ZERO, F("[Calibrate zero]"), currentTime);
+    Html.writeActionLink(CAL_CURRENT_ZERO, "[Calibrate zero]", currentTime);
     Html.writeDivEnd();
     HttpResponse.printf(F("<label>Measured (Peak)</labeL><div>%0.2f A</div>\r\n"), outputCurrentPeak);
     HttpResponse.printf(F("<label>Measured (RMS)</labeL><div>%0.2f A</div>\r\n"), outputCurrentRMS);
-    Html.writeNumberBox(CAL_CURRENT, F("Actual (RMS)"), outputCurrentRMS, 0, 20, 2);
-    Html.writeSubmitButton(F("Calibrate"));
+    Html.writeNumberBox(CAL_CURRENT, "Actual (RMS)", outputCurrentRMS, 0, 20, 2);
+    Html.writeSubmitButton("Calibrate");
     Html.writeFormEnd();
 
-    Html.writeHeading(F("Temperature sensor"), 2);
-    Html.writeFormStart(F("/calibrate"), F("grid"));
+    Html.writeHeading("Temperature sensor", 2);
+    Html.writeFormStart("/calibrate", "grid");
     HttpResponse.printf(F("<label>Measured</label><div>%0.2f °C</div>\r\n"), tMeasured);
-    Html.writeTextBox(CAL_TEMP_OFFSET, F("Offset"), String(PersistentData.tempSensorOffset), 5);
+    Html.writeTextBox(CAL_TEMP_OFFSET, "Offset", String(PersistentData.tempSensorOffset), 5);
     HttpResponse.printf(F("<label>Effective</label><div>%0.2f °C</div>\r\n"), tMeasured + PersistentData.tempSensorOffset);
-    Html.writeSubmitButton(F("Calibrate"));
+    Html.writeSubmitButton("Calibrate");
     Html.writeFormEnd();
 
     Html.writeFooter();
@@ -1530,17 +1534,17 @@ void handleHttpConfigFormRequest()
 {
     Tracer tracer(F(__func__));
 
-    Html.writeHeader(F("Settings"), Nav);
+    Html.writeHeader("Settings", Nav);
 
-    Html.writeFormStart(F("/config"), F("grid"));
+    Html.writeFormStart("/config", "grid");
     PersistentData.writeHtmlForm(Html);
-    Html.writeSubmitButton(F("Save"));
+    Html.writeSubmitButton("Save");
     Html.writeFormEnd();
 
-    if (WiFiSM.shouldPerformAction(F("reset")))
+    if (WiFiSM.shouldPerformAction("reset"))
         WiFiSM.reset();
     else
-        Html.writeActionLink(F("reset"), F("Reset ESP"), currentTime, ButtonClass);
+        Html.writeActionLink("reset", "Reset ESP", currentTime, ButtonClass);
 
     Html.writeFooter();
 
