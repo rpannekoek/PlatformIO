@@ -62,7 +62,17 @@
 			"streambuf": "cpp",
 			"thread": "cpp",
 			"cinttypes": "cpp",
-			"typeinfo": "cpp"
+			"typeinfo": "cpp",
+			"iot_net.h": "c",
+			"iot_error.h": "c",
+			"iot_net_platform.h": "c",
+			"iot_mqtt.h": "c",
+			"iot_bsp_wifi.h": "c",
+			"st_dev.h": "c",
+			"iot_os_util.h": "c",
+			"iot_security_ecdh.h": "c",
+			"iot_security_crypto.h": "c",
+			"iot_log_file.h": "c"
 		}
 	}
 }

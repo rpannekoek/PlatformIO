@@ -5,7 +5,7 @@ struct Settings : public WiFiSettingsWithFTP
 {
     int ftpSyncEntries;
 
-    Settings() : WiFiSettingsWithFTP(PSTR("SolarMiles"))
+    Settings() : WiFiSettingsWithFTP(PSTR("EnergyMeter"))
     {
         addIntegerField(ftpSyncEntries, "FTP sync entries", 0, POWER_LOG_SIZE);
     }

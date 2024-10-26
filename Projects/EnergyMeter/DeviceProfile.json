@@ -1,0 +1,50 @@
+{
+    "id": "82759511-a296-4226-91ff-34cfbf5d0d0d",
+    "name": "EnergyMeter",
+    "metadata": {
+        "vid": "ST_a4713a2f-c09d-434d-a3d1-86d4202eb7d6",
+        "deviceType": "Power Meter",
+        "mnmn": "fmrf",
+        "ocfDeviceType": "x.com.st.d.energymeter",
+        "deviceTypeId": "Power Meter",
+        "ocfSpecVer": "core 1.1.0",
+        "mnid": "fmrf",
+        "mnId": "fmrf"
+    },
+    "migrationStatus": "NOT_MIGRATED",
+    "status": "DEVELOPMENT",
+    "preferences": [],
+    "components": [
+        {
+            "label": "main",
+            "id": "main",
+            "capabilities": [
+                {
+                    "id": "healthCheck",
+                    "version": 1,
+                    "ephemeral": false
+                },
+                {
+                    "id": "powerConsumptionReport",
+                    "version": 1,
+                    "ephemeral": false
+                },
+                {
+                    "id": "powerMeter",
+                    "version": 1,
+                    "ephemeral": false
+                },
+                {
+                    "id": "energyMeter",
+                    "version": 1,
+                    "ephemeral": false
+                }
+            ],
+            "categories": []
+        }
+    ],
+    "owner": {
+        "ownerType": "USER",
+        "ownerId": "6b6a96c4-6178-3890-8269-b38fd9fcc436"
+    }
+}

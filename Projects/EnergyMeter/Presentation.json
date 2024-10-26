@@ -1,0 +1,50 @@
+{
+    "mnmn": "fmrf",
+    "vid": "ST_a4713a2f-c09d-434d-a3d1-86d4202eb7d6",
+    "version": "0.0.1",
+    "dashboard": {
+        "states": [
+            {
+                "label": "{{power.value}} {{power.unit}}",
+                "capability": "powerMeter",
+                "version": 1,
+                "component": "main",
+                "composite": false,
+                "group": "main",
+                "transient": false
+            }
+        ],
+        "actions": [],
+        "basicPlus": []
+    },
+    "dpInfo": [
+        {
+            "os": "ios",
+            "dpUri": "plugin://com.samsung.ios.plugin.stplugin/assets/files/index.html",
+            "arguments": []
+        },
+        {
+            "os": "android",
+            "dpUri": "plugin://com.samsung.android.plugin.stplugin",
+            "arguments": []
+        },
+        {
+            "os": "web",
+            "dpUri": "wwst://com.samsung.one.plugin.stplugin",
+            "arguments": []
+        }
+    ],
+    "language": [
+        {
+            "locale": "en_US",
+            "poCodes": [
+                {
+                    "label": "Power meter",
+                    "po": "___PO_CODE_CAPABILITY.SMARTTHINGS.POWERMETER_DEFAULT"
+                }
+            ]
+        }
+    ],
+    "manufacturerName": "fmrf",
+    "presentationId": "ST_a4713a2f-c09d-434d-a3d1-86d4202eb7d6"
+}

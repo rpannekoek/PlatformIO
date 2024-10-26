@@ -1,0 +1,69 @@
+{
+  "mnmn": "fmrf",
+  "vid": "ST_a4713a2f-c09d-434d-a3d1-86d4202eb7d6",
+  "version": "0.0.1",
+  "type": "profile",
+  "dashboard": {
+    "states": [
+      {
+        "component": "main",
+        "capability": "powerMeter",
+        "version": 1,
+        "values": [],
+        "idx": 0,
+        "group": "main",
+        "composite": false
+      }
+    ],
+    "actions": [],
+    "basicPlus": []
+  },
+  "detailView": [
+    {
+      "component": "main",
+      "capability": "powerMeter",
+      "version": 1,
+      "values": [],
+      "patch": []
+    },
+    {
+      "component": "main",
+      "capability": "energyMeter",
+      "version": 1,
+      "values": [],
+      "patch": []
+    }
+  ],
+  "automation": {
+    "conditions": [
+      {
+        "component": "main",
+        "capability": "powerMeter",
+        "version": 1,
+        "values": [],
+        "patch": [],
+        "exclusion": []
+      },
+      {
+        "component": "main",
+        "capability": "energyMeter",
+        "version": 1,
+        "values": [],
+        "patch": [],
+        "exclusion": []
+      }
+    ],
+    "actions": [
+      {
+        "component": "main",
+        "capability": "energyMeter",
+        "version": 1,
+        "values": [],
+        "patch": [],
+        "exclusion": []
+      }
+    ]
+  },
+  "migration": true,
+  "isAutoUpdateRequired": true
+}
