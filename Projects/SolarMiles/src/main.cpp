@@ -18,6 +18,7 @@
 #include "PersistentData.h"
 #include "EnergyLog.h"
 #include "PowerLog.h"
+#include "SmartHome.h"
 
 enum FileId
 {
@@ -60,6 +61,7 @@ SimpleLED BuiltinLED(LED_BUILTIN);
 WiFiStateMachine WiFiSM(BuiltinLED, TimeServer, WebServer, EventLog);
 Navigation Nav;
 SPIClass NRFSPI;
+SmartHomeClass SmartHome;
 
 StaticLog<PowerLogEntry> PowerLog(POWER_LOG_SIZE);
 PowerLogEntry* lastPowerLogEntryPtr = nullptr;
@@ -90,6 +92,7 @@ void handleHttpConfigFormPost();
 void handleHttpInvertersFormRequest();
 void handleHttpInvertersFormPost();
 void handleHttpGridProfileRequest();
+void handleHttpSmartHomeRequest();
 bool trySyncFTP(Print* printTo);
 
 
@@ -179,6 +182,13 @@ void setup()
         MenuItem
         {
             .icon = Files[SettingsIcon],
+            .label = PSTR("Smart Home"),
+            .urlPath =PSTR("smartHome"),
+            .handler = handleHttpSmartHomeRequest
+        },
+        MenuItem
+        {
+            .icon = Files[SettingsIcon],
             .label = PSTR("Inverters"),
             .urlPath =PSTR("inverters"),
             .handler = handleHttpInvertersFormRequest,
@@ -226,6 +236,8 @@ void setup()
             PersistentData.registeredInverters[i].name,
             PersistentData.registeredInverters[i].serial);  
     }
+
+    SmartHome.begin(5.0F, 5 * SECONDS_PER_MINUTE, 30);
 
     Tracer::traceFreeHeap();
 
@@ -559,11 +571,22 @@ void onTimeServerSynced()
     TotalEnergyLog.init(currentTime);
     for (InverterLog* inverterLogPtr : InverterLogPtrs)
         inverterLogPtr->acEnergyLogPtr->init(currentTime);
+
+    if (PersistentData.fritzbox[0] != 0)
+    {
+        if (!SmartHome.useFritzbox(PersistentData.fritzbox, PersistentData.fritzUser, PersistentData.fritzPassword))
+            WiFiSM.logEvent("Unable to initalize Fritzbox connection");
+        if (!SmartHome.discoverDevices())
+            WiFiSM.logEvent("Unable to discover Smart Devices");
+    }
 }
 
 
 void onWiFiInitialized()
 {
+    if (!SmartHome.update(currentTime))
+        WiFiSM.logEvent("Unable to update Smart Devices");
+
     // Run the Hoymiles loop only after we obtained NTP time,
     // because an (Epoch) timestamp is included in the messages.
     Hoymiles.loop();
@@ -1287,6 +1310,40 @@ void handleHttpGridProfileRequest()
         }
         Html.writeTableEnd();
     }
+
+    Html.writeFooter();
+
+    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
+}
+
+
+void handleHttpSmartHomeRequest()
+{
+    Tracer tracer("handleHttpSmartHomeRequest");
+
+    Html.writeHeader("Smart Home", Nav);
+
+    Html.writeTableStart();
+    Html.writeRowStart();
+    Html.writeHeaderCell("Name");
+    Html.writeHeaderCell("State");
+    Html.writeHeaderCell("Switch");
+    Html.writeHeaderCell("Power (W)");
+    Html.writeHeaderCell("Energy (kWh)");
+    Html.writeHeaderCell("Last on");
+    Html.writeRowEnd();
+    for (SmartDevice* smartDevicePtr : SmartHome.devices)
+    {
+        Html.writeRowStart();
+        Html.writeCell(smartDevicePtr->name);
+        Html.writeCell(smartDevicePtr->getStateLabel());
+        Html.writeCell(smartDevicePtr->getSwitchStateLabel());
+        Html.writeCell(smartDevicePtr->power, F("%0.2f"));
+        Html.writeCell(smartDevicePtr->energy, F("%0.3f"));
+        Html.writeCell(formatTime("%H:%M", smartDevicePtr->lastOn));
+        Html.writeRowEnd();
+    }
+    Html.writeTableEnd();
 
     Html.writeFooter();
 
