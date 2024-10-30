@@ -1,36 +1,49 @@
 #include <tr064.h>
 #include <vector>
+#include <Log.h>
+#include <Logger.h>
 
-constexpr int MAX_SMART_DEVICES = 10;
+constexpr int SH_ENERGY_LOG_SIZE = 50;
+constexpr uint32_t SH_RETRY_DELAY = 5;
 
 enum struct SmartDeviceState
 {
-    Disabled = 0,
+    Unknown = 0,
     Off = 1,
     On = 2
 };
 
 class SmartDevice;
 
-class SmartHomeClass
+struct SmartDeviceEnergyLogEntry
 {
-    friend class SmartDevice;
+    SmartDevice* devicePtr;
+    time_t start = 0;
+    time_t end = 0;
+    float energyStart = 0;
+    float energyDelta = 0;
+    float maxPower = 0;
 
-    public:
-        std::vector<SmartDevice*> devices;
+    uint32_t getDuration()
+    {
+        return end - start;
+    }
 
-        bool begin(float powerThreshold, uint32_t powerOffDelay, uint32_t pollInterval);
-        bool useFritzbox(const char* host, const char* user, const char* password);
-        bool discoverDevices();
-        bool update(time_t currentTime);
+    void reset(time_t time, float energy)
+    {
+        start = time;
+        end = time;
+        energyStart = energy;
+        energyDelta = 0;
+        maxPower = 0;
+    }
 
-    private:
-        TR064 _fritzbox;
-        float _powerThreshold;
-        uint32_t _powerOffDelay;
-        uint32_t _pollInterval;
-        time_t _lastPollTime;
-        int _pollDeviceIndex;
+    void update(time_t time, float energy, float power)
+    {
+        end = time;
+        energyDelta = energy - energyStart;
+        maxPower = std::max(maxPower, power);
+    }
 };
 
 class SmartDevice
@@ -38,39 +51,97 @@ class SmartDevice
     public:
         String id;
         String name;
-        SmartDeviceState state = SmartDeviceState::Disabled;
-        SmartDeviceState switchState = SmartDeviceState::Disabled;
+        SmartDeviceState state = SmartDeviceState::Unknown;
+        SmartDeviceState switchState = SmartDeviceState::Unknown;
         float power = 0;
         float energy = 0;
-        time_t lastOn = 0;
+        float temperature = 0;
         float powerThreshold = 0;
         uint32_t powerOffDelay = 0;
+        SmartDeviceEnergyLogEntry energyLogEntry; 
 
         const char* getStateLabel();
         const char* getSwitchStateLabel();
         virtual bool update(time_t currentTime);
 
     protected:
-        SmartDevice(const String& id, const String& name)
+        ILogger& _logger;
+
+        SmartDevice(const String& id, const String& name, ILogger& logger)
+            : _logger(logger)
         {
             this->id = id;
             this->name = name;
+            energyLogEntry.devicePtr = this;
         }
 };
 
 class FritzSmartPlug : public SmartDevice
 {
     public:
-        float temperature;
-
-        FritzSmartPlug(const String& id, const String& name, TR064& fritzbox)
-            : SmartDevice(id, name), _fritzbox(fritzbox)
+        FritzSmartPlug(const String& id, const String& name, TR064* fritzboxPtr, ILogger& logger)
+            : SmartDevice(id, name, logger)
         {
+            _fritzboxPtr = fritzboxPtr;
         }
+
+        static FritzSmartPlug* discover(int index, TR064* fritzboxPtr, ILogger& logger);
 
         bool update(time_t currentTime) override;
 
     private:
-        TR064& _fritzbox;
+        TR064* _fritzboxPtr;
 };
+
+enum struct SmartHomeState
+{
+    Uninitialized = 0,
+    Initialized,
+    ConnectingFritzbox,
+    DiscoveringDevices,
+    Ready
+};
+
+class SmartHomeClass
+{
+    public:
+        std::vector<SmartDevice*> devices;
+        StaticLog<SmartDeviceEnergyLogEntry> energyLog;
+        int logEntriesToSync = 0;
+        int errors = 0;
+
+        SmartHomeClass(ILogger& logger)
+            : energyLog(SH_ENERGY_LOG_SIZE),  _logger(logger)
+        {
+        }
+
+        SmartHomeState getState()
+        {
+            return _state;
+        }
+
+        const char* getStateLabel();
+        uint32_t getResponseTimeMs();
+
+        bool begin(float powerThreshold, uint32_t powerOffDelay, uint32_t pollInterval);
+        bool useFritzbox(const char* host, const char* user, const char* password);
+        bool startDiscovery();
+
+    private:
+        ILogger& _logger;
+        volatile SmartHomeState _state = SmartHomeState::Uninitialized;
+        TaskHandle_t _taskHandle = nullptr;
+        TR064* _fritzboxPtr = nullptr;
+        float _powerThreshold;
+        uint32_t _powerOffDelay;
+        uint32_t _pollInterval;
+        uint32_t _pollMillis;
+        int _currentDeviceIndex;
+
+        void setState(SmartHomeState newState);
+        bool updateDevice();
+        void runStateMachine();
+        static void run(void* taskParam);
+};
+
 

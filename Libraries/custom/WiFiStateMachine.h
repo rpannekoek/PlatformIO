@@ -5,6 +5,7 @@
 #include <ESPWebServer.h>
 #include <WiFiNTP.h>
 #include <Log.h>
+#include <Logger.h>
 #include <LED.h>
 
 enum struct WiFiInitState
@@ -27,7 +28,7 @@ enum struct WiFiInitState
 };
 
 
-class WiFiStateMachine
+class WiFiStateMachine : public ILogger
 {
     public:
         // Constructor
@@ -46,8 +47,8 @@ class WiFiStateMachine
         void forceReconnect();
 
         void traceDiag();
-        void logEvent(String format, ...);
-        void logEvent(const char* msg);
+        virtual void logEvent(String format, ...) override;
+        virtual void logEvent(const char* msg) override;
         time_t getCurrentTime();
         bool shouldPerformAction(String name);
 

@@ -4,10 +4,18 @@
 Print* Tracer::_traceToPtr = nullptr;
 char _traceMsg[256];
 
+#ifdef ESP32
+SemaphoreHandle_t _traceMutex;
+#endif
+
+
 
 void Tracer::traceTo(Print& dest)
 {
     _traceToPtr = &dest;
+#ifdef ESP32
+    _traceMutex = xSemaphoreCreateMutex();
+#endif
 }
 
 
@@ -16,6 +24,10 @@ void Tracer::trace(String format, ...)
     if (_traceToPtr == nullptr)
         return;
 
+#ifdef ESP32
+    xSemaphoreTake(_traceMutex, 1000);
+#endif
+
     va_list args;
     va_start(args, format);
     int length = vsnprintf(_traceMsg, sizeof(_traceMsg) - 1, format.c_str(), args);
@@ -23,6 +35,10 @@ void Tracer::trace(String format, ...)
     va_end(args);
 
     _traceToPtr->print(_traceMsg);
+
+#ifdef ESP32
+    xSemaphoreGive(_traceMutex);
+#endif
 }
 
 

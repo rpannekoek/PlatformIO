@@ -61,7 +61,7 @@ SimpleLED BuiltinLED(LED_BUILTIN);
 WiFiStateMachine WiFiSM(BuiltinLED, TimeServer, WebServer, EventLog);
 Navigation Nav;
 SPIClass NRFSPI;
-SmartHomeClass SmartHome;
+SmartHomeClass SmartHome(WiFiSM);
 
 StaticLog<PowerLogEntry> PowerLog(POWER_LOG_SIZE);
 PowerLogEntry* lastPowerLogEntryPtr = nullptr;
@@ -181,7 +181,7 @@ void setup()
         },
         MenuItem
         {
-            .icon = Files[SettingsIcon],
+            .icon = Files[HomeIcon],
             .label = PSTR("Smart Home"),
             .urlPath =PSTR("smartHome"),
             .handler = handleHttpSmartHomeRequest
@@ -236,8 +236,6 @@ void setup()
             PersistentData.registeredInverters[i].name,
             PersistentData.registeredInverters[i].serial);  
     }
-
-    SmartHome.begin(5.0F, 5 * SECONDS_PER_MINUTE, 30);
 
     Tracer::traceFreeHeap();
 
@@ -297,11 +295,15 @@ void handleSerialRequest()
     }
     else if (cmd.startsWith("ftp"))
     {
-        for (int i = 0; i < 10; i++)
-        {
-            bool success = trySyncFTP(&Serial);
-            TRACE(F("----> %s\n"), success ? "Success" : "Failed");
-        }
+        SmartDeviceEnergyLogEntry testLogEntry;
+        testLogEntry.devicePtr = SmartHome.devices[0];
+        testLogEntry.start = currentTime - SECONDS_PER_HOUR;
+        testLogEntry.end = currentTime;
+        testLogEntry.maxPower = 666.1;
+        testLogEntry.energyDelta = 6.666;
+        SmartHome.energyLog.add(&testLogEntry);
+        SmartHome.logEntriesToSync = 1;
+        syncFTPTime = currentTime;
     }
     else if (cmd.startsWith("wifi"))
     {
@@ -481,6 +483,22 @@ void writePowerLogEntriesCsv(Print& output)
 }
 
 
+void writeSmartHomeLogCsv(Print& output)
+{
+    SmartDeviceEnergyLogEntry* logEntryPtr = SmartHome.energyLog.getEntryFromEnd(SmartHome.logEntriesToSync);
+    while (logEntryPtr != nullptr)
+    {
+        output.printf("%s;", formatTime("%F %H:%M", logEntryPtr->start));
+        output.printf("%s;", logEntryPtr->devicePtr->name.c_str());
+        output.printf("%0.1f;", float(logEntryPtr->getDuration()) / SECONDS_PER_HOUR);
+        output.printf("%0.0f;", logEntryPtr->maxPower);
+        output.printf("%0.3f", logEntryPtr->energyDelta);
+        output.println();
+        logEntryPtr = SmartHome.energyLog.getNextEntry();
+    }
+}
+
+
 bool trySyncFTP(Print* printTo)
 {
     Tracer tracer("trySyncFTP");
@@ -556,6 +574,32 @@ bool trySyncFTP(Print* printTo)
         }
     }
 
+    if (success && SmartHome.logEntriesToSync != 0)
+    {
+        if (FTPClient.passive())
+        {
+            snprintf(filename, sizeof(filename), "%s_SmartHome.csv", PersistentData.hostName);
+            WiFiClient& dataClient = FTPClient.append(filename);
+            if (dataClient.connected())
+            {
+                writeSmartHomeLogCsv(dataClient);
+                dataClient.stop();
+            }
+            if (FTPClient.readServerResponse() == 226)
+            {
+                lastFTPSyncTime = currentTime;
+                SmartHome.logEntriesToSync = 0;
+            }
+            else
+            {
+                FTPClient.setUnexpectedResponse();
+                success = false;                
+            }
+        }
+        else
+            success = false;
+    }
+
     FTPClient.end();
     return success;
 }
@@ -572,21 +616,18 @@ void onTimeServerSynced()
     for (InverterLog* inverterLogPtr : InverterLogPtrs)
         inverterLogPtr->acEnergyLogPtr->init(currentTime);
 
-    if (PersistentData.fritzbox[0] != 0)
+    if (!WiFiSM.isInAccessPointMode() && PersistentData.enableFritzSmartHome && PersistentData.isFTPEnabled())
     {
-        if (!SmartHome.useFritzbox(PersistentData.fritzbox, PersistentData.fritzUser, PersistentData.fritzPassword))
-            WiFiSM.logEvent("Unable to initalize Fritzbox connection");
-        if (!SmartHome.discoverDevices())
-            WiFiSM.logEvent("Unable to discover Smart Devices");
+        if (!SmartHome.begin(5.0F, 5 * SECONDS_PER_MINUTE, 10))
+            WiFiSM.logEvent("Unable to initialize SmartHome");
+        SmartHome.useFritzbox(PersistentData.ftpServer, PersistentData.ftpUser, PersistentData.ftpPassword);
+        WiFiSM.logEvent("Connecting to Fritzbox '%s' using TR-064.", PersistentData.ftpServer);
     }
 }
 
 
 void onWiFiInitialized()
 {
-    if (!SmartHome.update(currentTime))
-        WiFiSM.logEvent("Unable to update Smart Devices");
-
     // Run the Hoymiles loop only after we obtained NTP time,
     // because an (Epoch) timestamp is included in the messages.
     Hoymiles.loop();
@@ -607,6 +648,9 @@ void onWiFiInitialized()
         delay(100); // Ensure LED blink is visible
         BuiltinLED.setOn(false);
     }
+
+    if (SmartHome.logEntriesToSync != 0 && syncFTPTime == 0)
+        syncFTPTime = currentTime + SECONDS_PER_MINUTE; // Prevent FTP sync shortly after eachother
 
     if ((syncFTPTime != 0) && (currentTime >= syncFTPTime) && WiFiSM.isConnected())
     {
@@ -1020,6 +1064,7 @@ void handleHttpSyncFTPRequest()
     }
     HttpResponse.println();
     HttpResponse.println("Date;On time (h);Max Power (W);Energy (kWh)");
+    HttpResponse.println("Time;Device;On time (h);Max Power (W);Energy (kWh)");
     Html.writePreEnd();
 
     Html.writeFooter();
@@ -1323,14 +1368,29 @@ void handleHttpSmartHomeRequest()
 
     Html.writeHeader("Smart Home", Nav);
 
+    Html.writeDivStart("flex-container");
+
+    Html.writeSectionStart("Status");
+    Html.writeTableStart();
+    Html.writeRow("State", "%s", SmartHome.getStateLabel());
+    Html.writeRow("Response", "%d ms", SmartHome.getResponseTimeMs());
+    Html.writeRow("Errors", "%d", SmartHome.errors);
+    Html.writeRow("FTP Sync", "%d", SmartHome.logEntriesToSync);
+    Html.writeTableEnd();
+    Html.writeSectionEnd();
+
+    Html.writeSectionStart("Devices");
     Html.writeTableStart();
     Html.writeRowStart();
     Html.writeHeaderCell("Name");
     Html.writeHeaderCell("State");
     Html.writeHeaderCell("Switch");
-    Html.writeHeaderCell("Power (W)");
-    Html.writeHeaderCell("Energy (kWh)");
+    Html.writeHeaderCell("P (W)");
+    Html.writeHeaderCell("E (kWh)");
+    Html.writeHeaderCell("T (°C)");
     Html.writeHeaderCell("Last on");
+    Html.writeHeaderCell("Duration");
+    Html.writeHeaderCell("ΔE (kWh)");
     Html.writeRowEnd();
     for (SmartDevice* smartDevicePtr : SmartHome.devices)
     {
@@ -1340,11 +1400,41 @@ void handleHttpSmartHomeRequest()
         Html.writeCell(smartDevicePtr->getSwitchStateLabel());
         Html.writeCell(smartDevicePtr->power, F("%0.2f"));
         Html.writeCell(smartDevicePtr->energy, F("%0.3f"));
-        Html.writeCell(formatTime("%H:%M", smartDevicePtr->lastOn));
+        Html.writeCell(smartDevicePtr->temperature, F("%0.1f"));
+        Html.writeCell(formatTime("%a %H:%M", smartDevicePtr->energyLogEntry.start));
+        Html.writeCell(formatTimeSpan(smartDevicePtr->energyLogEntry.getDuration()));
+        Html.writeCell(smartDevicePtr->energyLogEntry.energyDelta, F("%0.3f"));
         Html.writeRowEnd();
     }
     Html.writeTableEnd();
+    Html.writeSectionEnd();
 
+    Html.writeSectionStart("Energy log");
+    Html.writeTableStart();
+    Html.writeRowStart();
+    Html.writeHeaderCell("Device");
+    Html.writeHeaderCell("Start");
+    Html.writeHeaderCell("Duration");
+    Html.writeHeaderCell("P<sub>max</sub> (W)");
+    Html.writeHeaderCell("Energy (kWh)");
+    Html.writeRowEnd();
+    SmartDeviceEnergyLogEntry* logEntryPtr = SmartHome.energyLog.getFirstEntry();
+    while (logEntryPtr != nullptr)
+    {
+        Html.writeRowStart();
+        Html.writeCell(logEntryPtr->devicePtr->name);
+        Html.writeCell(formatTime("%a %H:%M", logEntryPtr->start));
+        Html.writeCell(formatTimeSpan(logEntryPtr->getDuration()));
+        Html.writeCell(logEntryPtr->maxPower, F("%0.0f"));
+        Html.writeCell(logEntryPtr->energyDelta, F("%0.3f"));
+        Html.writeRowEnd();
+
+        logEntryPtr = SmartHome.energyLog.getNextEntry();
+    }
+    Html.writeTableEnd();
+    Html.writeSectionEnd();
+
+    Html.writeDivEnd();
     Html.writeFooter();
 
     WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());

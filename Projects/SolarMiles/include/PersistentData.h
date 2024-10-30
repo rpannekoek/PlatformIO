@@ -21,9 +21,7 @@ struct Settings : public WiFiSettingsWithFTP
     int ftpSyncEntries;
     size_t registeredInvertersCount;
     RegisteredInverter registeredInverters[MAX_REGISTERED_INVERTERS];
-    char fritzbox[32];
-    char fritzUser[32];
-    char fritzPassword[32];
+    bool enableFritzSmartHome;
 
     Settings() : WiFiSettingsWithFTP(
         PSTR("SolarMiles"),
@@ -32,9 +30,7 @@ struct Settings : public WiFiSettingsWithFTP
         addStringField(dtuSerial, sizeof(dtuSerial), "DTU serial#", DEFAULT_DTU_SERIAL);
         addIntegerField(dtuTxLevel, "DTU Tx Level", RF24_PA_MIN, RF24_PA_MAX, RF24_PA_MAX);
         addIntegerField(ftpSyncEntries, "FTP sync entries", 0, POWER_LOG_SIZE);
-        addStringField(fritzbox, sizeof(fritzbox), "Fritzbox");
-        addStringField(fritzUser, sizeof(fritzUser), "Fritz user", "smarthomeuser");
-        addPasswordField(fritzPassword, sizeof(fritzPassword), "Fritz password");
+        addBooleanField(enableFritzSmartHome, "Fritz! SmartHome");
     }
 
     void initialize() override
