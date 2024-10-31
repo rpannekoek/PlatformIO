@@ -114,7 +114,7 @@ void SmartHomeClass::runStateMachine()
                 setState(SmartHomeState::DiscoveringDevices);
             else
             {
-                _logger.logEvent("SmartHome: TR-064 connection failed. Retry in %d s...", SH_RETRY_DELAY);
+                _logger.logEvent("SmartHome: TR-064 connection failed");
                 errors++;
                 delay(SH_RETRY_DELAY * 1000);
             }
@@ -140,10 +140,9 @@ void SmartHomeClass::runStateMachine()
                 else
                 {
                     _logger.logEvent(
-                        "SmartHome: Discovery error %d '%s'. Retry in %d s...",
+                        "SmartHome: Discovery error %d '%s'",
                         _fritzboxPtr->errorCode(),
-                        _fritzboxPtr->errorDescription(),
-                        SH_RETRY_DELAY);
+                        _fritzboxPtr->errorDescription());
                     errors++;
                     delay(SH_RETRY_DELAY * 1000);
                 }
@@ -154,7 +153,8 @@ void SmartHomeClass::runStateMachine()
             if (currentMillis >= _pollMillis && devices.size() > 0)
             {
                 _pollMillis += _pollInterval * 1000;
-                updateDevice();
+                if (WiFi.status() == WL_CONNECTED)
+                    updateDevice();
             }
             break;
 
@@ -187,7 +187,7 @@ bool SmartHomeClass::updateDevice()
     {
         // Device switched off; update energy log
         energyLog.add(&smartDevicePtr->energyLogEntry);
-        logEntriesToSync = std::max(logEntriesToSync + 1, SH_ENERGY_LOG_SIZE);
+        logEntriesToSync = std::min(logEntriesToSync + 1, SH_ENERGY_LOG_SIZE);
     }
 
     _currentDeviceIndex++;
@@ -214,6 +214,8 @@ bool SmartDevice::update(time_t currentTime)
 
     if (switchState == SmartDeviceState::Off)
     {
+        if (state == SmartDeviceState::On)
+            _logger.logEvent("Smart Device '%s' off", name.c_str());
         state = SmartDeviceState::Off;
     }
     else
@@ -222,6 +224,7 @@ bool SmartDevice::update(time_t currentTime)
         {
             if (state == SmartDeviceState::Off)
             {
+                _logger.logEvent("Smart Device '%s' on", name.c_str());
                 state = SmartDeviceState::On;
                 energyLogEntry.reset(currentTime, energy);
             }
@@ -229,6 +232,8 @@ bool SmartDevice::update(time_t currentTime)
         }
         else if (currentTime > energyLogEntry.end + powerOffDelay)
         {
+            if (state == SmartDeviceState::On)
+                _logger.logEvent("Smart Device '%s' idle", name.c_str());
             state = SmartDeviceState::Off;
         }
     }
@@ -269,12 +274,18 @@ bool FritzSmartPlug::update(time_t currentTime)
 
     if (!_fritzboxPtr->action("X_AVM-DE_Homeauto:1", "GetSpecificDeviceInfos", params, 1, fields, 7))
     {
-        _logger.logEvent(
-            "FritzSmartPlug error %d '%s'",
-            _fritzboxPtr->errorCode(),
-            _fritzboxPtr->errorDescription());
+        int errorCode = _fritzboxPtr->errorCode(); 
+        if (errorCode != _lastErrorCode)
+        {
+            _logger.logEvent(
+                "FritzSmartPlug error %d '%s'",
+                errorCode,
+                _fritzboxPtr->errorDescription());
+        }
+        _lastErrorCode = errorCode; 
         return false;
     }
+    _lastErrorCode = 0;
 
     if (fields[0][1] != "CONNECTED")
     {
@@ -282,27 +293,25 @@ bool FritzSmartPlug::update(time_t currentTime)
         return false;
     }
 
-    if (fields[1][1] == "VALID")
-    {
-        if (fields[2][1] == "OFF")
-            switchState = SmartDeviceState::Off;
-        else if (fields[2][1] == "ON")
-            switchState = SmartDeviceState::On;
-        else
-        {
-            _logger.logEvent("FritzSmartPlug: SwitchState='%s'", fields[2][1].c_str());
-            switchState = SmartDeviceState::Unknown;
-        }
-    }
-    else
+    if (fields[1][1] != "VALID")
     {
         _logger.logEvent("FritzSmartPlug: SwitchIsValid='%s'", fields[1][1].c_str());
-        switchState = SmartDeviceState::Unknown;
+        return false;
     }
 
     if (fields[3][1] != "VALID")
     {
         _logger.logEvent("FritzSmartPlug: MultimeterIsValid='%s'", fields[3][1].c_str());
+        return false;
+    }
+
+    if (fields[2][1] == "OFF")
+        switchState = SmartDeviceState::Off;
+    else if (fields[2][1] == "ON")
+        switchState = SmartDeviceState::On;
+    else
+    {
+        _logger.logEvent("FritzSmartPlug: SwitchState='%s'", fields[2][1].c_str());
         return false;
     }
 

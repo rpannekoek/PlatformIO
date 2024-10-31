@@ -91,6 +91,7 @@ class FritzSmartPlug : public SmartDevice
 
     private:
         TR064* _fritzboxPtr;
+        int _lastErrorCode = 0;
 };
 
 enum struct SmartHomeState
@@ -112,13 +113,9 @@ class SmartHomeClass
 
         SmartHomeClass(ILogger& logger)
             : energyLog(SH_ENERGY_LOG_SIZE),  _logger(logger)
-        {
-        }
+        {}
 
-        SmartHomeState getState()
-        {
-            return _state;
-        }
+        SmartHomeState getState() { return _state; }
 
         const char* getStateLabel();
         uint32_t getResponseTimeMs();
@@ -143,5 +140,3 @@ class SmartHomeClass
         void runStateMachine();
         static void run(void* taskParam);
 };
-
-

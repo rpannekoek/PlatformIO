@@ -492,7 +492,7 @@ void writeSmartHomeLogCsv(Print& output)
         output.printf("%s;", logEntryPtr->devicePtr->name.c_str());
         output.printf("%0.1f;", float(logEntryPtr->getDuration()) / SECONDS_PER_HOUR);
         output.printf("%0.0f;", logEntryPtr->maxPower);
-        output.printf("%0.3f", logEntryPtr->energyDelta);
+        output.printf("%0.0f", logEntryPtr->energyDelta * 1000);
         output.println();
         logEntryPtr = SmartHome.energyLog.getNextEntry();
     }
@@ -650,7 +650,7 @@ void onWiFiInitialized()
     }
 
     if (SmartHome.logEntriesToSync != 0 && syncFTPTime == 0)
-        syncFTPTime = currentTime + SECONDS_PER_MINUTE; // Prevent FTP sync shortly after eachother
+        syncFTPTime = currentTime + FTP_RETRY_INTERVAL; // Prevent FTP sync shortly after eachother
 
     if ((syncFTPTime != 0) && (currentTime >= syncFTPTime) && WiFiSM.isConnected())
     {
@@ -1390,7 +1390,7 @@ void handleHttpSmartHomeRequest()
     Html.writeHeaderCell("T (°C)");
     Html.writeHeaderCell("Last on");
     Html.writeHeaderCell("Duration");
-    Html.writeHeaderCell("ΔE (kWh)");
+    Html.writeHeaderCell("ΔE (Wh)");
     Html.writeRowEnd();
     for (SmartDevice* smartDevicePtr : SmartHome.devices)
     {
@@ -1403,7 +1403,7 @@ void handleHttpSmartHomeRequest()
         Html.writeCell(smartDevicePtr->temperature, F("%0.1f"));
         Html.writeCell(formatTime("%a %H:%M", smartDevicePtr->energyLogEntry.start));
         Html.writeCell(formatTimeSpan(smartDevicePtr->energyLogEntry.getDuration()));
-        Html.writeCell(smartDevicePtr->energyLogEntry.energyDelta, F("%0.3f"));
+        Html.writeCell(smartDevicePtr->energyLogEntry.energyDelta * 1000, F("%0.0f"));
         Html.writeRowEnd();
     }
     Html.writeTableEnd();
@@ -1416,7 +1416,7 @@ void handleHttpSmartHomeRequest()
     Html.writeHeaderCell("Start");
     Html.writeHeaderCell("Duration");
     Html.writeHeaderCell("P<sub>max</sub> (W)");
-    Html.writeHeaderCell("Energy (kWh)");
+    Html.writeHeaderCell("Energy (Wh)");
     Html.writeRowEnd();
     SmartDeviceEnergyLogEntry* logEntryPtr = SmartHome.energyLog.getFirstEntry();
     while (logEntryPtr != nullptr)
@@ -1426,7 +1426,7 @@ void handleHttpSmartHomeRequest()
         Html.writeCell(formatTime("%a %H:%M", logEntryPtr->start));
         Html.writeCell(formatTimeSpan(logEntryPtr->getDuration()));
         Html.writeCell(logEntryPtr->maxPower, F("%0.0f"));
-        Html.writeCell(logEntryPtr->energyDelta, F("%0.3f"));
+        Html.writeCell(logEntryPtr->energyDelta * 1000, F("%0.0f"));
         Html.writeRowEnd();
 
         logEntryPtr = SmartHome.energyLog.getNextEntry();
