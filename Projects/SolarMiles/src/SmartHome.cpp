@@ -1,4 +1,5 @@
 #include <Tracer.h>
+#include <TimeUtils.h>
 #include "SmartHome.h"
 
 const char* _smartHomeStateLabels[] =
@@ -86,6 +87,93 @@ bool SmartHomeClass::startDiscovery()
 
     setState(SmartHomeState::DiscoveringDevices);
     return true;
+}
+
+
+void SmartHomeClass::writeHtml(HtmlWriter& html)
+{
+    html.writeDivStart("flex-container");
+
+    html.writeSectionStart("Status");
+    html.writeTableStart();
+    html.writeRow("State", "%s", getStateLabel());
+    html.writeRow("Response", "%d ms", getResponseTimeMs());
+    html.writeRow("Errors", "%d", errors);
+    html.writeRow("FTP Sync", "%d", logEntriesToSync);
+    html.writeTableEnd();
+    html.writeSectionEnd();
+
+    html.writeSectionStart("Devices");
+    html.writeTableStart();
+    html.writeRowStart();
+    html.writeHeaderCell("Name");
+    html.writeHeaderCell("State");
+    html.writeHeaderCell("Switch");
+    html.writeHeaderCell("P (W)");
+    html.writeHeaderCell("E (kWh)");
+    html.writeHeaderCell("T (°C)");
+    html.writeHeaderCell("Last on");
+    html.writeHeaderCell("Duration");
+    html.writeHeaderCell("ΔE (Wh)");
+    html.writeRowEnd();
+    for (SmartDevice* smartDevicePtr : devices)
+    {
+        html.writeRowStart();
+        html.writeCell(smartDevicePtr->name);
+        html.writeCell(smartDevicePtr->getStateLabel());
+        html.writeCell(smartDevicePtr->getSwitchStateLabel());
+        html.writeCell(smartDevicePtr->power, F("%0.2f"));
+        html.writeCell(smartDevicePtr->energy, F("%0.3f"));
+        html.writeCell(smartDevicePtr->temperature, F("%0.1f"));
+        html.writeCell(formatTime("%a %H:%M", smartDevicePtr->energyLogEntry.start));
+        html.writeCell(formatTimeSpan(smartDevicePtr->energyLogEntry.getDuration()));
+        html.writeCell(smartDevicePtr->energyLogEntry.energyDelta * 1000, F("%0.0f"));
+        html.writeRowEnd();
+    }
+    html.writeTableEnd();
+    html.writeSectionEnd();
+
+    html.writeSectionStart("Energy log");
+    html.writeTableStart();
+    html.writeRowStart();
+    html.writeHeaderCell("Device");
+    html.writeHeaderCell("Start");
+    html.writeHeaderCell("Duration");
+    html.writeHeaderCell("P<sub>max</sub> (W)");
+    html.writeHeaderCell("Energy (Wh)");
+    html.writeRowEnd();
+    SmartDeviceEnergyLogEntry* logEntryPtr = energyLog.getFirstEntry();
+    while (logEntryPtr != nullptr)
+    {
+        html.writeRowStart();
+        html.writeCell(logEntryPtr->devicePtr->name);
+        html.writeCell(formatTime("%a %H:%M", logEntryPtr->start));
+        html.writeCell(formatTimeSpan(logEntryPtr->getDuration()));
+        html.writeCell(logEntryPtr->maxPower, F("%0.0f"));
+        html.writeCell(logEntryPtr->energyDelta * 1000, F("%0.0f"));
+        html.writeRowEnd();
+
+        logEntryPtr = energyLog.getNextEntry();
+    }
+    html.writeTableEnd();
+    html.writeSectionEnd();
+
+    html.writeDivEnd();
+    html.writeFooter();
+}
+
+
+void SmartHomeClass::writeEnergyLogCsv(Print& output, bool onlyEntriesToSync)
+{
+    SmartDeviceEnergyLogEntry* logEntryPtr = onlyEntriesToSync
+        ? energyLog.getEntryFromEnd(logEntriesToSync)
+        : energyLog.getFirstEntry();
+        
+    while (logEntryPtr != nullptr)
+    {
+        logEntryPtr->writeCsv(output);
+        logEntryPtr = energyLog.getNextEntry();
+    }
 }
 
 
@@ -192,6 +280,17 @@ bool SmartHomeClass::updateDevice()
 
     _currentDeviceIndex++;
     return true;
+}
+
+
+void SmartDeviceEnergyLogEntry::writeCsv(Print& output)
+{
+    output.printf("%s;", formatTime("%F %H:%M", start));
+    output.printf("%s;", devicePtr->name.c_str());
+    output.printf("%0.1f;", float(getDuration()) / SECONDS_PER_HOUR);
+    output.printf("%0.0f;", maxPower);
+    output.printf("%0.0f", energyDelta * 1000);
+    output.println();
 }
 
 

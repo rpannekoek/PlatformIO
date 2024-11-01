@@ -483,22 +483,6 @@ void writePowerLogEntriesCsv(Print& output)
 }
 
 
-void writeSmartHomeLogCsv(Print& output)
-{
-    SmartDeviceEnergyLogEntry* logEntryPtr = SmartHome.energyLog.getEntryFromEnd(SmartHome.logEntriesToSync);
-    while (logEntryPtr != nullptr)
-    {
-        output.printf("%s;", formatTime("%F %H:%M", logEntryPtr->start));
-        output.printf("%s;", logEntryPtr->devicePtr->name.c_str());
-        output.printf("%0.1f;", float(logEntryPtr->getDuration()) / SECONDS_PER_HOUR);
-        output.printf("%0.0f;", logEntryPtr->maxPower);
-        output.printf("%0.0f", logEntryPtr->energyDelta * 1000);
-        output.println();
-        logEntryPtr = SmartHome.energyLog.getNextEntry();
-    }
-}
-
-
 bool trySyncFTP(Print* printTo)
 {
     Tracer tracer("trySyncFTP");
@@ -582,7 +566,7 @@ bool trySyncFTP(Print* printTo)
             WiFiClient& dataClient = FTPClient.append(filename);
             if (dataClient.connected())
             {
-                writeSmartHomeLogCsv(dataClient);
+                SmartHome.writeEnergyLogCsv(dataClient);
                 dataClient.stop();
             }
             if (FTPClient.readServerResponse() == 226)
@@ -1367,75 +1351,7 @@ void handleHttpSmartHomeRequest()
     Tracer tracer("handleHttpSmartHomeRequest");
 
     Html.writeHeader("Smart Home", Nav);
-
-    Html.writeDivStart("flex-container");
-
-    Html.writeSectionStart("Status");
-    Html.writeTableStart();
-    Html.writeRow("State", "%s", SmartHome.getStateLabel());
-    Html.writeRow("Response", "%d ms", SmartHome.getResponseTimeMs());
-    Html.writeRow("Errors", "%d", SmartHome.errors);
-    Html.writeRow("FTP Sync", "%d", SmartHome.logEntriesToSync);
-    Html.writeTableEnd();
-    Html.writeSectionEnd();
-
-    Html.writeSectionStart("Devices");
-    Html.writeTableStart();
-    Html.writeRowStart();
-    Html.writeHeaderCell("Name");
-    Html.writeHeaderCell("State");
-    Html.writeHeaderCell("Switch");
-    Html.writeHeaderCell("P (W)");
-    Html.writeHeaderCell("E (kWh)");
-    Html.writeHeaderCell("T (°C)");
-    Html.writeHeaderCell("Last on");
-    Html.writeHeaderCell("Duration");
-    Html.writeHeaderCell("ΔE (Wh)");
-    Html.writeRowEnd();
-    for (SmartDevice* smartDevicePtr : SmartHome.devices)
-    {
-        Html.writeRowStart();
-        Html.writeCell(smartDevicePtr->name);
-        Html.writeCell(smartDevicePtr->getStateLabel());
-        Html.writeCell(smartDevicePtr->getSwitchStateLabel());
-        Html.writeCell(smartDevicePtr->power, F("%0.2f"));
-        Html.writeCell(smartDevicePtr->energy, F("%0.3f"));
-        Html.writeCell(smartDevicePtr->temperature, F("%0.1f"));
-        Html.writeCell(formatTime("%a %H:%M", smartDevicePtr->energyLogEntry.start));
-        Html.writeCell(formatTimeSpan(smartDevicePtr->energyLogEntry.getDuration()));
-        Html.writeCell(smartDevicePtr->energyLogEntry.energyDelta * 1000, F("%0.0f"));
-        Html.writeRowEnd();
-    }
-    Html.writeTableEnd();
-    Html.writeSectionEnd();
-
-    Html.writeSectionStart("Energy log");
-    Html.writeTableStart();
-    Html.writeRowStart();
-    Html.writeHeaderCell("Device");
-    Html.writeHeaderCell("Start");
-    Html.writeHeaderCell("Duration");
-    Html.writeHeaderCell("P<sub>max</sub> (W)");
-    Html.writeHeaderCell("Energy (Wh)");
-    Html.writeRowEnd();
-    SmartDeviceEnergyLogEntry* logEntryPtr = SmartHome.energyLog.getFirstEntry();
-    while (logEntryPtr != nullptr)
-    {
-        Html.writeRowStart();
-        Html.writeCell(logEntryPtr->devicePtr->name);
-        Html.writeCell(formatTime("%a %H:%M", logEntryPtr->start));
-        Html.writeCell(formatTimeSpan(logEntryPtr->getDuration()));
-        Html.writeCell(logEntryPtr->maxPower, F("%0.0f"));
-        Html.writeCell(logEntryPtr->energyDelta * 1000, F("%0.0f"));
-        Html.writeRowEnd();
-
-        logEntryPtr = SmartHome.energyLog.getNextEntry();
-    }
-    Html.writeTableEnd();
-    Html.writeSectionEnd();
-
-    Html.writeDivEnd();
-    Html.writeFooter();
+    SmartHome.writeHtml(Html);
 
     WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }

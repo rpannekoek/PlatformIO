@@ -2,8 +2,9 @@
 #include <vector>
 #include <Log.h>
 #include <Logger.h>
+#include <HtmlWriter.h>
 
-constexpr int SH_ENERGY_LOG_SIZE = 50;
+constexpr int SH_ENERGY_LOG_SIZE = 20;
 constexpr uint32_t SH_RETRY_DELAY = 5;
 
 enum struct SmartDeviceState
@@ -24,10 +25,7 @@ struct SmartDeviceEnergyLogEntry
     float energyDelta = 0;
     float maxPower = 0;
 
-    uint32_t getDuration()
-    {
-        return end - start;
-    }
+    uint32_t getDuration() { return end - start; }
 
     void reset(time_t time, float energy)
     {
@@ -44,6 +42,8 @@ struct SmartDeviceEnergyLogEntry
         energyDelta = energy - energyStart;
         maxPower = std::max(maxPower, power);
     }
+
+    void writeCsv(Print& output);
 };
 
 class SmartDevice
@@ -94,6 +94,20 @@ class FritzSmartPlug : public SmartDevice
         int _lastErrorCode = 0;
 };
 
+class SmartThingsPlug : public SmartDevice
+{
+    public:
+        SmartThingsPlug(const String& id, const String& name, ILogger& logger)
+            : SmartDevice(id, name, logger)
+        {
+        }
+
+        bool update(time_t currentTime) override;
+
+    private:
+        int _lastErrorCode = 0;
+};
+
 enum struct SmartHomeState
 {
     Uninitialized = 0,
@@ -123,6 +137,8 @@ class SmartHomeClass
         bool begin(float powerThreshold, uint32_t powerOffDelay, uint32_t pollInterval);
         bool useFritzbox(const char* host, const char* user, const char* password);
         bool startDiscovery();
+        void writeHtml(HtmlWriter& html);
+        void writeEnergyLogCsv(Print& output, bool onlyEntriesToSync = true);
 
     private:
         ILogger& _logger;
