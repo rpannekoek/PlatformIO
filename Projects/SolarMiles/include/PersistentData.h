@@ -22,6 +22,9 @@ struct Settings : public WiFiSettingsWithFTP
     size_t registeredInvertersCount;
     RegisteredInverter registeredInverters[MAX_REGISTERED_INVERTERS];
     bool enableFritzSmartHome;
+    char smartThingsPAT[48];
+    int powerThreshold;
+    int idleDelay;
 
     Settings() : WiFiSettingsWithFTP(
         PSTR("SolarMiles"),
@@ -30,7 +33,10 @@ struct Settings : public WiFiSettingsWithFTP
         addStringField(dtuSerial, sizeof(dtuSerial), "DTU serial#", DEFAULT_DTU_SERIAL);
         addIntegerField(dtuTxLevel, "DTU Tx Level", RF24_PA_MIN, RF24_PA_MAX, RF24_PA_MAX);
         addIntegerField(ftpSyncEntries, "FTP sync entries", 0, POWER_LOG_SIZE);
-        addBooleanField(enableFritzSmartHome, "Fritz! SmartHome");
+        addBooleanField(enableFritzSmartHome, "Fritz! SmartHome", false, 4);
+        addStringField(smartThingsPAT, sizeof(smartThingsPAT), "SmartThings PAT");
+        addIntegerField(powerThreshold, "Power threshold", 0, 100, 5);
+        addTimeSpanField(idleDelay, "Idle delay", 0, 3600, 5 * 60);
     }
 
     void initialize() override

@@ -2,14 +2,25 @@
 #include <TimeUtils.h>
 #include "SmartHome.h"
 
+constexpr size_t NUM_SMARTTHINGS_CAPABILITIES = 3;
+
+const char* _smartThingsCapabilities[] = 
+{
+    "switch",
+    "powerMeter",
+    "energyMeter"
+};
+
 const char* _smartHomeStateLabels[] =
 { 
     "Uninitialized",
     "Initialized",
     "Connecting Fritzbox",
-    "Discovering Devices",
+    "Discovering Fritz Devices",
+    "Discovering SmartThings",
     "Ready"
 };
+
 const char* _smartDeviceStateLabels[] = { "Unknown", "Off", "On" };
 
 
@@ -26,9 +37,22 @@ void SmartHomeClass::setState(SmartHomeState newState)
 }
 
 
-uint32_t SmartHomeClass::getResponseTimeMs()
+bool SmartHomeClass::useFritzbox(const char* host, const char* user, const char* password)
 {
-    return (_fritzboxPtr == nullptr) ? 0 : _fritzboxPtr->responseTimeMs();    
+    Tracer tracer("SmartHomeClass::useFritzbox", host);
+
+    _fritzboxPtr = new TR064(49000, host, user, password, 2048);
+    _fritzboxPtr->debug_level = TR064::LoggingLevels::DEBUG_INFO;
+    return true;
+}
+
+
+bool SmartHomeClass::useSmartThings(const char* pat, const char* certificate)
+{
+    Tracer tracer("SmartHomeClass::useSmartThings", pat);
+
+    _smartThingsPtr = new SmartThingsClient(pat, certificate, _logger);
+    return true;
 }
 
 
@@ -40,38 +64,21 @@ bool SmartHomeClass::begin(float powerThreshold, uint32_t powerOffDelay, uint32_
     _powerOffDelay = powerOffDelay;
     _pollInterval = pollInterval;
     _currentDeviceIndex = 0;
+    _nextActionMillis = 0;
 
-    BaseType_t res = xTaskCreate(
-        run,
-        "SmartHome",
-        8192, // Stack Size (words)
-        this,
-        3, // Priority
-        &_taskHandle);
-
-    if (res != pdPASS)
+    if (_fritzboxPtr != nullptr)
     {
-        _logger.logEvent("SmartHome: xTaskCreate returned %d\n", res);
-        return false;
+        setState(SmartHomeState::ConnectingFritzbox);
+        return true;
     }
 
-    setState(SmartHomeState::Initialized);
-    return true;
-}
+    if (_smartThingsPtr != nullptr)
+    {
+        setState(SmartHomeState::DiscoveringSmartThings);
+        return true;
+    }
 
-
-bool SmartHomeClass::useFritzbox(const char* host, const char* user, const char* password)
-{
-    Tracer tracer("SmartHomeClass::useFritzbox", host);
-
-    if (_state != SmartHomeState::Initialized)
-        return false;
-
-    _fritzboxPtr = new TR064(49000, host, user, password);
-    _fritzboxPtr->debug_level = TR064::LoggingLevels::DEBUG_INFO;
-
-    setState(SmartHomeState::ConnectingFritzbox);
-    return true;
+    return false;
 }
 
 
@@ -79,13 +86,18 @@ bool SmartHomeClass::startDiscovery()
 {
     Tracer tracer("SmartHomeClass::startDiscovery");
 
-    if (_state != SmartHomeState::Ready || _fritzboxPtr == nullptr)
+    if (_state != SmartHomeState::Ready)
         return false;
 
+    if (_fritzboxPtr != nullptr)
+        setState(SmartHomeState::DiscoveringFritzDevices);
+    else if (_smartThingsPtr != nullptr)
+        setState(SmartHomeState::DiscoveringSmartThings);
+    else
+        return false;
+ 
     devices.clear();
     energyLog.clear();
-
-    setState(SmartHomeState::DiscoveringDevices);
     return true;
 }
 
@@ -97,9 +109,13 @@ void SmartHomeClass::writeHtml(HtmlWriter& html)
     html.writeSectionStart("Status");
     html.writeTableStart();
     html.writeRow("State", "%s", getStateLabel());
-    html.writeRow("Response", "%d ms", getResponseTimeMs());
+    if (_fritzboxPtr != nullptr)
+        html.writeRow("Fritzbox", "%d ms", _fritzboxPtr->responseTimeMs());
+    if (_smartThingsPtr != nullptr)
+        html.writeRow("SmartThings", "%d ms", _smartThingsPtr->responseTimeMs());
     html.writeRow("Errors", "%d", errors);
-    html.writeRow("FTP Sync", "%d", logEntriesToSync);
+    html.writeRow("Free Heap", "%0.1f kB", float(ESP.getMaxAllocHeap()) / 1024);
+
     html.writeTableEnd();
     html.writeSectionEnd();
 
@@ -177,70 +193,49 @@ void SmartHomeClass::writeEnergyLogCsv(Print& output, bool onlyEntriesToSync)
 }
 
 
-void SmartHomeClass::run(void* taskParam)
-{
-    SmartHomeClass* instancePtr = static_cast<SmartHomeClass*>(taskParam); 
-    while (true)
-    {
-        instancePtr->runStateMachine();
-        delay(100);
-    }
-}
-
-
-void SmartHomeClass::runStateMachine()
+void SmartHomeClass::run()
 {
     uint32_t currentMillis = millis();
-    FritzSmartPlug* fritzSmartPlugPtr;
-    int index;
+    if (currentMillis < _nextActionMillis) return;
 
     switch (_state)
     {
         case SmartHomeState::ConnectingFritzbox:
             _fritzboxPtr->init();
             if (_fritzboxPtr->state() == TR064_SERVICES_LOADED)
-                setState(SmartHomeState::DiscoveringDevices);
+                setState(SmartHomeState::DiscoveringFritzDevices);
             else
             {
                 _logger.logEvent("SmartHome: TR-064 connection failed");
                 errors++;
-                delay(SH_RETRY_DELAY * 1000);
+                _nextActionMillis = currentMillis + SH_RETRY_DELAY_MS;
             }
             break;
 
-        case SmartHomeState::DiscoveringDevices:
-            index = devices.size();
-            TRACE("Discover device #%d...\n", index);
-            fritzSmartPlugPtr = FritzSmartPlug::discover(index, _fritzboxPtr, _logger);
-            if (fritzSmartPlugPtr != nullptr)
+        case SmartHomeState::DiscoveringFritzDevices:
+            if (discoverFritzSmartPlug(devices.size()))
             {
-                fritzSmartPlugPtr->powerThreshold = _powerThreshold;
-                fritzSmartPlugPtr->powerOffDelay = _powerOffDelay; 
-                devices.push_back(fritzSmartPlugPtr);
+                if (_smartThingsPtr == nullptr)
+                    setState(SmartHomeState::Ready);
+                else
+                    setState(SmartHomeState::DiscoveringSmartThings);
             }
+            break;
+
+        case SmartHomeState::DiscoveringSmartThings:
+            if (discoverSmartThings())
+                setState(SmartHomeState::Ready);
             else
             {
-                if (_fritzboxPtr->errorCode() == TR064::TR064_CODE_ARRAYINDEXINVALID)
-                {
-                    _pollMillis = currentMillis;    
-                    setState(SmartHomeState::Ready);
-                }
-                else
-                {
-                    _logger.logEvent(
-                        "SmartHome: Discovery error %d '%s'",
-                        _fritzboxPtr->errorCode(),
-                        _fritzboxPtr->errorDescription());
-                    errors++;
-                    delay(SH_RETRY_DELAY * 1000);
-                }
-            }
+                errors++;
+                _nextActionMillis = currentMillis + SH_RETRY_DELAY_MS;    
+           }
             break;
 
         case SmartHomeState::Ready:
-            if (currentMillis >= _pollMillis && devices.size() > 0)
+            if (devices.size() > 0)
             {
-                _pollMillis += _pollInterval * 1000;
+                _nextActionMillis = currentMillis + _pollInterval * 1000;
                 if (WiFi.status() == WL_CONNECTED)
                     updateDevice();
             }
@@ -250,6 +245,96 @@ void SmartHomeClass::runStateMachine()
             // Nothing to do
             break;        
     }
+}
+
+
+bool SmartHomeClass::discoverFritzSmartPlug(int index)
+{
+    TRACE("Discover FritzSmartPlug #%d...\n", index);
+
+    FritzSmartPlug* fritzSmartPlugPtr = FritzSmartPlug::discover(index, _fritzboxPtr, _logger);
+    if (fritzSmartPlugPtr != nullptr)
+    {
+        fritzSmartPlugPtr->powerThreshold = _powerThreshold;
+        fritzSmartPlugPtr->powerOffDelay = _powerOffDelay; 
+        devices.push_back(fritzSmartPlugPtr);
+        return false;
+    }
+
+    if (_fritzboxPtr->errorCode() == TR064::TR064_CODE_ARRAYINDEXINVALID)
+        return true; // Discoved all FritzSmartPlug devices
+
+    _logger.logEvent(
+        "FritzSmartPlug discovery error %d '%s'",
+        _fritzboxPtr->errorCode(),
+        _fritzboxPtr->errorDescription());
+
+    errors++;
+    _nextActionMillis = millis() + SH_RETRY_DELAY_MS;
+    return false;
+}
+
+
+uint32_t getCapabilityFlags(JsonArray& jsonCapabilities)
+{
+    uint32_t result  = 0;
+
+    for (JsonVariant jsonCapability : jsonCapabilities)
+    {
+        uint32_t capabilityFlag = 1;
+        for (int i = 0; i < NUM_SMARTTHINGS_CAPABILITIES; i++)
+        {
+            String capabilityId = jsonCapability["id"];
+            if (capabilityId == _smartThingsCapabilities[i])
+            {
+                result |= capabilityFlag;
+                break;
+            }
+            capabilityFlag <<= 1;
+        }
+    }
+
+    return result;
+}
+
+
+bool SmartHomeClass::discoverSmartThings()
+{
+    Tracer tracer("SmartHomeClass::discoverSmartThings");
+
+    if (!_smartThingsPtr->requestDevices())
+        return false;
+
+    JsonArray jsonDevices = _smartThingsPtr->jsonDoc["items"];
+    TRACE("%d devices found\n", jsonDevices.size());
+
+    for (JsonVariant jsonDevice : jsonDevices)
+    {
+        String deviceId = jsonDevice["deviceId"];
+        String label = jsonDevice["label"];
+        //TRACE ("Device '%s'\n", label.c_str());
+
+        JsonArray jsonComponents = jsonDevice["components"];
+        for (JsonVariant jsonComponent : jsonComponents)
+        {
+            String componentId = jsonComponent["id"];
+            //TRACE("\tComponent '%s'\n", componentId.c_str());
+            if (componentId != "main") continue;
+
+            JsonArray jsonCapabilities = jsonComponent["capabilities"];
+            uint32_t capabilityFlags = getCapabilityFlags(jsonCapabilities);
+            TRACE("Device '%s' Component 'main' Capabilities: %x\n", label.c_str(), capabilityFlags);
+
+            if (capabilityFlags == 7)
+            {
+                SmartThingsPlug* smartThingsPlugPtr = new SmartThingsPlug(deviceId, label, _smartThingsPtr, _logger);
+                devices.push_back(smartThingsPlugPtr);
+            }
+        }
+    }
+
+    _smartThingsPtr->cleanup();
+    return true;    
 }
 
 
@@ -417,6 +502,30 @@ bool FritzSmartPlug::update(time_t currentTime)
     power = fields[4][1].toFloat() / 100;
     energy = fields[5][1].toFloat() / 1000;
     temperature = fields[6][1].toFloat() / 10;
+
+    return SmartDevice::update(currentTime);
+}
+
+
+bool SmartThingsPlug::update(time_t currentTime)
+{
+    Tracer tracer("SmartThingsPlug::update", id.c_str());
+
+    if (!_smartThingsPtr->requestDeviceStatus(id))
+        return false;
+
+    String switchValue = _smartThingsPtr->jsonDoc["switch"]["switch"]["value"];
+    switchState = (switchValue == "on") ? SmartDeviceState::On : SmartDeviceState::Off;
+
+    JsonVariant jsonPower = _smartThingsPtr->jsonDoc["powerMeter"]["power"]; 
+    power = jsonPower["value"];
+    
+    JsonVariant jsonEnergy = _smartThingsPtr->jsonDoc["energyMeter"]["energy"];
+    energy = jsonEnergy["value"];
+    if (static_cast<String>(jsonEnergy["unit"]) == "Wh")
+        energy /= 1000;
+    
+    _smartThingsPtr->cleanup();
 
     return SmartDevice::update(currentTime);
 }

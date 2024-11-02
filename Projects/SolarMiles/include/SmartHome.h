@@ -3,9 +3,10 @@
 #include <Log.h>
 #include <Logger.h>
 #include <HtmlWriter.h>
+#include "SmartThings.h"
 
 constexpr int SH_ENERGY_LOG_SIZE = 20;
-constexpr uint32_t SH_RETRY_DELAY = 5;
+constexpr uint32_t SH_RETRY_DELAY_MS = 5000;
 
 enum struct SmartDeviceState
 {
@@ -97,14 +98,16 @@ class FritzSmartPlug : public SmartDevice
 class SmartThingsPlug : public SmartDevice
 {
     public:
-        SmartThingsPlug(const String& id, const String& name, ILogger& logger)
+        SmartThingsPlug(const String& id, const String& name, SmartThingsClient* smartThingsPtr, ILogger& logger)
             : SmartDevice(id, name, logger)
         {
+            _smartThingsPtr = smartThingsPtr;
         }
 
         bool update(time_t currentTime) override;
 
     private:
+        SmartThingsClient* _smartThingsPtr;
         int _lastErrorCode = 0;
 };
 
@@ -113,7 +116,8 @@ enum struct SmartHomeState
     Uninitialized = 0,
     Initialized,
     ConnectingFritzbox,
-    DiscoveringDevices,
+    DiscoveringFritzDevices,
+    DiscoveringSmartThings,
     Ready
 };
 
@@ -132,11 +136,12 @@ class SmartHomeClass
         SmartHomeState getState() { return _state; }
 
         const char* getStateLabel();
-        uint32_t getResponseTimeMs();
 
         bool begin(float powerThreshold, uint32_t powerOffDelay, uint32_t pollInterval);
         bool useFritzbox(const char* host, const char* user, const char* password);
+        bool useSmartThings(const char* pat, const char* certificate);
         bool startDiscovery();
+        void run();
         void writeHtml(HtmlWriter& html);
         void writeEnergyLogCsv(Print& output, bool onlyEntriesToSync = true);
 
@@ -145,14 +150,15 @@ class SmartHomeClass
         volatile SmartHomeState _state = SmartHomeState::Uninitialized;
         TaskHandle_t _taskHandle = nullptr;
         TR064* _fritzboxPtr = nullptr;
+        SmartThingsClient* _smartThingsPtr = nullptr;
         float _powerThreshold;
         uint32_t _powerOffDelay;
         uint32_t _pollInterval;
-        uint32_t _pollMillis;
+        uint32_t _nextActionMillis;
         int _currentDeviceIndex;
 
         void setState(SmartHomeState newState);
+        bool discoverFritzSmartPlug(int index);
+        bool discoverSmartThings();
         bool updateDevice();
-        void runStateMachine();
-        static void run(void* taskParam);
 };

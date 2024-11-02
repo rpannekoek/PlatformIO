@@ -54,9 +54,9 @@ const char* Timeframes[] =
 ESPWebServer WebServer(80); // Default HTTP port
 WiFiNTP TimeServer;
 WiFiFTPClient FTPClient(FTP_TIMEOUT_MS);
-StringBuilder HttpResponse(16 * 1024); // 16KB HTTP response buffer
+StringBuilder HttpResponse(8 * 1024);
 HtmlWriter Html(HttpResponse, Files[Logo], Files[Styles], MAX_BAR_LENGTH);
-Log<const char> EventLog(MAX_EVENT_LOG_SIZE);
+StringLog EventLog(MAX_EVENT_LOG_SIZE, 128);
 SimpleLED BuiltinLED(LED_BUILTIN);
 WiFiStateMachine WiFiSM(BuiltinLED, TimeServer, WebServer, EventLog);
 Navigation Nav;
@@ -145,6 +145,7 @@ void setup()
     #endif
 
     BuiltinLED.begin();
+    EventLog.begin();
 
     PersistentData.begin();
     TimeServer.begin(PersistentData.ntpServer);
@@ -309,6 +310,11 @@ void handleSerialRequest()
     {
         WiFiSM.traceDiag();
         WiFiSM.forceReconnect();
+    }
+    else if (cmd.startsWith("evt"))
+    {
+        for (int i = 0; i < MAX_EVENT_LOG_SIZE; i++)
+            WiFiSM.logEvent("Test event to fill event log");
     }
 }
 
@@ -600,18 +606,33 @@ void onTimeServerSynced()
     for (InverterLog* inverterLogPtr : InverterLogPtrs)
         inverterLogPtr->acEnergyLogPtr->init(currentTime);
 
-    if (!WiFiSM.isInAccessPointMode() && PersistentData.enableFritzSmartHome && PersistentData.isFTPEnabled())
+    if (!WiFiSM.isInAccessPointMode())
     {
-        if (!SmartHome.begin(5.0F, 5 * SECONDS_PER_MINUTE, 10))
+        if (PersistentData.enableFritzSmartHome && PersistentData.isFTPEnabled())
+            SmartHome.useFritzbox(PersistentData.ftpServer, PersistentData.ftpUser, PersistentData.ftpPassword);
+
+        if (PersistentData.smartThingsPAT[0] != 0)
+        {
+            static char* certificateBuffer = static_cast<char*>(ps_malloc(2048));            
+            File certificateFile = SPIFFS.open("/SmartThings.crt");
+            size_t bytesRead = certificateFile.readBytes(certificateBuffer, 2047);
+            certificateBuffer[bytesRead] = 0;
+            certificateFile.close();
+            TRACE("Certificate: %d bytes\n", bytesRead);
+
+            SmartHome.useSmartThings(PersistentData.smartThingsPAT, certificateBuffer);
+        }
+
+        if (!SmartHome.begin(PersistentData.powerThreshold, PersistentData.idleDelay, 10))
             WiFiSM.logEvent("Unable to initialize SmartHome");
-        SmartHome.useFritzbox(PersistentData.ftpServer, PersistentData.ftpUser, PersistentData.ftpPassword);
-        WiFiSM.logEvent("Connecting to Fritzbox '%s' using TR-064.", PersistentData.ftpServer);
     }
 }
 
 
 void onWiFiInitialized()
 {
+    SmartHome.run();
+
     // Run the Hoymiles loop only after we obtained NTP time,
     // because an (Epoch) timestamp is included in the messages.
     Hoymiles.loop();

@@ -14,7 +14,7 @@ constexpr uint32_t POLL_INTERVAL_DAY = 6;
 constexpr uint32_t POLL_INTERVAL_NIGHT = 5 * SECONDS_PER_MINUTE;
 constexpr uint32_t TODAY_LOG_INTERVAL = SECONDS_PER_HOUR / 2;
 
-constexpr int POWER_LOG_SIZE = 200;
+constexpr int POWER_LOG_SIZE = 100;
 constexpr int POWER_LOG_PAGE_SIZE = 50;
 constexpr int POWER_LOG_AGGREGATIONS = SECONDS_PER_MINUTE / POLL_INTERVAL_DAY;
 constexpr float POWER_EQUALS_MARGIN = 1.0F;

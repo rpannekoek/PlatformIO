@@ -2,6 +2,7 @@
 #define LOG_H
 
 #include <stdint.h>
+#include "PSRAM.h"
 
 template <class T>
 class Log
@@ -199,7 +200,7 @@ class StringLog
         {
             _size = size;
             _entrySize = entrySize;
-            _entries = new char[entrySize * size];
+            _entries = nullptr;
             _start = 0;
             _end = 0;
             _count = 0;
@@ -210,6 +211,11 @@ class StringLog
         ~StringLog()
         {
             delete[] _entries;
+        }
+
+        void begin()
+        {
+            _entries = static_cast<char*>(ESP_MALLOC(_entrySize * _size));
         }
 
         uint16_t count()
