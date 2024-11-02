@@ -612,16 +612,7 @@ void onTimeServerSynced()
             SmartHome.useFritzbox(PersistentData.ftpServer, PersistentData.ftpUser, PersistentData.ftpPassword);
 
         if (PersistentData.smartThingsPAT[0] != 0)
-        {
-            static char* certificateBuffer = static_cast<char*>(ps_malloc(2048));            
-            File certificateFile = SPIFFS.open("/SmartThings.crt");
-            size_t bytesRead = certificateFile.readBytes(certificateBuffer, 2047);
-            certificateBuffer[bytesRead] = 0;
-            certificateFile.close();
-            TRACE("Certificate: %d bytes\n", bytesRead);
-
-            SmartHome.useSmartThings(PersistentData.smartThingsPAT, certificateBuffer);
-        }
+            SmartHome.useSmartThings(PersistentData.smartThingsPAT);
 
         if (!SmartHome.begin(PersistentData.powerThreshold, PersistentData.idleDelay, 10))
             WiFiSM.logEvent("Unable to initialize SmartHome");

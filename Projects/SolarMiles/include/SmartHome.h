@@ -139,7 +139,7 @@ class SmartHomeClass
 
         bool begin(float powerThreshold, uint32_t powerOffDelay, uint32_t pollInterval);
         bool useFritzbox(const char* host, const char* user, const char* password);
-        bool useSmartThings(const char* pat, const char* certificate);
+        bool useSmartThings(const char* pat);
         bool startDiscovery();
         void run();
         void writeHtml(HtmlWriter& html);

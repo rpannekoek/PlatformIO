@@ -29,7 +29,7 @@ class SmartThingsClient
     public:
         JsonDocument jsonDoc;
 
-        SmartThingsClient(const char* pat, const char* certificate, ILogger& logger);
+        SmartThingsClient(const char* pat, ILogger& logger);
 
         uint32_t responseTimeMs() { return _responseTimeMs; }
 

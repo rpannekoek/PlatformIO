@@ -47,11 +47,11 @@ bool SmartHomeClass::useFritzbox(const char* host, const char* user, const char*
 }
 
 
-bool SmartHomeClass::useSmartThings(const char* pat, const char* certificate)
+bool SmartHomeClass::useSmartThings(const char* pat)
 {
     Tracer tracer("SmartHomeClass::useSmartThings", pat);
 
-    _smartThingsPtr = new SmartThingsClient(pat, certificate, _logger);
+    _smartThingsPtr = new SmartThingsClient(pat, _logger);
     return true;
 }
 
