@@ -1,5 +1,6 @@
 #include <tr064.h>
 #include <vector>
+#include <LED.h>
 #include <Log.h>
 #include <Logger.h>
 #include <HtmlWriter.h>
@@ -129,8 +130,8 @@ class SmartHomeClass
         int logEntriesToSync = 0;
         int errors = 0;
 
-        SmartHomeClass(ILogger& logger)
-            : energyLog(SH_ENERGY_LOG_SIZE),  _logger(logger)
+        SmartHomeClass(LED& led, ILogger& logger)
+            : energyLog(SH_ENERGY_LOG_SIZE), _led(led), _logger(logger)
         {}
 
         SmartHomeState getState() { return _state; }
@@ -146,6 +147,7 @@ class SmartHomeClass
         void writeEnergyLogCsv(Print& output, bool onlyEntriesToSync = true);
 
     private:
+        LED& _led;
         ILogger& _logger;
         volatile SmartHomeState _state = SmartHomeState::Uninitialized;
         TaskHandle_t _taskHandle = nullptr;

@@ -20,6 +20,8 @@
 #include "PowerLog.h"
 #include "SmartHome.h"
 
+#define YELLOW 200,200,0
+
 enum FileId
 {
     Logo,
@@ -51,17 +53,22 @@ const char* Timeframes[] =
     "month"
 };
 
+#ifdef LOLIN_S2_MINI
+SimpleLED BuiltinLED(LED_BUILTIN);
+#else
+RGBLED BuiltinLED(LED_BUILTIN);
+#endif
+
 ESPWebServer WebServer(80); // Default HTTP port
 WiFiNTP TimeServer;
 WiFiFTPClient FTPClient(FTP_TIMEOUT_MS);
 StringBuilder HttpResponse(8 * 1024);
 HtmlWriter Html(HttpResponse, Files[Logo], Files[Styles], MAX_BAR_LENGTH);
 StringLog EventLog(MAX_EVENT_LOG_SIZE, 128);
-SimpleLED BuiltinLED(LED_BUILTIN);
 WiFiStateMachine WiFiSM(BuiltinLED, TimeServer, WebServer, EventLog);
 Navigation Nav;
 SPIClass NRFSPI;
-SmartHomeClass SmartHome(WiFiSM);
+SmartHomeClass SmartHome(BuiltinLED, WiFiSM);
 
 StaticLog<PowerLogEntry> PowerLog(POWER_LOG_SIZE);
 PowerLogEntry* lastPowerLogEntryPtr = nullptr;
@@ -108,6 +115,7 @@ bool addInverter(const char* name, uint64_t serial)
     }
     inverterPtr->setEnablePolling(true);
     inverterPtr->setZeroYieldDayOnMidnight(true);
+    inverterPtr->setReachableThreshold(5);
 
     InverterLogPtrs.push_back(new InverterLog());
     PowerLog.clear();
@@ -630,7 +638,7 @@ void onWiFiInitialized()
 
     if (currentTime >= pollInvertersTime)
     {
-        BuiltinLED.setOn(true);
+        BuiltinLED.setColor(YELLOW);
         if (pollInverters())
             pollInterval = POLL_INTERVAL_DAY;
         else if (pollInterval < POLL_INTERVAL_NIGHT)

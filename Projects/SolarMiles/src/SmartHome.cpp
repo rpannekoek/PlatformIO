@@ -2,6 +2,8 @@
 #include <TimeUtils.h>
 #include "SmartHome.h"
 
+#define CYAN 0,200,200
+
 constexpr size_t NUM_SMARTTHINGS_CAPABILITIES = 3;
 
 const char* _smartThingsCapabilities[] = 
@@ -201,7 +203,9 @@ void SmartHomeClass::run()
     switch (_state)
     {
         case SmartHomeState::ConnectingFritzbox:
+            _led.setColor(CYAN);
             _fritzboxPtr->init();
+            _led.setOn(false);
             if (_fritzboxPtr->state() == TR064_SERVICES_LOADED)
                 setState(SmartHomeState::DiscoveringFritzDevices);
             else
@@ -312,7 +316,7 @@ bool SmartHomeClass::discoverSmartThings()
     {
         String deviceId = jsonDevice["deviceId"];
         String label = jsonDevice["label"];
-        //TRACE ("Device '%s'\n", label.c_str());
+        //TRACE("Device '%s'\n", label.c_str());
 
         JsonArray jsonComponents = jsonDevice["components"];
         for (JsonVariant jsonComponent : jsonComponents)
@@ -328,6 +332,8 @@ bool SmartHomeClass::discoverSmartThings()
             if (capabilityFlags == 7)
             {
                 SmartThingsPlug* smartThingsPlugPtr = new SmartThingsPlug(deviceId, label, _smartThingsPtr, _logger);
+                smartThingsPlugPtr->powerThreshold = _powerThreshold;
+                smartThingsPlugPtr->powerOffDelay = _powerOffDelay; 
                 devices.push_back(smartThingsPlugPtr);
             }
         }
@@ -350,7 +356,11 @@ bool SmartHomeClass::updateDevice()
     SmartDevice* smartDevicePtr = devices[_currentDeviceIndex];
     SmartDeviceState deviceStateBefore = smartDevicePtr->state;
 
-    if (!smartDevicePtr->update(currentTime))
+    _led.setColor(CYAN);
+    bool success = smartDevicePtr->update(currentTime);
+    _led.setOn(false);
+
+    if (!success)
     {
         errors++;
         return false;

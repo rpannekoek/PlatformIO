@@ -82,6 +82,8 @@ bool SmartThingsClient::request(const String& urlPath, const JsonDocument& filte
         httpClient.getStream(),
         DeserializationOption::Filter(filterDoc));
 
+    httpClient.end();
+
     if (parseError != DeserializationError::Ok)
     {
         _logger.logEvent("SmartThings: JSON error %s", parseError.c_str());

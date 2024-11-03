@@ -448,6 +448,7 @@ void WiFiStateMachine::run()
             {
                 logEvent(F("Time synchronized using NTP server: %s"), _timeServer.NTPServer);
                 _isTimeServerAvailable = true;
+                blinkLED(0);
                 setState(WiFiInitState::TimeServerSynced);
             }
             break;
