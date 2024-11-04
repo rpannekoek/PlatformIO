@@ -20,7 +20,7 @@
 #include "PowerLog.h"
 #include "SmartHome.h"
 
-#define YELLOW 200,200,0
+#define YELLOW 192,192,0
 
 enum FileId
 {
@@ -62,7 +62,7 @@ RGBLED BuiltinLED(LED_BUILTIN);
 ESPWebServer WebServer(80); // Default HTTP port
 WiFiNTP TimeServer;
 WiFiFTPClient FTPClient(FTP_TIMEOUT_MS);
-StringBuilder HttpResponse(8 * 1024);
+StringBuilder HttpResponse(12 * 1024);
 HtmlWriter Html(HttpResponse, Files[Logo], Files[Styles], MAX_BAR_LENGTH);
 StringLog EventLog(MAX_EVENT_LOG_SIZE, 128);
 WiFiStateMachine WiFiSM(BuiltinLED, TimeServer, WebServer, EventLog);

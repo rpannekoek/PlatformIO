@@ -2,7 +2,7 @@
 #include <TimeUtils.h>
 #include "SmartHome.h"
 
-#define CYAN 0,200,200
+#define CYAN 0,128,128
 
 constexpr size_t NUM_SMARTTHINGS_CAPABILITIES = 3;
 
