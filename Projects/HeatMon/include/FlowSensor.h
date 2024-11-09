@@ -25,7 +25,7 @@ class FlowSensor
         static float _flowRate;
         Ticker _ticker;
 
-        ICACHE_RAM_ATTR static void pulseISR();
+        IRAM_ATTR static void pulseISR();
         static void measure(); 
 };
 
