@@ -98,6 +98,7 @@ bool SmartHomeClass::startDiscovery()
     else
         return false;
  
+    _currentDeviceIndex =  0;
     devices.clear();
     energyLog.clear();
     return true;
@@ -115,7 +116,6 @@ void SmartHomeClass::writeHtml(HtmlWriter& html)
         html.writeRow("Fritzbox", "%d ms", _fritzboxPtr->responseTimeMs());
     if (_smartThingsPtr != nullptr)
         html.writeRow("SmartThings", "%d ms", _smartThingsPtr->responseTimeMs());
-    html.writeRow("Errors", "%d", errors);
     html.writeRow("Free Heap", "%0.1f kB", float(ESP.getMaxAllocHeap()) / 1024);
 
     html.writeTableEnd();
@@ -134,10 +134,14 @@ void SmartHomeClass::writeHtml(HtmlWriter& html)
     html.writeHeaderCell("Duration");
     html.writeHeaderCell("ΔE (Wh)");
     html.writeRowEnd();
+    int i = 0;
     for (SmartDevice* smartDevicePtr : devices)
     {
+        String name = (i++ ==_currentDeviceIndex) ? "&bull; " : ""; 
+        name += smartDevicePtr->name;
+
         html.writeRowStart();
-        html.writeCell(smartDevicePtr->name);
+        html.writeCell(name);
         html.writeCell(smartDevicePtr->getStateLabel());
         html.writeCell(smartDevicePtr->getSwitchStateLabel());
         html.writeCell(smartDevicePtr->power, F("%0.2f"));
@@ -145,7 +149,7 @@ void SmartHomeClass::writeHtml(HtmlWriter& html)
         html.writeCell(smartDevicePtr->temperature, F("%0.1f"));
         html.writeCell(formatTime("%a %H:%M", smartDevicePtr->energyLogEntry.start));
         html.writeCell(formatTimeSpan(smartDevicePtr->energyLogEntry.getDuration()));
-        html.writeCell(smartDevicePtr->energyLogEntry.energyDelta * 1000, F("%0.0f"));
+        html.writeCell(smartDevicePtr->energyLogEntry.energyDelta, F("%0.0f"));
         html.writeRowEnd();
     }
     html.writeTableEnd();
@@ -168,7 +172,7 @@ void SmartHomeClass::writeHtml(HtmlWriter& html)
         html.writeCell(formatTime("%a %H:%M", logEntryPtr->start));
         html.writeCell(formatTimeSpan(logEntryPtr->getDuration()));
         html.writeCell(logEntryPtr->maxPower, F("%0.0f"));
-        html.writeCell(logEntryPtr->energyDelta * 1000, F("%0.0f"));
+        html.writeCell(logEntryPtr->energyDelta, F("%0.0f"));
         html.writeRowEnd();
 
         logEntryPtr = energyLog.getNextEntry();
@@ -211,7 +215,6 @@ void SmartHomeClass::run()
             else
             {
                 _logger.logEvent("SmartHome: TR-064 connection failed");
-                errors++;
                 _nextActionMillis = currentMillis + SH_RETRY_DELAY_MS;
             }
             break;
@@ -230,10 +233,7 @@ void SmartHomeClass::run()
             if (discoverSmartThings())
                 setState(SmartHomeState::Ready);
             else
-            {
-                errors++;
                 _nextActionMillis = currentMillis + SH_RETRY_DELAY_MS;    
-           }
             break;
 
         case SmartHomeState::Ready:
@@ -273,7 +273,6 @@ bool SmartHomeClass::discoverFritzSmartPlug(int index)
         _fritzboxPtr->errorCode(),
         _fritzboxPtr->errorDescription());
 
-    errors++;
     _nextActionMillis = millis() + SH_RETRY_DELAY_MS;
     return false;
 }
@@ -348,9 +347,6 @@ bool SmartHomeClass::updateDevice()
 {
     time_t currentTime = time(nullptr);
 
-    if (_currentDeviceIndex >= devices.size())
-        _currentDeviceIndex = 0;
-
     TRACE("Updating device #%d...\n", _currentDeviceIndex);
 
     SmartDevice* smartDevicePtr = devices[_currentDeviceIndex];
@@ -360,20 +356,20 @@ bool SmartHomeClass::updateDevice()
     bool success = smartDevicePtr->update(currentTime);
     _led.setOn(false);
 
-    if (!success)
-    {
-        errors++;
-        return false;
-    }
+    if (++_currentDeviceIndex >= devices.size())
+        _currentDeviceIndex = 0;
+
+    if (!success) return false;
 
     if (deviceStateBefore == SmartDeviceState::On && smartDevicePtr->state == SmartDeviceState::Off)
     {
         // Device switched off; update energy log
-        energyLog.add(&smartDevicePtr->energyLogEntry);
-        logEntriesToSync = std::min(logEntriesToSync + 1, SH_ENERGY_LOG_SIZE);
+        if (smartDevicePtr->energyLogEntry.energyDelta >= 1.0F)
+        {
+            energyLog.add(&smartDevicePtr->energyLogEntry);
+            logEntriesToSync = std::min(logEntriesToSync + 1, SH_ENERGY_LOG_SIZE);
+        }
     }
-
-    _currentDeviceIndex++;
     return true;
 }
 
@@ -384,7 +380,7 @@ void SmartDeviceEnergyLogEntry::writeCsv(Print& output)
     output.printf("%s;", devicePtr->name.c_str());
     output.printf("%0.1f;", float(getDuration()) / SECONDS_PER_HOUR);
     output.printf("%0.0f;", maxPower);
-    output.printf("%0.0f", energyDelta * 1000);
+    output.printf("%0.0f", energyDelta);
     output.println();
 }
 
@@ -470,12 +466,7 @@ bool FritzSmartPlug::update(time_t currentTime)
     {
         int errorCode = _fritzboxPtr->errorCode(); 
         if (errorCode != _lastErrorCode)
-        {
-            _logger.logEvent(
-                "FritzSmartPlug error %d '%s'",
-                errorCode,
-                _fritzboxPtr->errorDescription());
-        }
+            _logger.logEvent("FritzSmartPlug: %s", _fritzboxPtr->errorDescription());
         _lastErrorCode = errorCode; 
         return false;
     }

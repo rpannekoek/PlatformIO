@@ -23,8 +23,8 @@ struct SmartDeviceEnergyLogEntry
     SmartDevice* devicePtr;
     time_t start = 0;
     time_t end = 0;
-    float energyStart = 0;
-    float energyDelta = 0;
+    float energyStart = 0; // kWh
+    float energyDelta = 0; // Wh
     float maxPower = 0;
 
     uint32_t getDuration() { return end - start; }
@@ -41,7 +41,7 @@ struct SmartDeviceEnergyLogEntry
     void update(time_t time, float energy, float power)
     {
         end = time;
-        energyDelta = energy - energyStart;
+        energyDelta = (energy - energyStart) * 1000;
         maxPower = std::max(maxPower, power);
     }
 
@@ -128,7 +128,6 @@ class SmartHomeClass
         std::vector<SmartDevice*> devices;
         StaticLog<SmartDeviceEnergyLogEntry> energyLog;
         int logEntriesToSync = 0;
-        int errors = 0;
 
         SmartHomeClass(LED& led, ILogger& logger)
             : energyLog(SH_ENERGY_LOG_SIZE), _led(led), _logger(logger)
@@ -150,7 +149,6 @@ class SmartHomeClass
         LED& _led;
         ILogger& _logger;
         volatile SmartHomeState _state = SmartHomeState::Uninitialized;
-        TaskHandle_t _taskHandle = nullptr;
         TR064* _fritzboxPtr = nullptr;
         SmartThingsClient* _smartThingsPtr = nullptr;
         float _powerThreshold;
