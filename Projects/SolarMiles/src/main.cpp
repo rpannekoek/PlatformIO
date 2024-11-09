@@ -1220,24 +1220,20 @@ void handleHttpInvertersFormRequest()
     Html.writeHeaderCell("Type");
     Html.writeHeaderCell("P<sub>max</sub> (W)");
     Html.writeHeaderCell("Limit (%)");
+    Html.writeHeaderCell("Transmit");
+    Html.writeHeaderCell("Retransmit");
+    Html.writeHeaderCell("Success");
+    Html.writeHeaderCell("Partial");
+    Html.writeHeaderCell("No answer");
+    Html.writeHeaderCell("Corrupt");
     Html.writeRowEnd();
 
+    const int numDataColumns = 9;
     for (int i = 0; i < PersistentData.registeredInvertersCount; i++)
     {
         RegisteredInverter& registeredInverter = PersistentData.registeredInverters[i];
         const char* inverterSerial = formatSerial(registeredInverter.serial);
-
-
-        String inverterType = "[Unknown]";
-        uint16_t maxPower = 0;
-        int limitPercent = 0;
         auto inverterPtr = Hoymiles.getInverterBySerial(registeredInverter.serial);
-        if (inverterPtr != nullptr)
-        {
-            inverterType = inverterPtr->typeName();
-            maxPower = inverterPtr->DevInfo()->getMaxPower();
-            limitPercent = inverterPtr->SystemConfigPara()->getLimitPercent();
-        }
 
         Html.writeRowStart();
         Html.writeCell(inverterSerial);
@@ -1246,11 +1242,28 @@ void handleHttpInvertersFormRequest()
             inverterSerial,
             registeredInverter.name,
             MAX_INVERTER_NAME_LENGTH - 1);
-        HttpResponse.printf(
-            F("<td><a href='/gridprofile?inverter=%d'>%s</a></td>"),
-            i, inverterType.c_str());
-        Html.writeCell(maxPower);
-        Html.writeCell(limitPercent);
+
+        if (inverterPtr != nullptr)
+        {
+            HttpResponse.printf(
+                F("<td><a href='/gridprofile?inverter=%d'>%s</a></td>"),
+                i, inverterPtr->typeName().c_str());
+            Html.writeCell(inverterPtr->DevInfo()->getMaxPower());
+            Html.writeCell(inverterPtr->SystemConfigPara()->getLimitPercent());
+            Html.writeCell(inverterPtr->RadioStats.TxRequestData);
+            Html.writeCell(inverterPtr->RadioStats.TxReRequestFragment);
+            Html.writeCell(inverterPtr->RadioStats.RxSuccess);
+            Html.writeCell(inverterPtr->RadioStats.RxFailPartialAnswer);
+            Html.writeCell(inverterPtr->RadioStats.RxFailNoAnswer);
+            Html.writeCell(inverterPtr->RadioStats.RxFailCorruptData);
+        }
+        else
+        {
+            Html.writeCell("[Unknown]");
+            for (int c = 1; c < numDataColumns; c++)
+                Html.writeCell("");
+        }
+
         Html.writeRowEnd();
     }
 
@@ -1263,9 +1276,10 @@ void handleHttpInvertersFormRequest()
         HttpResponse.printf(
             F("<td><input type='text' name='new_name' maxlength='%d' placeholder='Enter name'></td>"), 
             MAX_INVERTER_NAME_LENGTH - 1);
-        Html.writeCell("");
-        Html.writeCell("");
-        Html.writeCell("");
+            
+        for (int c = 0; c < numDataColumns; c++)
+            Html.writeCell("");
+
         Html.writeRowEnd();
     }
 
