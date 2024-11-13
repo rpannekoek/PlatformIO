@@ -1245,16 +1245,18 @@ void handleHttpInvertersFormRequest()
 
         if (inverterPtr != nullptr)
         {
+            float percent = (inverterPtr->RadioStats.TxRequestData == 0) ? 0.0F : 100.0F / float(inverterPtr->RadioStats.TxRequestData);
+
             HttpResponse.printf(
                 F("<td><a href='/gridprofile?inverter=%d'>%s</a></td>"),
                 i, inverterPtr->typeName().c_str());
             Html.writeCell(inverterPtr->DevInfo()->getMaxPower());
             Html.writeCell(inverterPtr->SystemConfigPara()->getLimitPercent());
             Html.writeCell(inverterPtr->RadioStats.TxRequestData);
-            Html.writeCell(inverterPtr->RadioStats.TxReRequestFragment);
-            Html.writeCell(inverterPtr->RadioStats.RxSuccess);
-            Html.writeCell(inverterPtr->RadioStats.RxFailPartialAnswer);
-            Html.writeCell(inverterPtr->RadioStats.RxFailNoAnswer);
+            Html.writeCell(percent * inverterPtr->RadioStats.TxReRequestFragment,  F("%0.0f %%"));
+            Html.writeCell(percent * inverterPtr->RadioStats.RxSuccess, F("%0.0f %%"));
+            Html.writeCell(percent * inverterPtr->RadioStats.RxFailPartialAnswer, F("%0.0f %%"));
+            Html.writeCell(percent * inverterPtr->RadioStats.RxFailNoAnswer, F("%0.0f %%"));
             Html.writeCell(inverterPtr->RadioStats.RxFailCorruptData);
         }
         else
