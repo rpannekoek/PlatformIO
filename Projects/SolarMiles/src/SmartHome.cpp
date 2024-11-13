@@ -4,13 +4,14 @@
 
 #define CYAN 0,128,128
 
-constexpr size_t NUM_SMARTTHINGS_CAPABILITIES = 3;
+constexpr size_t NUM_SMARTTHINGS_CAPABILITIES = 4;
 
 const char* _smartThingsCapabilities[] = 
 {
     "switch",
     "powerMeter",
-    "energyMeter"
+    "energyMeter",
+    "powerConsumptionReport"
 };
 
 const char* _smartHomeStateLabels[] =
@@ -129,7 +130,7 @@ void SmartHomeClass::writeHtml(HtmlWriter& html)
     html.writeHeaderCell("Switch");
     html.writeHeaderCell("P (W)");
     html.writeHeaderCell("E (kWh)");
-    html.writeHeaderCell("T (°C)");
+    html.writeHeaderCell("Info");
     html.writeHeaderCell("Last on");
     html.writeHeaderCell("Duration");
     html.writeHeaderCell("ΔE (Wh)");
@@ -145,8 +146,8 @@ void SmartHomeClass::writeHtml(HtmlWriter& html)
         html.writeCell(smartDevicePtr->getStateLabel());
         html.writeCell(smartDevicePtr->getSwitchStateLabel());
         html.writeCell(smartDevicePtr->power, F("%0.2f"));
-        html.writeCell(smartDevicePtr->energy, F("%0.3f"));
-        html.writeCell(smartDevicePtr->temperature, F("%0.1f"));
+        html.writeCell(smartDevicePtr->energy / 1000, F("%0.3f"));
+        html.writeCell(smartDevicePtr->info);
         html.writeCell(formatTime("%a %H:%M", smartDevicePtr->energyLogEntry.start));
         html.writeCell(formatTimeSpan(smartDevicePtr->energyLogEntry.getDuration()));
         html.writeCell(smartDevicePtr->energyLogEntry.energyDelta, F("%0.0f"));
@@ -328,12 +329,15 @@ bool SmartHomeClass::discoverSmartThings()
             uint32_t capabilityFlags = getCapabilityFlags(jsonCapabilities);
             TRACE("Device '%s' Component 'main' Capabilities: %x\n", label.c_str(), capabilityFlags);
 
-            if (capabilityFlags == 7)
+            if ((capabilityFlags & 7) == 7 || (capabilityFlags & 9) == 9)
             {
-                SmartThingsPlug* smartThingsPlugPtr = new SmartThingsPlug(deviceId, label, _smartThingsPtr, _logger);
-                smartThingsPlugPtr->powerThreshold = _powerThreshold;
-                smartThingsPlugPtr->powerOffDelay = _powerOffDelay; 
-                devices.push_back(smartThingsPlugPtr);
+                SmartThingsDevice* smartThingsDevicePtr = new SmartThingsDevice(deviceId, label, _smartThingsPtr, _logger);
+                if (capabilityFlags & 2) // powerMeter
+                    smartThingsDevicePtr->powerThreshold = _powerThreshold;
+                else
+                    smartThingsDevicePtr->powerThreshold = 0;
+                smartThingsDevicePtr->powerOffDelay = _powerOffDelay; 
+                devices.push_back(smartThingsDevicePtr);
             }
         }
     }
@@ -404,12 +408,20 @@ bool SmartDevice::update(time_t currentTime)
 
     if (switchState == SmartDeviceState::Off)
     {
-        if (state == SmartDeviceState::On)
-            _logger.logEvent("Smart Device '%s' off", name.c_str());
-        state = SmartDeviceState::Off;
+        // Switch is off, but we can delay switching the device off so there is some time to update the energy
+        // before we commit it to the energy log.
+        if ((powerThreshold > 0) || (currentTime > energyLogEntry.end + powerOffDelay))
+        {
+            if (state == SmartDeviceState::On)
+                _logger.logEvent("Smart Device '%s' off", name.c_str());
+            state = SmartDeviceState::Off;
+        }
+        else
+            energyLogEntry.energyDelta = energy - energyLogEntry.energyStart;
     }
     else
     {
+        // Switch is on, but that doesn't mean the device is on; check the power consumption.
         if (power >= powerThreshold)
         {
             if (state == SmartDeviceState::Off)
@@ -501,31 +513,75 @@ bool FritzSmartPlug::update(time_t currentTime)
     }
 
     power = fields[4][1].toFloat() / 100;
-    energy = fields[5][1].toFloat() / 1000;
-    temperature = fields[6][1].toFloat() / 10;
+    energy = fields[5][1].toFloat();
+    float temperature = fields[6][1].toFloat() / 10;
+    info = String(temperature, 1);
+    info += " °C";
 
     return SmartDevice::update(currentTime);
 }
 
 
-bool SmartThingsPlug::update(time_t currentTime)
+bool SmartThingsDevice::update(time_t currentTime)
 {
-    Tracer tracer("SmartThingsPlug::update", id.c_str());
+    Tracer tracer("SmartThingsDevice::update", id.c_str());
 
     if (!_smartThingsPtr->requestDeviceStatus(id))
         return false;
 
     String switchValue = _smartThingsPtr->jsonDoc["switch"]["switch"]["value"];
+    TRACE("switch: '%s'\n", switchValue.c_str());
     switchState = (switchValue == "on") ? SmartDeviceState::On : SmartDeviceState::Off;
 
-    JsonVariant jsonPower = _smartThingsPtr->jsonDoc["powerMeter"]["power"]; 
-    power = jsonPower["value"];
+    JsonVariant jsonPowerConsumption = _smartThingsPtr->jsonDoc["powerConsumptionReport"]["powerConsumption"];
+
+    JsonVariant jsonPowerMeter = _smartThingsPtr->jsonDoc["powerMeter"];
+    if (!jsonPowerMeter.isNull())
+        power = jsonPowerMeter["power"]["value"];
+    else if (!jsonPowerConsumption.isNull())
+        power = jsonPowerConsumption["value"]["power"];
+    else
+        _logger.logEvent("SmartThingsDevice: No power found");
     
-    JsonVariant jsonEnergy = _smartThingsPtr->jsonDoc["energyMeter"]["energy"];
-    energy = jsonEnergy["value"];
-    if (static_cast<String>(jsonEnergy["unit"]) == "Wh")
-        energy /= 1000;
+    JsonVariant jsonEnergyMeter = _smartThingsPtr->jsonDoc["energyMeter"];
+    if (!jsonEnergyMeter.isNull())
+    {
+        energy = jsonEnergyMeter["energy"]["value"];
+        if (jsonEnergyMeter["energy"]["unit"].as<String>() == "kWh")
+            energy *= 1000;
+    }
+    else if (!jsonPowerConsumption.isNull())
+    {
+        float energyValue = jsonPowerConsumption["value"]["energy"];
+        if (energyValue > 0)
+            energy = energyValue;
+        else
+        {
+            String timestamp = jsonPowerConsumption["timestamp"];
+            TRACE("Timestamp: '%s'\n", timestamp.c_str());
+            if (timestamp != _powerConsumptionTimestamp)
+            {
+                _powerConsumptionTimestamp = timestamp;
+                float deltaEnergy = jsonPowerConsumption["value"]["deltaEnergy"];
+                TRACE("deltaEnergy: %0.2f\n", deltaEnergy);
+                energy += deltaEnergy; 
+            }
+        } 
+    }
+    else
+        _logger.logEvent("SmartThingsDevice: No energy found");
     
+    JsonVariant jsonWashingCourse = _smartThingsPtr->jsonDoc["samsungce.dishwasherWashingCourse"]["washingCourse"];
+    if (!jsonWashingCourse.isNull())
+        info = jsonWashingCourse["value"].as<String>();
+
+    JsonVariant jsonRemainingTime = _smartThingsPtr->jsonDoc["samsungce.dishwasherOperation"]["remainingTimeStr"];
+    if (!jsonRemainingTime.isNull())
+    {
+        info += " ";
+        info += jsonRemainingTime["value"].as<String>();
+    }
+
     _smartThingsPtr->cleanup();
 
     return SmartDevice::update(currentTime);

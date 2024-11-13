@@ -39,6 +39,12 @@ SmartThingsClient::SmartThingsClient(const char* pat, ILogger& logger)
     _deviceStatusFilter["powerMeter"]["power"]["value"] = true;
     _deviceStatusFilter["energyMeter"]["energy"]["value"] = true;
     _deviceStatusFilter["energyMeter"]["energy"]["unit"] = true;
+    _deviceStatusFilter["powerConsumptionReport"]["powerConsumption"]["value"]["power"] = true;
+    _deviceStatusFilter["powerConsumptionReport"]["powerConsumption"]["value"]["energy"] = true;
+    _deviceStatusFilter["powerConsumptionReport"]["powerConsumption"]["value"]["deltaEnergy"] = true;
+    _deviceStatusFilter["powerConsumptionReport"]["powerConsumption"]["timestamp"] = true;
+    _deviceStatusFilter["samsungce.dishwasherOperation"]["remainingTimeStr"]["value"] = true;
+    _deviceStatusFilter["samsungce.dishwasherWashingCourse"]["washingCourse"]["value"] = true;
 }
 
 

@@ -23,9 +23,9 @@ struct SmartDeviceEnergyLogEntry
     SmartDevice* devicePtr;
     time_t start = 0;
     time_t end = 0;
-    float energyStart = 0; // kWh
+    float energyStart = 0; // Wh
     float energyDelta = 0; // Wh
-    float maxPower = 0;
+    float maxPower = 0; // W
 
     uint32_t getDuration() { return end - start; }
 
@@ -41,7 +41,7 @@ struct SmartDeviceEnergyLogEntry
     void update(time_t time, float energy, float power)
     {
         end = time;
-        energyDelta = (energy - energyStart) * 1000;
+        energyDelta = energy - energyStart;
         maxPower = std::max(maxPower, power);
     }
 
@@ -53,11 +53,11 @@ class SmartDevice
     public:
         String id;
         String name;
+        String info;
         SmartDeviceState state = SmartDeviceState::Unknown;
         SmartDeviceState switchState = SmartDeviceState::Unknown;
-        float power = 0;
-        float energy = 0;
-        float temperature = 0;
+        float power = 0; // W
+        float energy = 0; // Wh
         float powerThreshold = 0;
         uint32_t powerOffDelay = 0;
         SmartDeviceEnergyLogEntry energyLogEntry; 
@@ -96,10 +96,10 @@ class FritzSmartPlug : public SmartDevice
         int _lastErrorCode = 0;
 };
 
-class SmartThingsPlug : public SmartDevice
+class SmartThingsDevice : public SmartDevice
 {
     public:
-        SmartThingsPlug(const String& id, const String& name, SmartThingsClient* smartThingsPtr, ILogger& logger)
+        SmartThingsDevice(const String& id, const String& name, SmartThingsClient* smartThingsPtr, ILogger& logger)
             : SmartDevice(id, name, logger)
         {
             _smartThingsPtr = smartThingsPtr;
@@ -109,7 +109,7 @@ class SmartThingsPlug : public SmartDevice
 
     private:
         SmartThingsClient* _smartThingsPtr;
-        int _lastErrorCode = 0;
+        String _powerConsumptionTimestamp;
 };
 
 enum struct SmartHomeState
