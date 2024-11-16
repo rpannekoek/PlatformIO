@@ -2,8 +2,6 @@
 #include <TimeUtils.h>
 #include "SmartHome.h"
 
-#define CYAN 0,128,128
-
 constexpr size_t NUM_SMARTTHINGS_CAPABILITIES = 4;
 
 const char* _smartThingsCapabilities[] = 
@@ -68,6 +66,21 @@ bool SmartHomeClass::begin(float powerThreshold, uint32_t powerOffDelay, uint32_
     _pollInterval = pollInterval;
     _currentDeviceIndex = 0;
     _nextActionMillis = 0;
+
+    BaseType_t res = xTaskCreatePinnedToCore(
+        run,
+        "SmartHome",
+        8192, // Stack Size (words)
+        this,
+        3, // Priority
+        &_taskHandle,
+        PRO_CPU_NUM); // Run on Core #0
+
+    if (res != pdPASS)
+    {
+        _logger.logEvent("SmartHome: xTaskCreate returned %d\n", res);
+        return false;
+    }
 
     if (_fritzboxPtr != nullptr)
     {
@@ -163,16 +176,20 @@ void SmartHomeClass::writeHtml(HtmlWriter& html)
     html.writeHeaderCell("Start");
     html.writeHeaderCell("Duration");
     html.writeHeaderCell("P<sub>max</sub> (W)");
+    html.writeHeaderCell("P<sub>avg</sub> (W)");
     html.writeHeaderCell("Energy (Wh)");
     html.writeRowEnd();
     SmartDeviceEnergyLogEntry* logEntryPtr = energyLog.getFirstEntry();
     while (logEntryPtr != nullptr)
     {
+        float avgPower = logEntryPtr->energyDelta * SECONDS_PER_HOUR / logEntryPtr->getDuration();
+
         html.writeRowStart();
         html.writeCell(logEntryPtr->devicePtr->name);
         html.writeCell(formatTime("%a %H:%M", logEntryPtr->start));
         html.writeCell(formatTimeSpan(logEntryPtr->getDuration()));
         html.writeCell(logEntryPtr->maxPower, F("%0.0f"));
+        html.writeCell(avgPower, F("%0.0f"));
         html.writeCell(logEntryPtr->energyDelta, F("%0.0f"));
         html.writeRowEnd();
 
@@ -200,7 +217,17 @@ void SmartHomeClass::writeEnergyLogCsv(Print& output, bool onlyEntriesToSync)
 }
 
 
-void SmartHomeClass::run()
+void SmartHomeClass::run(void* taskParam)
+{
+    SmartHomeClass* instancePtr = static_cast<SmartHomeClass*>(taskParam); 
+    while (true)
+    {
+        instancePtr->runStateMachine();
+        delay(100);
+    }
+}
+
+void SmartHomeClass::runStateMachine()
 {
     uint32_t currentMillis = millis();
     if (currentMillis < _nextActionMillis) return;
@@ -208,9 +235,9 @@ void SmartHomeClass::run()
     switch (_state)
     {
         case SmartHomeState::ConnectingFritzbox:
-            _led.setColor(CYAN);
+            _isAwaiting = true;
             _fritzboxPtr->init();
-            _led.setOn(false);
+            _isAwaiting = false;
             if (_fritzboxPtr->state() == TR064_SERVICES_LOADED)
                 setState(SmartHomeState::DiscoveringFritzDevices);
             else
@@ -257,7 +284,9 @@ bool SmartHomeClass::discoverFritzSmartPlug(int index)
 {
     TRACE("Discover FritzSmartPlug #%d...\n", index);
 
+    _isAwaiting = true;
     FritzSmartPlug* fritzSmartPlugPtr = FritzSmartPlug::discover(index, _fritzboxPtr, _logger);
+    _isAwaiting = false;
     if (fritzSmartPlugPtr != nullptr)
     {
         fritzSmartPlugPtr->powerThreshold = _powerThreshold;
@@ -306,8 +335,10 @@ bool SmartHomeClass::discoverSmartThings()
 {
     Tracer tracer("SmartHomeClass::discoverSmartThings");
 
-    if (!_smartThingsPtr->requestDevices())
-        return false;
+    _isAwaiting = true;
+    bool success = _smartThingsPtr->requestDevices();
+    _isAwaiting = false;  
+    if (!success) return false;
 
     JsonArray jsonDevices = _smartThingsPtr->jsonDoc["items"];
     TRACE("%d devices found\n", jsonDevices.size());
@@ -356,9 +387,9 @@ bool SmartHomeClass::updateDevice()
     SmartDevice* smartDevicePtr = devices[_currentDeviceIndex];
     SmartDeviceState deviceStateBefore = smartDevicePtr->state;
 
-    _led.setColor(CYAN);
+    _isAwaiting = true;
     bool success = smartDevicePtr->update(currentTime);
-    _led.setOn(false);
+    _isAwaiting = false;
 
     if (++_currentDeviceIndex >= devices.size())
         _currentDeviceIndex = 0;

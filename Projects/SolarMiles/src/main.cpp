@@ -21,6 +21,7 @@
 #include "SmartHome.h"
 
 #define YELLOW 192,192,0
+#define CYAN 0,128,128
 
 enum FileId
 {
@@ -53,10 +54,10 @@ const char* Timeframes[] =
     "month"
 };
 
-#ifdef USE_RGB_LED
-RGBLED BuiltinLED(LED_BUILTIN);
-#else
+#ifdef USE_SIMPLE_LED
 SimpleLED BuiltinLED(LED_BUILTIN, true);
+#else
+RGBLED BuiltinLED(LED_BUILTIN);
 #endif
 
 ESPWebServer WebServer(80); // Default HTTP port
@@ -68,7 +69,7 @@ StringLog EventLog(MAX_EVENT_LOG_SIZE, 128);
 WiFiStateMachine WiFiSM(BuiltinLED, TimeServer, WebServer, EventLog);
 Navigation Nav;
 SPIClass NRFSPI;
-SmartHomeClass SmartHome(BuiltinLED, WiFiSM);
+SmartHomeClass SmartHome(WiFiSM);
 
 StaticLog<PowerLogEntry> PowerLog(POWER_LOG_SIZE);
 PowerLogEntry* lastPowerLogEntryPtr = nullptr;
@@ -252,7 +253,7 @@ void setup()
 
     Tracer::traceFreeHeap();
 
-    BuiltinLED.setOn(false);    
+    BuiltinLED.setOff();    
 }
 
 
@@ -634,8 +635,6 @@ void onTimeServerSynced()
 
 void onWiFiInitialized()
 {
-    SmartHome.run();
-
     // Run the Hoymiles loop only after we obtained NTP time,
     // because an (Epoch) timestamp is included in the messages.
     Hoymiles.loop();
@@ -654,8 +653,12 @@ void onWiFiInitialized()
         Hoymiles.setPollInterval(pollInterval);
         pollInvertersTime = currentTime + pollInterval;
         delay(100); // Ensure LED blink is visible
-        BuiltinLED.setOn(false);
+        BuiltinLED.setOff();
     }
+    else if (SmartHome.isAwaiting() && !BuiltinLED.isOn())
+        BuiltinLED.setColor(CYAN);
+    else if (!SmartHome.isAwaiting() && BuiltinLED.isOn())
+        BuiltinLED.setOff();
 
     if (SmartHome.logEntriesToSync != 0 && syncFTPTime == 0)
         syncFTPTime = currentTime + FTP_RETRY_INTERVAL; // Prevent FTP sync shortly after eachother

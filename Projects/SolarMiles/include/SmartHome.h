@@ -1,6 +1,5 @@
 #include <tr064.h>
 #include <vector>
-#include <LED.h>
 #include <Log.h>
 #include <Logger.h>
 #include <HtmlWriter.h>
@@ -129,11 +128,12 @@ class SmartHomeClass
         StaticLog<SmartDeviceEnergyLogEntry> energyLog;
         int logEntriesToSync = 0;
 
-        SmartHomeClass(LED& led, ILogger& logger)
-            : energyLog(SH_ENERGY_LOG_SIZE), _led(led), _logger(logger)
+        SmartHomeClass(ILogger& logger)
+            : energyLog(SH_ENERGY_LOG_SIZE), _logger(logger)
         {}
 
         SmartHomeState getState() { return _state; }
+        bool isAwaiting() { return _isAwaiting; }
 
         const char* getStateLabel();
 
@@ -141,16 +141,16 @@ class SmartHomeClass
         bool useFritzbox(const char* host, const char* user, const char* password);
         bool useSmartThings(const char* pat);
         bool startDiscovery();
-        void run();
         void writeHtml(HtmlWriter& html);
         void writeEnergyLogCsv(Print& output, bool onlyEntriesToSync = true);
 
     private:
-        LED& _led;
         ILogger& _logger;
+        TaskHandle_t _taskHandle;
         volatile SmartHomeState _state = SmartHomeState::Uninitialized;
         TR064* _fritzboxPtr = nullptr;
         SmartThingsClient* _smartThingsPtr = nullptr;
+        bool _isAwaiting = false;
         float _powerThreshold;
         uint32_t _powerOffDelay;
         uint32_t _pollInterval;
@@ -161,4 +161,6 @@ class SmartHomeClass
         bool discoverFritzSmartPlug(int index);
         bool discoverSmartThings();
         bool updateDevice();
+        void runStateMachine();
+        static void run(void* taskParam);
 };
