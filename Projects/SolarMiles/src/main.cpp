@@ -53,10 +53,10 @@ const char* Timeframes[] =
     "month"
 };
 
-#ifdef LOLIN_S2_MINI
-SimpleLED BuiltinLED(LED_BUILTIN);
-#else
+#ifdef USE_RGB_LED
 RGBLED BuiltinLED(LED_BUILTIN);
+#else
+SimpleLED BuiltinLED(LED_BUILTIN, true);
 #endif
 
 ESPWebServer WebServer(80); // Default HTTP port
@@ -228,6 +228,9 @@ void setup()
     Hoymiles.init();
     Hoymiles.setPollInterval(pollInterval);
 
+#ifdef DISABLE_NRF
+    WiFiSM.logEvent("NRF Radio disabled");
+#else
     NRFSPI.begin(NRF_SCK, NRF_MISO, NRF_MOSI, NRF_CS_PIN);
     Hoymiles.initNRF(&NRFSPI, NRF_CE_PIN, NRF_IRQ_PIN);
     HoymilesRadio_NRF* nrfRadioPtr = Hoymiles.getRadioNrf();
@@ -238,6 +241,7 @@ void setup()
     }
     else
         WiFiSM.logEvent("ERROR: NRF Radio is not connected.");
+#endif
 
     for (int i = 0; i < PersistentData.registeredInvertersCount; i++)
     {
