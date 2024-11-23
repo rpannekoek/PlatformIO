@@ -1,5 +1,6 @@
 #include "WiFiFTP.h"
 #include <Tracer.h>
+#include <ESPWifi.h>
 
 
 WiFiFTPClient::WiFiFTPClient(int timeout)

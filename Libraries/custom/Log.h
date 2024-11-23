@@ -49,7 +49,7 @@ class Log
             _iterator = 0;
         }
 
-        void add(T* entry)
+        void add(const T* entry)
         {
             if ((_end == _start) && (_entriesPtr[_end] != nullptr))
             {
