@@ -292,6 +292,7 @@ void RAMSES2Packet::printJson(Print& output) const
 
     output.print("{ ");
     output.printf("\"timestamp\": \"%s\", ", formatTime("%FT%T", timestamp));
+    output.printf("\"rssi\": %d, ", rssi);
     output.printf("\"type\": \"%s\", ", typeId[static_cast<int>(type)]);
 
     if (fields & F_PARAM0) output.printf("\"param0\": %d, ", param[0]);

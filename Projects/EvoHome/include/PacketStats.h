@@ -7,14 +7,29 @@
 
 constexpr size_t STATS_MAX_OPCODE = 16;
 
-struct OpcodeStats
+struct AddressStats
 {
     uint16_t packetsReceived[STATS_MAX_OPCODE];
+    uint16_t totalPacketsReceived = 0;
+    int16_t minRSSI = 0;
+    int16_t maxRSSI = -666;
+    int sumRSSI = 0;
 
-    OpcodeStats()
+    AddressStats()
     {
         memset(packetsReceived, 0, STATS_MAX_OPCODE * sizeof(uint16_t));
     }
+
+    void update(int opcodeIndex, int16_t rssi)
+    {
+        packetsReceived[opcodeIndex]++;
+        totalPacketsReceived++;
+        minRSSI = std::min(minRSSI, rssi);
+        maxRSSI = std::max(maxRSSI, rssi);
+        sumRSSI += rssi;
+    }
+
+    int16_t getAverageRSSI() { return sumRSSI / totalPacketsReceived; }
 };
 
 class PacketStatsClass
@@ -28,19 +43,22 @@ class PacketStatsClass
                 TRACE("Max opcodes reached: %d\n", STATS_MAX_OPCODE);
                 return;
             }
-            
-            for (const RAMSES2Address& addr : packetPtr->getAddresses())
+
+            if (packetPtr->fields & F_ADDR0)
             {
-                auto loc = opcodeStatsByAddress.find(addr);
-                if (loc == opcodeStatsByAddress.end())
+                AddressStats* statsPtr;
+                auto loc = statsByAddress.find(packetPtr->addr[0]);
+                if (loc == statsByAddress.end())
                 {
-                    OpcodeStats* opcodeStatsPtr = new OpcodeStats();
-                    opcodeStatsPtr->packetsReceived[opcodeIndex] = 1;
-                    opcodeStatsByAddress[addr] = opcodeStatsPtr;
+                    statsPtr = new AddressStats();
+                    statsByAddress[packetPtr->addr[0]] = statsPtr;
                 }
                 else
-                    loc->second->packetsReceived[opcodeIndex]++;
+                    statsPtr = loc->second;
+                statsPtr->update(opcodeIndex, packetPtr->rssi);
             }
+            else
+                TRACE("ADDR0 field not set\n");                
         }
 
         void writeHtmlTable(HtmlWriter html)
@@ -54,13 +72,22 @@ class PacketStatsClass
                 String opcodeStr = String(opcode, 16);
                 html.writeHeaderCell(opcodeStr);
             }
+            html.writeHeaderCell("Total");
+            html.writeHeaderCell("RSSI<sub>avg</sub>");
             html.writeRowEnd();
-            for (const auto& [addr, opcodeStatsPtr] : opcodeStatsByAddress)
+            for (const auto& [addr, statsPtr] : statsByAddress)
             {
                 html.writeRowStart();
                 html.writeCell("%s:%06d", addr.getDeviceType().c_str(), addr.deviceId);
                 for (int i = 0; i < opcodes.size(); i++)
-                    html.writeCell(opcodeStatsPtr->packetsReceived[i]);
+                {
+                    if (statsPtr->packetsReceived[i] == 0)
+                        html.writeCell("");
+                    else
+                        html.writeCell(statsPtr->packetsReceived[i]);
+                }
+                html.writeCell(statsPtr->totalPacketsReceived);
+                html.writeCell(statsPtr->getAverageRSSI());
                 html.writeRowEnd();
             }
             html.writeTableEnd();
@@ -68,7 +95,7 @@ class PacketStatsClass
 
     private:
         std::vector<uint16_t> opcodes;
-        std::map<RAMSES2Address, OpcodeStats*> opcodeStatsByAddress;
+        std::map<RAMSES2Address, AddressStats*> statsByAddress;
 
         int getOpcodeIndex(uint16_t opcode)
         {

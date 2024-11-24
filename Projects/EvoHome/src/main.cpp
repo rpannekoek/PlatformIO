@@ -79,7 +79,7 @@ void onPacketReceived(const RAMSES2Packet* packetPtr)
     PacketStats.processPacket(packetPtr);
 
     logEntriesToSync = std::min(logEntriesToSync + 1, RAMSES_PACKET_LOG_SIZE);
-    if (PersistentData.isFTPEnabled() && (logEntriesToSync >= PersistentData.ftpSyncEntries))
+    if (PersistentData.isFTPEnabled() && (logEntriesToSync >= PersistentData.ftpSyncEntries) & (syncFTPTime == 0))
         syncFTPTime = currentTime;
 }
 
@@ -114,16 +114,16 @@ bool trySyncFTP(Print* printTo)
     }
 
     char filename[64];
-    snprintf(filename, sizeof(filename), "%s.csv", PersistentData.hostName);
+    snprintf(filename, sizeof(filename), "%s.log", PersistentData.hostName);
     bool success = false;
     WiFiClient& dataClient = FTPClient.append(filename);
     if (dataClient.connected())
     {
         if (logEntriesToSync > 0)
         {
-          const RAMSES2Packet* firstPacketPtr = PacketLog.getEntryFromEnd(logEntriesToSync);
-          printPacketLog(*printTo, "%F %T", firstPacketPtr);
-          logEntriesToSync = 0;
+            const RAMSES2Packet* firstPacketPtr = PacketLog.getEntryFromEnd(logEntriesToSync);
+            printPacketLog(dataClient, "%F %T", firstPacketPtr);
+            logEntriesToSync = 0;
         }
         else if (printTo != nullptr)
             printTo->println("Nothing to sync.");
@@ -186,10 +186,6 @@ void handleHttpSyncFTPRequest()
     }
     else
         Html.writeParagraph("Failed: %s", FTPClient.getLastError());
-
-    Html.writeHeading("CSV headers", 2);
-    Html.writePreStart();
-    Html.writePreEnd();
 
     Html.writeFooter();
 
@@ -374,12 +370,12 @@ void handleSerialRequest()
             testPacketPtr->fields = F_ADDR0 | F_PARAM0;
             testPacketPtr->param[0] = i + 1;
             testPacketPtr->addr[0].deviceType = i % 8;
-            testPacketPtr->addr[0].deviceId = (i % 10) * 4;
+            testPacketPtr->addr[0].deviceId = (i % 8) * 4;
             if (i % 2 == 1) 
             {
                 testPacketPtr->fields |= F_ADDR2;
                 testPacketPtr->addr[2].deviceType = i % 8;
-                testPacketPtr->addr[2].deviceId = (i % 4) << 8;
+                testPacketPtr->addr[2].deviceId = (i % 8) << 8;
             }
             testPacketPtr->opcode = (i % 20) << 3;
             if (testPacketPtr->opcode == 8)

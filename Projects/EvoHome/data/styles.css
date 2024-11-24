@@ -1,6 +1,6 @@
 html 
 {
-    color: black;
+    color: white;
     background-color: #333333;
     font-family: sans-serif;
 }
@@ -103,6 +103,7 @@ td a:hover
 
 section
 {
+    color: black;
     background-color: darkgray;
     opacity: 80%;
     border: none;

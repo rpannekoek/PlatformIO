@@ -82,7 +82,7 @@ struct RAMSES2Packet
     RAMSES2Address addr[3];
     RAMSES2Payload* payloadPtr;
 
-    int rssi;
+    int16_t rssi;
     time_t timestamp;
  
     ~RAMSES2Packet() { if (payloadPtr != nullptr) delete payloadPtr; }
