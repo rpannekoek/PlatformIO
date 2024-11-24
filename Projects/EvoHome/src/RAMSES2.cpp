@@ -322,6 +322,20 @@ void RAMSES2Packet::printJson(Print& output) const
 }
 
 
+std::vector<RAMSES2Address> RAMSES2Packet::getAddresses() const
+{
+    std::vector<RAMSES2Address> result;
+    field_t addrField = F_ADDR0;
+    for (int i = 0; i < 3; i++)
+    {
+        if (fields & addrField)
+            result.push_back(addr[i]);
+        addrField <<= 1;
+    }
+    return result;
+}
+
+
 RAMSES2Payload* RAMSES2Packet::createPayload()
 {
     switch (opcode)

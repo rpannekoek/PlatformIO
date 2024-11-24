@@ -16,6 +16,7 @@
 #include "Constants.h"
 #include "PersistentData.h"
 #include "RAMSES2.h"
+#include "PacketStats.h"
 
 #define YELLOW 192,192,0
 #define CYAN 0,128,128
@@ -62,6 +63,7 @@ Navigation Nav;
 CC1101 Radio(HSPI, CC1101_SCK_PIN, CC1101_MISO_PIN, CC1101_MOSI_PIN, CC1101_CSN_PIN);
 RAMSES2 RAMSES(Radio, WiFiSM);
 Log<const RAMSES2Packet> PacketLog(RAMSES_PACKET_LOG_SIZE);
+PacketStatsClass PacketStats;
 
 size_t logEntriesToSync = 0;
 
@@ -74,6 +76,8 @@ void onPacketReceived(const RAMSES2Packet* packetPtr)
 {
     packetPtr->print(Serial);
     PacketLog.add(packetPtr);
+    PacketStats.processPacket(packetPtr);
+
     logEntriesToSync = std::min(logEntriesToSync + 1, RAMSES_PACKET_LOG_SIZE);
     if (PersistentData.isFTPEnabled() && (logEntriesToSync >= PersistentData.ftpSyncEntries))
         syncFTPTime = currentTime;
@@ -341,6 +345,10 @@ void handleHttpRootRequest()
     Html.writeTableEnd();
     Html.writeSectionEnd();
 
+    Html.writeSectionStart("Packet Statistics");
+    PacketStats.writeHtmlTable(Html);
+    Html.writeSectionEnd();
+
     Html.writeDivEnd();
     Html.writeFooter();
 
@@ -365,15 +373,15 @@ void handleSerialRequest()
             testPacketPtr->type = static_cast<RAMSES2PackageType>(i % 4);
             testPacketPtr->fields = F_ADDR0 | F_PARAM0;
             testPacketPtr->param[0] = i + 1;
-            testPacketPtr->addr[0].deviceType = i % 10;
-            testPacketPtr->addr[0].deviceId = i * 4;
+            testPacketPtr->addr[0].deviceType = i % 8;
+            testPacketPtr->addr[0].deviceId = (i % 10) * 4;
             if (i % 2 == 1) 
             {
                 testPacketPtr->fields |= F_ADDR2;
-                testPacketPtr->addr[2].deviceType = i % 20;
-                testPacketPtr->addr[2].deviceId = i << 8;
+                testPacketPtr->addr[2].deviceType = i % 8;
+                testPacketPtr->addr[2].deviceId = (i % 4) << 8;
             }
-            testPacketPtr->opcode = i << 3;
+            testPacketPtr->opcode = (i % 20) << 3;
             if (testPacketPtr->opcode == 8)
             {
                 HeatDemandPayload* testHeatDemandPayloadPtr = new HeatDemandPayload();

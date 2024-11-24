@@ -1,3 +1,6 @@
+#ifndef RAMSES2_H
+#define RAMSES2_H
+
 #include <Print.h>
 #include <Logger.h>
 #include "CC1101.h"
@@ -30,6 +33,12 @@ struct RAMSES2Address
     size_t deserialize(const uint8_t* dataPtr);
     void print(Print& output) const;
     void printJson(Print& output) const;
+
+    friend bool operator<(const RAMSES2Address& lhs, const RAMSES2Address& rhs)
+    {
+        return (lhs.deviceType < rhs.deviceType)
+            || ((lhs.deviceType == rhs.deviceType) && (lhs.deviceId < rhs.deviceId));
+    }
 };
 
 struct RAMSES2Payload
@@ -82,6 +91,7 @@ struct RAMSES2Packet
     RAMSES2Payload* createPayload();
     void print(Print& output, const char* timestampFormat = nullptr) const;
     void printJson(Print& output) const;
+    std::vector<RAMSES2Address> getAddresses() const;
 };
 
 class RAMSES2
@@ -115,3 +125,5 @@ class RAMSES2
         void byteReceived(uint8_t data);
         void packetReceived(size_t size);
 };
+
+#endif
