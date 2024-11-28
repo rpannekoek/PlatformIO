@@ -177,7 +177,7 @@ bool CC1101::writeBurst(CC1101Register reg, const uint8_t* dataPtr, uint8_t size
 
 int CC1101::writeFIFO(const uint8_t* dataPtr, uint8_t size)
 {
-    if (_mode != CC1101Mode::Transmit) return CC1101_ERR_INVALID_STATE;
+    if (_mode == CC1101Mode::Receive) return CC1101_ERR_INVALID_STATE;
 
     uint8_t txBytes = readRegister(CC1101Register::TXBYTES);
     if (txBytes & 0x80)

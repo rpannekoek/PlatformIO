@@ -113,8 +113,10 @@ class RAMSES2
         }
 
         bool begin();
+        void byteReceived(uint8_t data);
         bool sendPacket(const RAMSES2Packet& packet);
-        size_t createFrame(const RAMSES2Packet& packet, uint8_t* framePtr = nullptr);
+        size_t createFrame(const RAMSES2Packet& packet, uint8_t** framePtr = nullptr);
+        void resetFrame();
 
     private:
         static const uint8_t _frameHeader[];
@@ -132,10 +134,8 @@ class RAMSES2
 
         uint8_t manchesterEncode(uint8_t nibble);
         uint8_t manchesterDecode(uint8_t data);
-        void resetFrame();
         static void run(void* taskParam);
         void doWork();
-        void byteReceived(uint8_t data);
         void packetReceived(size_t size);
         int writeChunk();
 };

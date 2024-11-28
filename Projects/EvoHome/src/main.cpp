@@ -66,6 +66,7 @@ Log<const RAMSES2Packet> PacketLog(RAMSES_PACKET_LOG_SIZE);
 PacketStatsClass PacketStats;
 RAMSES2Packet PacketToSend;
 
+String sendResult;
 size_t logEntriesToSync = 0;
 
 time_t currentTime = 0;
@@ -359,13 +360,16 @@ void handleHttpSendPacketRequest()
     hexDump(HttpResponse, packetBuffer, packetSize);
     Html.writePreEnd();
 
-    static uint8_t frameBuffer[RAMSES_MAX_FRAME_SIZE];
-    size_t frameSize = RAMSES.createFrame(PacketToSend, frameBuffer);
+    uint8_t* framePtr;
+    size_t frameSize = RAMSES.createFrame(PacketToSend, &framePtr);
 
     Html.writeHeading("Frame data", 2);
     Html.writePreStart();
-    hexDump(HttpResponse, frameBuffer, frameSize);
+    hexDump(HttpResponse, framePtr, frameSize);
     Html.writePreEnd();
+
+    Html.writeParagraph(sendResult);
+    sendResult.clear();
 
     Html.writeFooter();
 
@@ -398,6 +402,11 @@ void handleHttpSendPacketPost()
 
     if (!PacketToSend.payloadPtr->parse(WebServer.arg("payload")))
         TRACE("Parsing payload failed\n");
+
+    if (RAMSES.sendPacket(PacketToSend))
+        sendResult = "Success";
+    else
+        sendResult = "Failed";
 
     handleHttpSendPacketRequest();
 }
@@ -509,20 +518,22 @@ void handleSerialRequest()
     }
     else if (cmd.startsWith("testS"))
     {
-        RAMSES2Packet testPacket;
-        testPacket.rssi = 0;
-        testPacket.type = RAMSES2PackageType::Info;
-        testPacket.param[0] = 123;
-        testPacket.addr[2].deviceType = 12;
-        testPacket.addr[2].deviceId = 123456;
-        testPacket.opcode = 8;
-        testPacket.payloadPtr = testPacket.createPayload();
-        testPacket.payloadPtr->size = 2;
-        testPacket.payloadPtr->bytes[0] = 1;
-        testPacket.payloadPtr->bytes[1] = 66;
-        testPacket.print(Serial);
+        static uint8_t packetBuffer[RAMSES_MAX_PACKET_SIZE];
+        size_t packetSize = PacketToSend.serialize(packetBuffer, sizeof(packetBuffer));
 
-        RAMSES.createFrame(testPacket);
+        RAMSES2Packet deserialized;
+        deserialized.deserialize(packetBuffer, packetSize);
+        deserialized.print(Serial);
+    }
+    else if (cmd.startsWith("testR"))
+    {
+        uint8_t* framePtr;
+        size_t frameSize = RAMSES.createFrame(PacketToSend, &framePtr);
+
+        // Simulate packet received
+        RAMSES.resetFrame();
+        for (int i = 0; i < frameSize; i++)
+            RAMSES.byteReceived(framePtr[i]);    
     }
 }
 

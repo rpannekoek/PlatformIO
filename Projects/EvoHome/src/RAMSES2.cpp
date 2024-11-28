@@ -90,10 +90,8 @@ bool RAMSES2::sendPacket(const RAMSES2Packet& packet)
 }
 
 
-size_t RAMSES2::createFrame(const RAMSES2Packet& packet, uint8_t* framePtr)
+size_t RAMSES2::createFrame(const RAMSES2Packet& packet, uint8_t** framePtr)
 {
-    if (framePtr == nullptr) framePtr = _frameBuffer;
-
     int packetSize = packet.serialize(_packetBuffer, sizeof(_packetBuffer));
     TRACE("RAMSES2: Packet serialized to %d bytes:\n", packetSize);
     Tracer::hexDump(_packetBuffer, packetSize);
@@ -106,20 +104,21 @@ size_t RAMSES2::createFrame(const RAMSES2Packet& packet, uint8_t* framePtr)
 
     // Build frame: preamble, header, manchester encoded packet + checksum, trailer
     int i = 5;
-    memset(framePtr, 0xAA, i); // preamble
-    memcpy(framePtr + i, _frameHeader, sizeof(_frameHeader));
+    memset(_frameBuffer, 0xAA, i); // preamble
+    memcpy(_frameBuffer + i, _frameHeader, sizeof(_frameHeader));
     i += sizeof(_frameHeader);
     for (int n = 0; n < packetSize; n++)
     {
-        framePtr[i++] = manchesterEncode(_packetBuffer[n] >> 4);
-        framePtr[i++] = manchesterEncode(_packetBuffer[n] & 0xF);
+        _frameBuffer[i++] = manchesterEncode(_packetBuffer[n] >> 4);
+        _frameBuffer[i++] = manchesterEncode(_packetBuffer[n] & 0xF);
     }
-    memcpy(framePtr + i, _frameTrailer, sizeof(_frameTrailer));
+    memcpy(_frameBuffer + i, _frameTrailer, sizeof(_frameTrailer));
 
     size_t frameSize = i + sizeof(_frameTrailer);
     TRACE("RAMSES2: Created frame of %d bytes:\n", frameSize);
-    Tracer::hexDump(framePtr, frameSize);
+    Tracer::hexDump(_frameBuffer, frameSize);
 
+    if (framePtr != nullptr) *framePtr = _frameBuffer;
     return frameSize;
 }
 
@@ -251,6 +250,7 @@ void RAMSES2::byteReceived(uint8_t data)
             _packetBuffer[_frameIndex / 2] = decodedNibble << 4;
         else
             _packetBuffer[_frameIndex / 2] |= decodedNibble;
+        _frameIndex++;
     }
 }
 
@@ -261,7 +261,7 @@ void RAMSES2::packetReceived(size_t size)
     Tracer::hexDump(_packetBuffer, size);
 
     uint8_t checksum = 0;
-    for (int i = 0; i < size; i++) checksum += _packetBuffer[0];
+    for (int i = 0; i < size; i++) checksum += _packetBuffer[i];
     if (checksum != 0)
     {
         _logger.logEvent("RAMSES2: Checksum failure (0x%02X)", checksum);
@@ -306,7 +306,7 @@ size_t RAMSES2Address::deserialize(const uint8_t* dataPtr)
 {
     deviceType = dataPtr[0] >> 2;
     deviceId = static_cast<uint32_t>(dataPtr[0] & 0x3) << 16
-        | static_cast<uint32_t>(dataPtr[1] & 0x3) << 8
+        | static_cast<uint32_t>(dataPtr[1]) << 8
         | static_cast<uint32_t>(dataPtr[2]);
 
     return 3; // bytes
