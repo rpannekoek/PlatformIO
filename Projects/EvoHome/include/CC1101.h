@@ -6,6 +6,14 @@
 
 constexpr uint8_t CC1101_FIFO_SIZE = 64;
 
+enum CC1101Error
+{
+    CC1101_ERR_GENERAL = -1,
+    CC1101_ERR_INVALID_STATE = -2,
+    CC1101_ERR_RX_FIFO_OVERFLOW = -3,
+    CC1101_ERR_TX_FIFO_UNDERFLOW = -4
+};
+
 typedef int8_t state_t;
 
 enum struct CC1101Register
@@ -135,6 +143,7 @@ class CC1101
         bool setMode(CC1101Mode mode);
         bool setTxPower(CC1101TxPower power);
         float readRSSI();
+        bool awaitMode(CC1101Mode mode, uint32_t timeoutMs);
 
     private:
         SPIClass _spi;
@@ -142,7 +151,7 @@ class CC1101
         int8_t _misoPin;
         int8_t _mosiPin;
         int8_t _csnPin;
-        CC1101Mode _mode;
+        volatile CC1101Mode _mode;
 
         uint8_t getAddress(CC1101Register reg, bool read, bool burst);
         bool awaitMisoLow();

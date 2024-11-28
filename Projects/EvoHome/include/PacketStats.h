@@ -44,7 +44,7 @@ class PacketStatsClass
                 return;
             }
 
-            if (packetPtr->fields & F_ADDR0)
+            if (!packetPtr->addr[0].isNull())
             {
                 AddressStats* statsPtr;
                 auto loc = statsByAddress.find(packetPtr->addr[0]);

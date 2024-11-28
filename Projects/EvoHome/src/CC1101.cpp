@@ -108,7 +108,7 @@ bool CC1101::awaitMisoLow()
     for (int retries = 0; retries < 100; retries++)
     {
         if (digitalRead(_misoPin) == LOW) return true;
-        delay(1);
+        delayMicroseconds(1);
     }
 
     TRACE("CC1101: Timeout waiting for MISO to go low\n");
@@ -177,7 +177,7 @@ bool CC1101::writeBurst(CC1101Register reg, const uint8_t* dataPtr, uint8_t size
 
 int CC1101::writeFIFO(const uint8_t* dataPtr, uint8_t size)
 {
-    if (_mode != CC1101Mode::Transmit) return -1;
+    if (_mode != CC1101Mode::Transmit) return CC1101_ERR_INVALID_STATE;
 
     uint8_t txBytes = readRegister(CC1101Register::TXBYTES);
     if (txBytes & 0x80)
@@ -185,7 +185,7 @@ int CC1101::writeFIFO(const uint8_t* dataPtr, uint8_t size)
         TRACE("CC1101: TX FIFO underflow\n");
         strobe(CC1101Register::SFTX);
         _mode = CC1101Mode::Idle;
-        return -2;
+        return CC1101_ERR_TX_FIFO_UNDERFLOW;
     }
 
     txBytes = CC1101_FIFO_SIZE - txBytes; // Remaining space in TX FIFO
@@ -195,7 +195,7 @@ int CC1101::writeFIFO(const uint8_t* dataPtr, uint8_t size)
         if (!writeBurst(CC1101Register::FIFO, dataPtr, bytesToWrite))
         {
             TRACE("CC1101: writeBurst failed\n");
-            return -3;
+            return CC1101_ERR_GENERAL;
         }
     }
 
@@ -236,7 +236,7 @@ bool CC1101::readBurst(CC1101Register reg, uint8_t* dataPtr, uint8_t size)
 
 int CC1101::readFIFO(uint8_t* dataPtr, uint8_t size)
 {
-    if (_mode != CC1101Mode::Receive) return -1;
+    if (_mode != CC1101Mode::Receive) return CC1101_ERR_INVALID_STATE;
 
     uint8_t rxBytes = readRegister(CC1101Register::RXBYTES);
     if (rxBytes & 0x80)
@@ -244,8 +244,10 @@ int CC1101::readFIFO(uint8_t* dataPtr, uint8_t size)
         TRACE("CC1101: RX FIFO overflow\n");
         strobe(CC1101Register::SFRX);
         _mode = CC1101Mode::Idle;
-        return -2;
+        return CC1101_ERR_RX_FIFO_OVERFLOW;
     }
+
+    if (rxBytes > 1) rxBytes--; // See CC1101 errata
 
     uint8_t bytesToRead = std::min(rxBytes, size);
     if (bytesToRead != 0)
@@ -253,7 +255,7 @@ int CC1101::readFIFO(uint8_t* dataPtr, uint8_t size)
         if (!readBurst(CC1101Register::FIFO, dataPtr, bytesToRead))
         {
             TRACE("CC1101: readBurst failed\n");
-            return -3;
+            return CC1101_ERR_GENERAL;
         }
     }
 
@@ -266,6 +268,21 @@ float CC1101::readRSSI()
   int8_t rssi = static_cast<int8_t>(readRegister(CC1101Register::RSSI));
   return float(rssi) / 2 - 74;
 }
+
+
+bool CC1101::awaitMode(CC1101Mode mode, uint32_t timeoutMs)
+{
+    const int delayMs = 10;
+    int waitedMs = 0;
+    while (_mode != mode)
+    {
+        if (waitedMs >= timeoutMs) return false;
+        waitedMs += delayMs;
+        delay(delayMs);
+    }
+    return true;
+}
+
 
 bool CC1101::setMode(CC1101Mode mode)
 {

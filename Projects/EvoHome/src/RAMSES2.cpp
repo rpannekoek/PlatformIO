@@ -3,7 +3,10 @@
 #include <TimeUtils.h>
 #include "RAMSES2.h"
 
-const uint8_t _ramsesFrameHeader[] = { 0xFF, 0x00, 0x33, 0x55, 0x53 };
+const char* RAMSES2Packet::typeId[] = { "Request", "Info",  "Write", "Response" };
+
+const uint8_t RAMSES2::_frameHeader[] = { 0xFF, 0x00, 0x33, 0x55, 0x53 };
+const uint8_t RAMSES2::_frameTrailer[] = { 0x35, 0xAA };
 
 
 bool RAMSES2::begin()
@@ -13,6 +16,12 @@ bool RAMSES2::begin()
     if (!_cc1101.begin())
     {
         _logger.logEvent("CC1101 initialization failed");
+        return false;
+    }
+
+    if (!_cc1101.setMode(CC1101Mode::Receive))
+    {
+        _logger.logEvent("Unable to set CC1101 in receive mode");
         return false;
     }
 
@@ -37,9 +46,105 @@ bool RAMSES2::begin()
 }
 
 
+bool RAMSES2::sendPacket(const RAMSES2Packet& packet)
+{
+    Tracer tracer("RAMSES2::sendPacket");
+    packet.print(Serial);
+
+    if (_cc1101.getMode() != CC1101Mode::Idle)
+    {
+        _switchToIdle = true;
+        if (!_cc1101.awaitMode(CC1101Mode::Idle, 100))
+        {
+            _logger.logEvent("Timeout waiting for CC1101 idle");
+            return false;
+        }
+    }
+
+    // Fill the TX FIFO before switching to Transmit mode
+    _frameSize = createFrame(packet);
+    _frameIndex = 0;
+    int bytesWritten = writeChunk();
+    TRACE("RAMSES2: writeChunk() returned %d\n", bytesWritten); 
+    if (bytesWritten < 0) return false;
+
+    if (!_cc1101.setMode(CC1101Mode::Transmit))
+    {
+        _logger.logEvent("Unable to set CC1101 in transmit mode");
+        return false;
+    }
+
+    if (!_cc1101.awaitMode(CC1101Mode::Idle, 100))
+    {
+        _logger.logEvent("Timeout waiting for CC1101 transmit complete");
+        return false;
+    }
+
+    if (!_cc1101.setMode(CC1101Mode::Receive))
+    {
+        _logger.logEvent("Unable to set CC1101 in receive mode");
+        return false;
+    }
+
+    return true;
+}
+
+
+size_t RAMSES2::createFrame(const RAMSES2Packet& packet, uint8_t* framePtr)
+{
+    if (framePtr == nullptr) framePtr = _frameBuffer;
+
+    int packetSize = packet.serialize(_packetBuffer, sizeof(_packetBuffer));
+    TRACE("RAMSES2: Packet serialized to %d bytes:\n", packetSize);
+    Tracer::hexDump(_packetBuffer, packetSize);
+
+    uint8_t checksum = 0;
+    for (int i = 0; i < packetSize; i++) checksum += _packetBuffer[i];
+    checksum = -checksum;
+    TRACE("RAMSES2: Checksum = 0x%02X\n", checksum);
+    _packetBuffer[packetSize++] = checksum;
+
+    // Build frame: preamble, header, manchester encoded packet + checksum, trailer
+    int i = 5;
+    memset(framePtr, 0xAA, i); // preamble
+    memcpy(framePtr + i, _frameHeader, sizeof(_frameHeader));
+    i += sizeof(_frameHeader);
+    for (int n = 0; n < packetSize; n++)
+    {
+        framePtr[i++] = manchesterEncode(_packetBuffer[n] >> 4);
+        framePtr[i++] = manchesterEncode(_packetBuffer[n] & 0xF);
+    }
+    memcpy(framePtr + i, _frameTrailer, sizeof(_frameTrailer));
+
+    size_t frameSize = i + sizeof(_frameTrailer);
+    TRACE("RAMSES2: Created frame of %d bytes:\n", frameSize);
+    Tracer::hexDump(framePtr, frameSize);
+
+    return frameSize;
+}
+
+
 void RAMSES2::resetFrame()
 {
-    _frameIndex = -sizeof(_ramsesFrameHeader);
+    _frameIndex = -sizeof(_frameHeader);
+    if (_switchToIdle)
+    {
+        _switchToIdle = false;
+        if (!_cc1101.setMode(CC1101Mode::Idle))
+            _logger.logEvent("Unable to set CC1101 to idle");
+    }
+}
+
+
+uint8_t RAMSES2::manchesterEncode(uint8_t nibble)
+{
+    // Map 4 bits (nibble) to 8 bits.
+    static uint8_t const nibbleEncode[16] =
+    {
+        0xAA, 0xA9, 0xA6, 0xA5, 0x9A, 0x99, 0x96, 0x95,
+        0x6A, 0x69, 0x66, 0x65, 0x5A, 0x59, 0x56, 0x55
+    };
+    return nibbleEncode[nibble];
 }
 
 
@@ -68,32 +173,46 @@ void RAMSES2::run(void* taskParam)
 
 void RAMSES2::doWork()
 {
-    static uint8_t buffer[CC1101_FIFO_SIZE];
-
     switch (_cc1101.getMode())
     {
         case CC1101Mode::Idle:
-            if (!_cc1101.setMode(CC1101Mode::Receive))
-                _logger.logEvent("Unable to set CC1101 in receive mode");
+            // Nothing to do
             break;
 
         case CC1101Mode::Receive:
         {
-            int bytesRead = _cc1101.readFIFO(buffer, sizeof(buffer));
-            if (bytesRead >= 0)
-                for (int i = 0; i < bytesRead; i++) byteReceived(buffer[i]);
+            int bytesRead = _cc1101.readFIFO(_frameBuffer, sizeof(_frameBuffer));
+            if (bytesRead > 0)
+                for (int i = 0; i < bytesRead; i++) byteReceived(_frameBuffer[i]);
             else
             {
-                _logger.logEvent("Reading from CC1101 FIFO failed");
+                if (bytesRead < 0)
+                    _logger.logEvent("Error reading from CC1101 FIFO: %d", bytesRead);
                 resetFrame();
             }
             break;
         }
 
         case CC1101Mode::Transmit:
-            // TODO
+            writeChunk();
             break;
     }
+}
+
+
+int RAMSES2::writeChunk()
+{
+    int bytesWritten = _cc1101.writeFIFO(_frameBuffer + _frameIndex, _frameSize - _frameIndex);
+    if (bytesWritten >= 0)
+        _frameIndex += bytesWritten;
+    else if (bytesWritten != CC1101_ERR_TX_FIFO_UNDERFLOW) // TX FIFO underflow is expected
+    {
+        _logger.logEvent("Error writing to CC1101 FIFO: %d", bytesWritten);
+        _switchToIdle = true;
+        resetFrame();
+    }
+    
+    return bytesWritten;
 }
 
 
@@ -102,14 +221,13 @@ void RAMSES2::byteReceived(uint8_t data)
     if (_frameIndex < 0)
     {
         // Scan for RAMSES frame header
-        if (data == _ramsesFrameHeader[_frameIndex + sizeof(_ramsesFrameHeader)])
+        if (data == _frameHeader[_frameIndex + sizeof(_frameHeader)])
             _frameIndex++;
         else
             resetFrame();
     }
-    else if (data == 0x35)
+    else if (data == _frameTrailer[0])
     {
-         // RAMSES frame trailer
          packetReceived(_frameIndex / 2);
          resetFrame();
     }
@@ -152,7 +270,7 @@ void RAMSES2::packetReceived(size_t size)
     }
 
     RAMSES2Packet* packetPtr = new RAMSES2Packet();
-    if (!packetPtr->deserialize(_packetBuffer, size))
+    if (!packetPtr->deserialize(_packetBuffer, size - 1))
     {
         _logger.logEvent("RAMSES2: Packet deserialization failed");
         errors++;
@@ -170,6 +288,17 @@ void RAMSES2::packetReceived(size_t size)
     packetPtr->timestamp = time(nullptr);
 
     _packetReceivedHandler(packetPtr);
+}
+
+
+size_t RAMSES2Address::serialize(uint8_t* dataPtr) const
+{
+    if (isNull()) return 0;
+
+    dataPtr[0] = (deviceType << 2) | deviceId >> 16;
+    dataPtr[1] = (deviceId & 0xFF00) >> 8;
+    dataPtr[2] = (deviceId & 0xFF); 
+    return 3;
 }
 
 
@@ -192,7 +321,8 @@ String RAMSES2Address::getDeviceType() const
         { 4, "TRV" },
         { 10, "OTB" },
         { 18, "HGI" },
-        { 63, "NUL" }
+        { 63, "***" },
+        { 0xFF, "NUL" }
     };
 
     auto loc = knownDeviceTypes.find(deviceType);
@@ -203,18 +333,60 @@ String RAMSES2Address::getDeviceType() const
 }
 
 
+bool RAMSES2Address::parse(const String& str)
+{
+    int devType = 0;
+    int devId = 0;
+    if (sscanf(str.c_str(), "%d:%d", &devType, &devId) != 2) return false;
+    deviceType = devType;
+    deviceId = devId;
+    return true;
+}
+
+
 void RAMSES2Address::print(Print& output) const
 {
-    output.printf("%02d:%06d", deviceType, deviceId);
+    if (isNull())
+        output.print("--:------");
+    else
+        output.printf("%02d:%06d", deviceType, deviceId);
 }
 
 
 void RAMSES2Address::printJson(Print& output) const
 {
-    output.printf(
-        "{ \"deviceType\": \"%s\", \"deviceId\": %d }",
-        getDeviceType().c_str(),
-        deviceId);
+    if (isNull())
+        output.print("{}");
+    else
+        output.printf(
+            "{ \"deviceType\": \"%s\", \"deviceId\": %d }",
+            getDeviceType().c_str(),
+            deviceId);
+}
+
+
+size_t RAMSES2Packet::serialize(uint8_t* dataPtr, size_t size) const
+{
+    if (size < 8) return 0;
+
+    dataPtr[0] = static_cast<uint8_t>(type) << 4;
+    if (addr[0].isNull() && addr[1].isNull()) dataPtr[0] |= 0x4;
+    else if (addr[1].isNull()) dataPtr[0] |= 0x8; 
+    else if (addr[2].isNull()) dataPtr[0] |= 0xC;
+
+    int i = 1;
+    for (int n = 0; n < 3; n++)
+        i += addr[n].serialize(dataPtr + i);
+
+    if (param[0] != PARAM_NULL) dataPtr[i++] = param[0];
+    if (param[1] != PARAM_NULL) dataPtr[i++] = param[1];
+
+    dataPtr[i++] = opcode >> 8;
+    dataPtr[i++] = opcode & 0xFF;
+
+    if (payloadPtr != nullptr) i += payloadPtr->serialize(dataPtr + i, (size - i));
+
+    return i;
 }
 
 
@@ -225,20 +397,35 @@ bool RAMSES2Packet::deserialize(const uint8_t* dataPtr, size_t size)
 
     uint8_t flags = *dataPtr++;
     type = static_cast<RAMSES2PackageType>((flags & 0x30) >> 4);
-    fields = flags & 0x3;
     switch (flags & 0xC)
     {
-        case 0x0: fields |= F_ADDR0 | F_ADDR1 | F_ADDR2; break;
-        case 0x4: fields |= F_ADDR2; break;
-        case 0x8: fields |= F_ADDR0 | F_ADDR2; break;
-        case 0xC: fields |= F_ADDR0 | F_ADDR1; break;
+        case 0x0:
+            dataPtr += addr[0].deserialize(dataPtr);
+            dataPtr += addr[1].deserialize(dataPtr);
+            dataPtr += addr[2].deserialize(dataPtr);
+            break;
+
+        case 0x4:
+            addr[0].setNull();
+            addr[1].setNull();
+            dataPtr += addr[2].deserialize(dataPtr);
+            break;
+
+        case 0x8: 
+            dataPtr += addr[0].deserialize(dataPtr);
+            addr[1].setNull();
+            dataPtr += addr[2].deserialize(dataPtr);
+            break;
+
+        case 0xC:
+            dataPtr += addr[0].deserialize(dataPtr);
+            dataPtr += addr[1].deserialize(dataPtr);
+            addr[2].setNull();
+            break;
     }
 
-    if (fields & F_ADDR0) dataPtr += addr[0].deserialize(dataPtr);
-    if (fields & F_ADDR1) dataPtr += addr[1].deserialize(dataPtr);
-    if (fields & F_ADDR2) dataPtr += addr[2].deserialize(dataPtr);
-    if (fields & F_PARAM0) param[0] = *dataPtr++;
-    if (fields & F_PARAM1) param[1] = *dataPtr++;
+    if (flags & 0x2) param[0] = *dataPtr++;
+    if (flags & 0x1) param[1] = *dataPtr++;
 
     opcode = dataPtr[0] << 8 | dataPtr[1];
     dataPtr += 2;
@@ -253,29 +440,24 @@ bool RAMSES2Packet::deserialize(const uint8_t* dataPtr, size_t size)
 
 void RAMSES2Packet::print(Print& output, const char* timestampFormat) const
 {
-    static const char* typeId[] = {" I", "RQ", "RP", " W"};
+    static const char* typeToken[] = { "RQ", " I", " W", "RP"};
 
     if (timestampFormat != nullptr)
         output.printf("%s ", formatTime(timestampFormat, timestamp));
 
     output.printf("%03d ", -rssi);
 
-    output.printf("%s ", typeId[static_cast<int>(type)]);
+    output.printf("%s ", typeToken[static_cast<int>(type)]);
 
-    if (fields & F_PARAM0)
-        output.printf("%03d ", param[0]);
-    else
+    if (param[0] == PARAM_NULL)
         output.print("--- ");
+    else
+        output.printf("%03d ", param[0]);
 
-    field_t addrField = F_ADDR0;
     for (int i = 0; i < 3; i++)
     {
-        if (fields & addrField)
-            addr[i].print(output);
-        else
-            output.print("--:------");
+        addr[i].print(output);
         output.print(" ");
-        addrField <<= 1;
     }
 
     output.printf("%04X ", opcode);
@@ -288,26 +470,22 @@ void RAMSES2Packet::print(Print& output, const char* timestampFormat) const
 
 void RAMSES2Packet::printJson(Print& output) const
 {
-    static const char* typeId[] = { "Info", "Request", "Response", "Write"};
-
     output.print("{ ");
     output.printf("\"timestamp\": \"%s\", ", formatTime("%FT%T", timestamp));
     output.printf("\"rssi\": %d, ", rssi);
     output.printf("\"type\": \"%s\", ", typeId[static_cast<int>(type)]);
 
-    if (fields & F_PARAM0) output.printf("\"param0\": %d, ", param[0]);
-    if (fields & F_PARAM1) output.printf("\"param1\": %d, ", param[1]);
+    if (param[0] != PARAM_NULL) output.printf("\"param0\": %d, ", param[0]);
+    if (param[1] != PARAM_NULL) output.printf("\"param1\": %d, ", param[1]);
 
-    field_t addrField = F_ADDR0;
     for (int i = 0; i < 3; i++)
     {
-        if (fields & addrField)
+        if (!addr[i].isNull())
         {
             output.printf("\"addr%d\": ", i);
             addr[i].printJson(output);
             output.print(", ");
         }
-        addrField <<= 1;
     }
 
     output.printf("\"opcode\": \"%04X\", ", opcode);
@@ -320,20 +498,6 @@ void RAMSES2Packet::printJson(Print& output) const
     }
 
     output.print(" }");
-}
-
-
-std::vector<RAMSES2Address> RAMSES2Packet::getAddresses() const
-{
-    std::vector<RAMSES2Address> result;
-    field_t addrField = F_ADDR0;
-    for (int i = 0; i < 3; i++)
-    {
-        if (fields & addrField)
-            result.push_back(addr[i]);
-        addrField <<= 1;
-    }
-    return result;
 }
 
 
@@ -360,6 +524,14 @@ const char* RAMSES2Payload::getType() const
 }
 
 
+size_t RAMSES2Payload::serialize(uint8_t* dataPtr, size_t size) const
+{
+    dataPtr[0] = this->size;
+    memcpy(dataPtr + 1, bytes, this->size);
+    return this->size + 1;
+}
+
+
 size_t RAMSES2Payload::deserialize(const uint8_t* dataPtr)
 {
     size = dataPtr[0];
@@ -369,6 +541,24 @@ size_t RAMSES2Payload::deserialize(const uint8_t* dataPtr)
 
     memcpy(bytes, dataPtr + 1, size);
     return size + 1;
+}
+
+
+bool RAMSES2Payload::parse(const String& str)
+{
+    int i = 0;
+    int c = 0;
+    const char* strBufPtr = str.c_str();
+    while (c < str.length())
+    {
+        int byte;
+        if (sscanf(strBufPtr + c, "%02X", &byte) != 1) return false;
+        bytes[i++] = byte;
+        c += 2;
+        if (str[c] == ' ') c++;
+    }
+    size = i;
+    return true;
 }
 
 

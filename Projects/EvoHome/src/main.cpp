@@ -64,6 +64,7 @@ CC1101 Radio(HSPI, CC1101_SCK_PIN, CC1101_MISO_PIN, CC1101_MOSI_PIN, CC1101_CSN_
 RAMSES2 RAMSES(Radio, WiFiSM);
 Log<const RAMSES2Packet> PacketLog(RAMSES_PACKET_LOG_SIZE);
 PacketStatsClass PacketStats;
+RAMSES2Packet PacketToSend;
 
 size_t logEntriesToSync = 0;
 
@@ -308,6 +309,100 @@ void handleHttpPacketLogJsonRequest()
 }
 
 
+void hexDump(Print& output, const uint8_t* dataPtr, size_t size)
+{
+    for (int i = 0; i < size; i++)
+    {
+        output.printf("%02X ", dataPtr[i]);
+        if (i % 16 == 15) output.println();
+    }
+}
+
+
+void handleHttpSendPacketRequest()
+{
+    Tracer tracer("handleHttpSendPacketRequest");
+
+    if (PacketToSend.payloadPtr == nullptr)
+        PacketToSend.payloadPtr = PacketToSend.createPayload();
+
+    Html.writeHeader("Send packet", Nav);
+
+    Html.writeFormStart("/send", "grid");
+    Html.writeDropdown("type", "type", RAMSES2Packet::typeId, 4, static_cast<int>(PacketToSend.type));
+
+    for (int i = 0; i < 3; i++)
+    {
+        String name = "addr";
+        name += i;
+        StringBuilder addrStr(16);
+        if (!PacketToSend.addr[i].isNull())
+            PacketToSend.addr[i].print(addrStr);
+        Html.writeTextBox(name, name, addrStr.c_str(), 10);
+    }
+
+    Html.writeTextBox("opcode", "opcode", String(PacketToSend.opcode, 16), 4);
+
+    static StringBuilder payloadStr(RAMSES_MAX_PAYLOAD_SIZE * 3 + 1);
+    payloadStr.clear();
+    hexDump(payloadStr, PacketToSend.payloadPtr->bytes, PacketToSend.payloadPtr->size);
+    Html.writeTextBox("payload", "payload", payloadStr.c_str(), RAMSES_MAX_PAYLOAD_SIZE * 3);
+
+    Html.writeSubmitButton("Send");
+    Html.writeFormEnd();
+
+    static uint8_t packetBuffer[RAMSES_MAX_PACKET_SIZE];
+    size_t packetSize = PacketToSend.serialize(packetBuffer, sizeof(packetBuffer));
+
+    Html.writeHeading("Packet data", 2);
+    Html.writePreStart();
+    hexDump(HttpResponse, packetBuffer, packetSize);
+    Html.writePreEnd();
+
+    static uint8_t frameBuffer[RAMSES_MAX_FRAME_SIZE];
+    size_t frameSize = RAMSES.createFrame(PacketToSend, frameBuffer);
+
+    Html.writeHeading("Frame data", 2);
+    Html.writePreStart();
+    hexDump(HttpResponse, frameBuffer, frameSize);
+    Html.writePreEnd();
+
+    Html.writeFooter();
+
+    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
+}
+
+
+void handleHttpSendPacketPost()
+{
+    Tracer tracer("handleHttpSendPacketPost");
+
+    PacketToSend.type = static_cast<RAMSES2PackageType>(WebServer.arg("type").toInt());
+
+    for (int i = 0; i < 3; i++)
+    {
+        String name = "addr";
+        name += i;
+        String addrString = WebServer.arg(name); 
+        if (addrString.length() == 0)
+            PacketToSend.addr[i].setNull();
+        else if (!PacketToSend.addr[i].parse(addrString))
+            TRACE("Parsing addr%d '%s' failed\n", i, addrString.c_str());
+    }
+
+    int opcode = 0;
+    if (sscanf(WebServer.arg("opcode").c_str(), "%04X", &opcode) == 1)
+        PacketToSend.opcode = opcode;
+    else
+        TRACE("Parsing opcode failed\n");
+
+    if (!PacketToSend.payloadPtr->parse(WebServer.arg("payload")))
+        TRACE("Parsing payload failed\n");
+
+    handleHttpSendPacketRequest();
+}
+
+
 void handleHttpRootRequest()
 {
     Tracer tracer("handleHttpRootRequest");
@@ -367,13 +462,11 @@ void handleSerialRequest()
         {
             RAMSES2Packet* testPacketPtr = new RAMSES2Packet();
             testPacketPtr->type = static_cast<RAMSES2PackageType>(i % 4);
-            testPacketPtr->fields = F_ADDR0 | F_PARAM0;
             testPacketPtr->param[0] = i + 1;
             testPacketPtr->addr[0].deviceType = i % 8;
             testPacketPtr->addr[0].deviceId = (i % 8) * 4;
             if (i % 2 == 1) 
             {
-                testPacketPtr->fields |= F_ADDR2;
                 testPacketPtr->addr[2].deviceType = i % 8;
                 testPacketPtr->addr[2].deviceId = (i % 8) << 8;
             }
@@ -414,6 +507,23 @@ void handleSerialRequest()
         else
             TRACE("Packet deserialization failed\n");
     }
+    else if (cmd.startsWith("testS"))
+    {
+        RAMSES2Packet testPacket;
+        testPacket.rssi = 0;
+        testPacket.type = RAMSES2PackageType::Info;
+        testPacket.param[0] = 123;
+        testPacket.addr[2].deviceType = 12;
+        testPacket.addr[2].deviceId = 123456;
+        testPacket.opcode = 8;
+        testPacket.payloadPtr = testPacket.createPayload();
+        testPacket.payloadPtr->size = 2;
+        testPacket.payloadPtr->bytes[0] = 1;
+        testPacket.payloadPtr->bytes[1] = 66;
+        testPacket.print(Serial);
+
+        RAMSES.createFrame(testPacket);
+    }
 }
 
 
@@ -450,6 +560,14 @@ void setup()
             .label = PSTR("Packet log"),
             .urlPath =PSTR("packets"),
             .handler = handleHttpPacketLogRequest
+        },
+        MenuItem
+        {
+            .icon = Files[BinaryIcon],
+            .label = PSTR("Send packet"),
+            .urlPath =PSTR("send"),
+            .handler = handleHttpSendPacketRequest,
+            .postHandler = handleHttpSendPacketPost
         },
         MenuItem
         {
