@@ -31,6 +31,7 @@ class HtmlWriter
         void writeCheckbox(const String& name, const String& label, bool value);
         void writeRadioButtons(const String& name, const String& label, const char** values, int numValues, int index);
         void writeSlider(const String& name, const String& label, const String& unitOfMeasure, int value, int minValue, int maxValue, int denominator = 1);
+        void writeDropdown(const String& name, const String& label, const char** values, int numValues, int index = -1);
 
         void writeHeading(const String& title, int level = 1);
         void writeSectionStart(const String& title);

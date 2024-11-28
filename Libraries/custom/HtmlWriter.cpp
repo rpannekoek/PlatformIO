@@ -322,6 +322,24 @@ void HtmlWriter::writeSlider(const String& name, const String& label, const Stri
 }
 
 
+void HtmlWriter::writeDropdown(const String& name, const String& label, const char** values, int numValues, int index)
+{
+    writeLabel(label, name);
+    writeDivStart();
+    _output.printf(F("<select name=\"%s\">"), name.c_str());
+
+    for (int i = 0; i < numValues; i++)
+        _output.printf(
+            F("<option value=\"%d\" %s>%s</option>"),
+            i,
+            (i == index) ? "selected" : "",
+            values[i]);
+
+    _output.print(F("</select>"));
+    writeDivEnd();
+}
+
+
 void HtmlWriter::writeHeading(const String& title, int level)
 {
     _output.printf(
