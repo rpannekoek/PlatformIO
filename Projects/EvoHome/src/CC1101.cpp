@@ -4,26 +4,26 @@
 
 const uint8_t _cc1101Config[] =
 {
-    0x2E,  //  IOCFG2 	 GDO2 not used [evofw3: 0x2E/0x02 (RX/TX) > not used/TX FIFO full] [evofw2: 0x0B > Serial Clock]
+    0x06,  //  IOCFG2 	 GDO2 packet RX/TX [evofw3: 0x2E/0x02 (RX/TX) > not used/TX FIFO full] [evofw2: 0x0B > Serial Clock]
     0x2E,  //  IOCFG1 	 GDO1 not used
     0x2E,  //  IOCFG0	 GDO0 not used [evofw2: 0x0C > Sync Data Out]
     0x07,  //  FIFOTHR   default FIFO threshold: 32 bytes (half full)
-    0xD3,  //  SYNC1     default
-    0x91,  //  SYNC0     default
-    0xFF,  //  PKTLEN	 default
-    0x00,  //  PKTCTRL1  don't append status [evofw3: 0x04] [evofw2: 0x00]
-    0x02,  //  PKTCTRL0  FIFO, infinite packet [evofw3: 0x32/0x02 (RX/TX) > Async Serial/FIFO, infinite package] [evofw2: 0x12 > Sync Serial, infinite packet]
+    0xFF,  //  SYNC1     |
+    0x00,  //  SYNC0     | Sync Word: 0xFF00
+    0xFF,  //  PKTLEN	 initial packet length (set during RX/TX)
+    0x00,  //  PKTCTRL1  PQT=0, don't append status [evofw3: 0x04] [evofw2: 0x00]
+    0x00,  //  PKTCTRL0  FIFO, fixed packet, no CRC [evofw3: 0x32/0x02 (RX/TX) > Async Serial/FIFO, infinite package] [evofw2: 0x12 > Sync Serial, infinite packet]
     0x00,  //  ADDR      default
     0x00,  //  CHANNR    default
     0x0F,  //  FSCTRL1   default [evofw2: 0x06]
     0x00,  //  FSCTRL0   default
-    0x21,  //  FREQ2     /
-    0x65,  //  FREQ1     / 868.3 MHz
-    0x6A,  //  FREQ0     / [evofw2: 0x6C]
-    0x6A,  //  MDMCFG4   //
-    0x83,  //  MDMCFG3   // DRATE_M=131 data rate=38,383.4838867Hz
-    0x10,  //  MDMCFG2   GFSK, No Sync Word
-    0x22,  //  MDMCFG1   FEC_EN=0, NUM_PREAMBLE=4, CHANSPC_E=2
+    0x21,  //  FREQ2     |
+    0x65,  //  FREQ1     | 868.3 MHz
+    0x6A,  //  FREQ0     | [evofw2: 0x6C]
+    0x6A,  //  MDMCFG4   |
+    0x83,  //  MDMCFG3   | DRATE_M=131 data rate=38,383.4838867Hz
+    0x12,  //  MDMCFG2   GFSK, 16 bits Sync Word, no carrier sense
+    0x22,  //  MDMCFG1   4 preamble bytes, No FEC
     0xF8,  //  MDMCFG0   Channel spacing 199.951 KHz
     0x50,  //  DEVIATN
     0x07,  //  MCSM2     default
@@ -169,7 +169,7 @@ state_t CC1101::strobe(CC1101Register reg, bool awaitMiso)
 bool CC1101::writeRegister(CC1101Register reg, uint8_t data)
 {
     uint8_t addr = getAddress(reg, false, false);
-    TRACE("CC1101 Write 0x%02X: 0x%02X\n", addr, data);
+    //TRACE("CC1101 Write 0x%02X: 0x%02X\n", addr, data);
 
     if (!select()) return false;
 
@@ -204,7 +204,7 @@ int CC1101::writeFIFO(const uint8_t* dataPtr, uint8_t size)
     uint8_t txBytes = readRegister(CC1101Register::TXBYTES);
     if (txBytes & 0x80)
     {
-        TRACE("CC1101: TX FIFO underflow; flushing.\n");
+        //TRACE("CC1101: TX FIFO underflow; flushing.\n");
         strobe(CC1101Register::SFTX);
         _mode = CC1101Mode::Idle;
         return CC1101_ERR_TX_FIFO_UNDERFLOW;
@@ -263,7 +263,7 @@ int CC1101::readFIFO(uint8_t* dataPtr, uint8_t size)
     uint8_t rxBytes = readRegister(CC1101Register::RXBYTES);
     if (rxBytes & 0x80)
     {
-        TRACE("CC1101: RX FIFO overflow; flushing.\n");
+        //TRACE("CC1101: RX FIFO overflow; flushing.\n");
         strobe(CC1101Register::SFRX);
         _mode = CC1101Mode::Idle;
         return CC1101_ERR_RX_FIFO_OVERFLOW;

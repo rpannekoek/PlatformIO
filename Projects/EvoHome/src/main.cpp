@@ -149,7 +149,7 @@ void onTimeServerSynced()
 {
     currentTime = TimeServer.getCurrentTime();
 
-    if (RAMSES.begin(CC1101Mode::Idle))
+    if (RAMSES.begin(false))
         WiFiSM.logEvent("RAMSES2 initialized");
 }
 

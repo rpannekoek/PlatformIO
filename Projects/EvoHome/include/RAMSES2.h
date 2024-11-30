@@ -7,7 +7,7 @@
 
 constexpr size_t RAMSES_MAX_PAYLOAD_SIZE = 64;
 constexpr size_t RAMSES_MAX_PACKET_SIZE = RAMSES_MAX_PAYLOAD_SIZE + 16;
-constexpr size_t RAMSES_MAX_FRAME_SIZE = (RAMSES_MAX_PACKET_SIZE + 1) * 2 + 12;
+constexpr size_t RAMSES_MAX_FRAME_SIZE = (RAMSES_MAX_PACKET_SIZE + 1) * 2 + 5;
 
 constexpr uint16_t PARAM_NULL = 0xFFFF;
 
@@ -113,7 +113,7 @@ class RAMSES2
             _packetReceivedHandler = handler;
         }
 
-        bool begin(CC1101Mode radioMode);
+        bool begin(bool startReceive);
         void byteReceived(uint8_t data);
         bool sendPacket(const RAMSES2Packet& packet);
         size_t createFrame(const RAMSES2Packet& packet, uint8_t** framePtr = nullptr);
