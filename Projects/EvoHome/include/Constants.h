@@ -17,6 +17,7 @@ constexpr int8_t CC1101_CSN_PIN = 39;
 constexpr int8_t CC1101_SCK_PIN = 37;
 constexpr int8_t CC1101_MISO_PIN = 35;
 constexpr int8_t CC1101_MOSI_PIN = 33;
+constexpr int8_t CC1101_GDO2_PIN = 18;
 
 const char* ContentTypeHtml = "text/html;charset=UTF-8";
 const char* ContentTypeJson = "application/json";

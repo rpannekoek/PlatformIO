@@ -126,8 +126,9 @@ enum CC1101TxPower
 class CC1101
 {
     public:
-        CC1101(uint8_t spiBus, int8_t sckPin, int8_t misoPin, int8_t mosiPin, int8_t csnPin);
+        CC1101(uint8_t spiBus, int8_t sckPin, int8_t misoPin, int8_t mosiPin, int8_t csnPin, int8_t gdo2Pin);
 
+        int8_t inline getGDO2Pin() { return _gdo2Pin; }
         CC1101Mode inline getMode() { return _mode; }
         CC1101State inline getState(state_t state) { return static_cast<CC1101State>(state & 0x70); }
 
@@ -151,6 +152,7 @@ class CC1101
         int8_t _misoPin;
         int8_t _mosiPin;
         int8_t _csnPin;
+        int8_t _gdo2Pin;
         volatile CC1101Mode _mode;
 
         uint8_t getAddress(CC1101Register reg, bool read, bool burst);

@@ -47,7 +47,7 @@ const char* Files[] =
 };
 
 #ifdef USE_SIMPLE_LED
-SimpleLED BuiltinLED(LED_BUILTIN, true);
+SimpleLED BuiltinLED(LED_BUILTIN);
 #else
 RGBLED BuiltinLED(LED_BUILTIN);
 #endif
@@ -60,13 +60,15 @@ HtmlWriter Html(HttpResponse, Files[Logo], Files[Styles], MAX_BAR_LENGTH);
 Log<const char> EventLog(MAX_EVENT_LOG_SIZE);
 WiFiStateMachine WiFiSM(BuiltinLED, TimeServer, WebServer, EventLog);
 Navigation Nav;
-CC1101 Radio(HSPI, CC1101_SCK_PIN, CC1101_MISO_PIN, CC1101_MOSI_PIN, CC1101_CSN_PIN);
-RAMSES2 RAMSES(Radio, WiFiSM);
+CC1101 Radio(HSPI, CC1101_SCK_PIN, CC1101_MISO_PIN, CC1101_MOSI_PIN, CC1101_CSN_PIN, CC1101_GDO2_PIN);
+RAMSES2 RAMSES(Radio, Serial1, BuiltinLED, WiFiSM);
 Log<const RAMSES2Packet> PacketLog(RAMSES_PACKET_LOG_SIZE);
 PacketStatsClass PacketStats;
 RAMSES2Packet PacketToSend;
 
+uint8_t testFrameBuffer[RAMSES_MAX_FRAME_SIZE];
 String sendResult;
+size_t packetsReceived = 0;
 size_t logEntriesToSync = 0;
 
 time_t currentTime = 0;
@@ -76,7 +78,8 @@ time_t lastFTPSyncTime = 0;
 
 void onPacketReceived(const RAMSES2Packet* packetPtr)
 {
-    packetPtr->print(Serial);
+    packetsReceived++;
+    //packetPtr->print(Serial);
     PacketLog.add(packetPtr);
     PacketStats.processPacket(packetPtr);
 
@@ -149,7 +152,7 @@ void onTimeServerSynced()
 {
     currentTime = TimeServer.getCurrentTime();
 
-    if (RAMSES.begin(false))
+    if (RAMSES.begin(true))
         WiFiSM.logEvent("RAMSES2 initialized");
 }
 
@@ -361,12 +364,11 @@ void handleHttpSendPacketRequest()
     hexDump(HttpResponse, packetBuffer, packetSize);
     Html.writePreEnd();
 
-    uint8_t* framePtr;
-    size_t frameSize = RAMSES.createFrame(PacketToSend, &framePtr);
+    size_t frameSize = RAMSES.createFrame(PacketToSend, testFrameBuffer);
 
     Html.writeHeading("Frame data", 2);
     Html.writePreStart();
-    hexDump(HttpResponse, framePtr, frameSize);
+    hexDump(HttpResponse, testFrameBuffer, frameSize);
     Html.writePreEnd();
 
     Html.writeParagraph(sendResult);
@@ -440,7 +442,7 @@ void handleHttpRootRequest()
     Html.writeRow("WiFi RSSI", "%d dBm", static_cast<int>(WiFi.RSSI()));
     Html.writeRow("Free Heap", "%0.1f kB", float(ESP.getFreeHeap()) / 1024);
     Html.writeRow("Uptime", "%0.1f days", float(WiFiSM.getUptime()) / SECONDS_PER_DAY);
-    Html.writeRow("Received", "%u", RAMSES.bytesReceived);
+    Html.writeRow("Received", "%u", packetsReceived);
     Html.writeRow("Errors", "%d", RAMSES.errors);
     Html.writeRow("FTP Sync", ftpSync);
     Html.writeRow("Sync Entries", "%d / %d", logEntriesToSync, PersistentData.ftpSyncEntries);
@@ -529,13 +531,12 @@ void handleSerialRequest()
     }
     else if (cmd.startsWith("testR"))
     {
-        uint8_t* framePtr;
-        size_t frameSize = RAMSES.createFrame(PacketToSend, &framePtr);
+        size_t frameSize = RAMSES.createFrame(PacketToSend, testFrameBuffer);
 
         // Simulate packet received
         RAMSES.resetFrame();
         for (int i = 0; i < frameSize; i++)
-            RAMSES.byteReceived(framePtr[i]);    
+            RAMSES.byteReceived(testFrameBuffer[i]);    
     }
 }
 
@@ -629,7 +630,11 @@ void loop()
     currentTime = WiFiSM.getCurrentTime();
 
     if (Serial.available())
+    {
+        BuiltinLED.setOn(true);
         handleSerialRequest();
+        BuiltinLED.setOff();
+    }
 
     WiFiSM.run();
 }

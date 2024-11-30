@@ -4,7 +4,7 @@
         IO3         IO37 - SCK
         IO5         IO35 - MISO
         IO7         IO33 - MOSI
-        IO9         IO18
+        IO9         IO18 - GDO2
         IO11        IO16
         IO12         GND
         3V3           5V

@@ -3,11 +3,12 @@
 
 #include <Print.h>
 #include <Logger.h>
+#include <LED.h>
 #include "CC1101.h"
 
 constexpr size_t RAMSES_MAX_PAYLOAD_SIZE = 64;
 constexpr size_t RAMSES_MAX_PACKET_SIZE = RAMSES_MAX_PAYLOAD_SIZE + 16;
-constexpr size_t RAMSES_MAX_FRAME_SIZE = (RAMSES_MAX_PACKET_SIZE + 1) * 2 + 5;
+constexpr size_t RAMSES_MAX_FRAME_SIZE = (RAMSES_MAX_PACKET_SIZE + 1) * 2 + 12;
 
 constexpr uint16_t PARAM_NULL = 0xFFFF;
 
@@ -101,12 +102,9 @@ struct RAMSES2Packet
 class RAMSES2
 {
     public:
-        uint32_t bytesReceived = 0;
         int errors = 0;
 
-        RAMSES2(CC1101& cc1101, ILogger& logger) 
-            : _cc1101(cc1101), _logger(logger)
-        {}
+        RAMSES2(CC1101& cc1101, HardwareSerial& uart, LED& led, ILogger& logger); 
 
         void onPacketReceived(void (*handler)(const RAMSES2Packet* packetPtr))
         {
@@ -116,7 +114,7 @@ class RAMSES2
         bool begin(bool startReceive);
         void byteReceived(uint8_t data);
         bool sendPacket(const RAMSES2Packet& packet);
-        size_t createFrame(const RAMSES2Packet& packet, uint8_t** framePtr = nullptr);
+        size_t createFrame(const RAMSES2Packet& packet, uint8_t* framePtr = nullptr);
         void resetFrame();
 
     private:
@@ -124,6 +122,8 @@ class RAMSES2
         static const uint8_t _frameTrailer[];
 
         CC1101& _cc1101;
+        HardwareSerial& _rxSerial;
+        LED& _led;
         ILogger& _logger;
         TaskHandle_t _taskHandle;
         size_t _frameSize;

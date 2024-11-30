@@ -4,15 +4,15 @@
 
 const uint8_t _cc1101Config[] =
 {
-    0x06,  //  IOCFG2 	 GDO2 packet RX/TX [evofw3: 0x2E/0x02 (RX/TX) > not used/TX FIFO full] [evofw2: 0x0B > Serial Clock]
+    0x0D,  //  IOCFG2 	 GDO2 Async Data Out [evofw3: 0x0D > Async Data Out] [evofw2: 0x0B > Serial Clock]
     0x2E,  //  IOCFG1 	 GDO1 not used
-    0x2E,  //  IOCFG0	 GDO0 not used [evofw2: 0x0C > Sync Data Out]
+    0x2E,  //  IOCFG0	 GDO0 not used [evofw3: 0x2E/0x02 (RX/TX) > not used/TX FIFO full][evofw2: 0x0C > Sync Data Out]
     0x07,  //  FIFOTHR   default FIFO threshold: 32 bytes (half full)
     0xFF,  //  SYNC1     |
-    0x00,  //  SYNC0     | Sync Word: 0xFF00
-    0xFF,  //  PKTLEN	 initial packet length (set during RX/TX)
+    0x00,  //  SYNC0     | Sync Word: 0xFF00 (not used in async mode)
+    0xFF,  //  PKTLEN	 default
     0x00,  //  PKTCTRL1  PQT=0, don't append status [evofw3: 0x04] [evofw2: 0x00]
-    0x00,  //  PKTCTRL0  FIFO, fixed packet, no CRC [evofw3: 0x32/0x02 (RX/TX) > Async Serial/FIFO, infinite package] [evofw2: 0x12 > Sync Serial, infinite packet]
+    0x32,  //  PKTCTRL0  Async Serial, infinite packet, no CRC (see setMode) [evofw3: 0x32/0x02 (RX/TX) > Async Serial/FIFO, infinite package] [evofw2: 0x12 > Sync Serial, infinite packet]
     0x00,  //  ADDR      default
     0x00,  //  CHANNR    default
     0x0F,  //  FSCTRL1   default [evofw2: 0x06]
@@ -22,8 +22,8 @@ const uint8_t _cc1101Config[] =
     0x6A,  //  FREQ0     | [evofw2: 0x6C]
     0x6A,  //  MDMCFG4   |
     0x83,  //  MDMCFG3   | DRATE_M=131 data rate=38,383.4838867Hz
-    0x12,  //  MDMCFG2   GFSK, 16 bits Sync Word, no carrier sense
-    0x22,  //  MDMCFG1   4 preamble bytes, No FEC
+    0x10,  //  MDMCFG2   GFSK, no Sync Word, no carrier sense [evofw3: 0x10]
+    0x22,  //  MDMCFG1   4 preamble bytes, No FEC (not used in async mode)
     0xF8,  //  MDMCFG0   Channel spacing 199.951 KHz
     0x50,  //  DEVIATN
     0x07,  //  MCSM2     default
@@ -46,13 +46,14 @@ const uint8_t _cc1101Config[] =
 };
 
 
-CC1101::CC1101(uint8_t spiBus, int8_t sckPin, int8_t misoPin, int8_t mosiPin, int8_t csnPin)
+CC1101::CC1101(uint8_t spiBus, int8_t sckPin, int8_t misoPin, int8_t mosiPin, int8_t csnPin, int8_t gdo2Pin)
     : _spi(spiBus)
 {
     _sckPin = sckPin;
     _misoPin = misoPin;
     _mosiPin = mosiPin;
     _csnPin = csnPin;
+    _gdo2Pin = gdo2Pin;
 
     pinMode(_csnPin, OUTPUT);
     digitalWrite(_csnPin, HIGH);
@@ -324,11 +325,15 @@ bool CC1101::setMode(CC1101Mode mode)
         case CC1101Mode::Receive:
             strobeReg = CC1101Register::SRX;
             newState = CC1101State::RX;
+            if (!writeRegister(CC1101Register::PKTCTRL0, 0x32)) // Async
+                TRACE("Unable to set PCKTCTRL0\n");
             break;
 
         case CC1101Mode::Transmit:
             strobeReg = CC1101Register::STX;
             newState = CC1101State::TX;
+            if (!writeRegister(CC1101Register::PKTCTRL0, 0x02)) // FIFO
+                TRACE("Unable to set PCKTCTRL0\n");
             break;
 
         default:

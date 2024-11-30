@@ -5,8 +5,14 @@
 
 const char* RAMSES2Packet::typeId[] = { "Request", "Info",  "Write", "Response" };
 
-const uint8_t RAMSES2::_frameHeader[] = { 0x33, 0x55, 0x53 };
+const uint8_t RAMSES2::_frameHeader[] = { 0xFF, 0x00, 0x33, 0x55, 0x53 };
 const uint8_t RAMSES2::_frameTrailer[] = { 0x35, 0xAA };
+
+
+RAMSES2::RAMSES2(CC1101& cc1101, HardwareSerial& uart, LED& led, ILogger& logger) 
+    : _cc1101(cc1101), _rxSerial(uart), _led(led), _logger(logger)
+{
+}
 
 
 bool RAMSES2::begin(bool startReceive)
@@ -18,6 +24,8 @@ bool RAMSES2::begin(bool startReceive)
         _logger.logEvent("CC1101 initialization failed");
         return false;
     }
+
+    _rxSerial.begin(38400, SERIAL_8N1, _cc1101.getGDO2Pin());
 
     if (startReceive) _switchToReceiveMillis = millis() + 100;
 
@@ -55,23 +63,17 @@ bool RAMSES2::sendPacket(const RAMSES2Packet& packet)
         }
     }
 
-    // Fill the TX FIFO before switching to Transmit mode
     _frameSize = createFrame(packet);
     _frameIndex = 0;
-    int bytesWritten = writeChunk();
-    if (bytesWritten < 0) return false;
-
-    if (!_cc1101.writeRegister(CC1101Register::PKTLEN, _frameSize))
-    {
-        _logger.logEvent("Unable to set CC1101 packet length");
-        return false;
-    }
 
     if (!_cc1101.setMode(CC1101Mode::Transmit))
     {
         _logger.logEvent("Unable to set CC1101 in transmit mode");
         return false;
     }
+
+    int bytesWritten = writeChunk();
+    if (bytesWritten < 0) return false;
 
     if (!_cc1101.awaitMode(CC1101Mode::Idle, 1000))
     {
@@ -86,8 +88,10 @@ bool RAMSES2::sendPacket(const RAMSES2Packet& packet)
 }
 
 
-size_t RAMSES2::createFrame(const RAMSES2Packet& packet, uint8_t** framePtr)
+size_t RAMSES2::createFrame(const RAMSES2Packet& packet, uint8_t* framePtr)
 {
+    if (framePtr == nullptr) framePtr = _frameBuffer;
+
     int packetSize = packet.serialize(_packetBuffer, sizeof(_packetBuffer));
     TRACE("RAMSES2: Packet serialized to %d bytes:\n", packetSize);
     Tracer::hexDump(_packetBuffer, packetSize);
@@ -98,29 +102,34 @@ size_t RAMSES2::createFrame(const RAMSES2Packet& packet, uint8_t** framePtr)
     TRACE("RAMSES2: Checksum = 0x%02X\n", checksum);
     _packetBuffer[packetSize++] = checksum;
 
-    // Build frame: header, manchester encoded packet + checksum, trailer
-    memcpy(_frameBuffer, _frameHeader, sizeof(_frameHeader));
-    int i = sizeof(_frameHeader);
+    // Build frame: preamble, header, manchester encoded packet + checksum, trailer
+    int i = 5;
+    memset(framePtr, 0xAA, i); // preamble 
+    memcpy(framePtr + i, _frameHeader, sizeof(_frameHeader));
+    i += sizeof(_frameHeader);
     for (int n = 0; n < packetSize; n++)
     {
-        _frameBuffer[i++] = manchesterEncode(_packetBuffer[n] >> 4);
-        _frameBuffer[i++] = manchesterEncode(_packetBuffer[n] & 0xF);
+        framePtr[i++] = manchesterEncode(_packetBuffer[n] >> 4);
+        framePtr[i++] = manchesterEncode(_packetBuffer[n] & 0xF);
     }
-    memcpy(_frameBuffer + i, _frameTrailer, sizeof(_frameTrailer));
+    memcpy(framePtr + i, _frameTrailer, sizeof(_frameTrailer));
 
     size_t frameSize = i + sizeof(_frameTrailer);
     TRACE("RAMSES2: Created frame of %d bytes:\n", frameSize);
-    Tracer::hexDump(_frameBuffer, frameSize);
+    Tracer::hexDump(framePtr, frameSize);
 
-    if (framePtr != nullptr) *framePtr = _frameBuffer;
     return frameSize;
 }
 
 
 void RAMSES2::resetFrame()
 {
-    _frameIndex = -sizeof(_frameHeader);
+    if (_frameIndex > -4) 
+        TRACE("_frameIndex=%d\n", _frameIndex);
 
+    if (_led.isOn()) _led.setOff();
+
+    _frameIndex = -sizeof(_frameHeader);
 
     if (_switchToIdle)
     {
@@ -129,24 +138,6 @@ void RAMSES2::resetFrame()
             _logger.logEvent("Unable to set CC1101 to idle");
         return;
     }
- 
-    if (!_cc1101.writeRegister(CC1101Register::PKTLEN, 1))
-        _logger.logEvent("Set PKTLEN failed\n");
-
-    // TODO: use GDO2 (?)
-    int tries = 10;
-    uint8_t pktStatus;
-    do
-    {
-        delay(1);
-        pktStatus = _cc1101.readRegister(CC1101Register::PKTSTATUS);
-    } 
-    while ((pktStatus & 0x8) && (--tries != 0)); // Await SFD=0
-    if (tries == 0)
-        TRACE("PKTSTATUS:%02X\n", pktStatus);
-
-    if (!_cc1101.writeRegister(CC1101Register::PKTLEN, RAMSES_MAX_FRAME_SIZE))
-        _logger.logEvent("Set PKTLEN failed\n");
 }
 
 
@@ -201,25 +192,13 @@ void RAMSES2::doWork()
 
         case CC1101Mode::Receive:
         {
-            // TODO: Use GDO2 to check sync word detected
-            int bytesRead = _cc1101.readFIFO(_frameBuffer, sizeof(_frameBuffer));
-            if (bytesRead > 0)
+            if (_rxSerial.available())
             {
-                TRACE("RX:%d\n", bytesRead);
-                bytesReceived += bytesRead;
+                size_t bytesRead = _rxSerial.read(_frameBuffer, sizeof(_frameBuffer));
                 for (int i = 0; i < bytesRead; i++) byteReceived(_frameBuffer[i]);
             }
             else
-            {
-                if (bytesRead == CC1101_ERR_RX_FIFO_OVERFLOW)
-                {
-                    _logger.logEvent("CC1101 RX FIFO overflow");
-                    _switchToReceiveMillis = millis() + 5000;
-                }
-                else if (bytesRead < 0)
-                    _logger.logEvent("Error reading from CC1101 FIFO: %d", bytesRead);
                 resetFrame();
-            }
             break;
         }
 
@@ -231,7 +210,7 @@ void RAMSES2::doWork()
             {
                 uint8_t txBytes = _cc1101.readRegister(CC1101Register::TXBYTES);
                 TRACE("TXBYTES:%d\n", txBytes);
-                if (txBytes == 0)
+                if ((txBytes == 0) || txBytes & 0x80)
                 {
                     _switchToIdle = true;
                     resetFrame();
@@ -269,7 +248,7 @@ void RAMSES2::byteReceived(uint8_t data)
         if (data == _frameHeader[_frameIndex + sizeof(_frameHeader)])
         {
             if (++_frameIndex == 0)
-                TRACE("RX:Header\n");
+                _led.setOn();
         }
         else
             resetFrame();
@@ -306,9 +285,6 @@ void RAMSES2::byteReceived(uint8_t data)
 
 void RAMSES2::packetReceived(size_t size)
 {
-    TRACE("==== RAMSES2: Received packet of %d bytes ====\n", size);
-    Tracer::hexDump(_packetBuffer, size);
-
     uint8_t checksum = 0;
     for (int i = 0; i < size; i++) checksum += _packetBuffer[i];
     if (checksum != 0)
@@ -584,10 +560,7 @@ size_t RAMSES2Payload::serialize(uint8_t* dataPtr, size_t size) const
 size_t RAMSES2Payload::deserialize(const uint8_t* dataPtr)
 {
     size = dataPtr[0];
-    TRACE("RAMSES2: %d bytes payload\n", size);
-
     if (size > RAMSES_MAX_PAYLOAD_SIZE) return 0;
-
     memcpy(bytes, dataPtr + 1, size);
     return size + 1;
 }

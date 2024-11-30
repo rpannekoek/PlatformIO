@@ -44,21 +44,24 @@ class PacketStatsClass
                 return;
             }
 
-            if (!packetPtr->addr[0].isNull())
+            const RAMSES2Address& addr = packetPtr->addr[0].isNull() 
+                ? packetPtr->addr[2]
+                : packetPtr->addr[0];
+            if (!addr.isNull())
             {
                 AddressStats* statsPtr;
-                auto loc = statsByAddress.find(packetPtr->addr[0]);
+                auto loc = statsByAddress.find(addr);
                 if (loc == statsByAddress.end())
                 {
                     statsPtr = new AddressStats();
-                    statsByAddress[packetPtr->addr[0]] = statsPtr;
+                    statsByAddress[addr] = statsPtr;
                 }
                 else
                     statsPtr = loc->second;
                 statsPtr->update(opcodeIndex, packetPtr->rssi);
             }
             else
-                TRACE("ADDR0 field not set\n");                
+                TRACE("No address found\n");                
         }
 
         void writeHtmlTable(HtmlWriter html)
