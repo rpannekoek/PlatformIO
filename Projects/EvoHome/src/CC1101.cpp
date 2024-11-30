@@ -42,15 +42,7 @@ const uint8_t _cc1101Config[] =
     0xE9,  //  FSCAL3
     0x21,  //  FSCAL2 [evofw2: 0x2A]
     0x00,  //  FSCAL1
-    0x1F,  //  FSCAL0
-    0x41,  //  RCCTRL1   default
-    0x00,  //  RCCTRL0   default
-    0x59,  //  FSTEST    default
-    0x7F,  //  PTEST     default
-    0x3F,  //  AGCTEST   default
-    0x81,  //  TEST2
-    0x35,  //  TEST1
-    0x09,  //  TEST0
+    0x1F   //  FSCAL0
 };
 
 
@@ -76,7 +68,27 @@ bool CC1101::begin()
     _spi.setBitOrder(SPI_MSBFIRST);
     _spi.setHwCs(false);
 
-    return reset();
+    if (!reset())
+    {
+        TRACE("CC1101 reset failed\n");
+        return false;
+    }
+
+    // Sanity-check: read back config registers;
+    uint8_t configRegisters[sizeof(_cc1101Config)];
+    if (!readBurst(CC1101Register::IOCFG2, configRegisters, sizeof(configRegisters)))
+    {
+        TRACE("CC1101 readBurst failed\n");
+        return false;
+    }
+
+    TRACE("CC1101 config registers:\n");
+    Tracer::hexDump(configRegisters, sizeof(configRegisters));
+
+    uint8_t rxBytes = readRegister(CC1101Register::RXBYTES);
+    TRACE("CC1101 RXBYTES: 0x%02X\n", rxBytes);
+
+    return true;
 }
 
 
@@ -85,12 +97,20 @@ bool CC1101::reset()
     Tracer tracer("CC1101::reset");
 
     state_t state = strobe(CC1101Register::SRES, true); 
-    TRACE("SRES strobe result: %d\n", state);
     if (state < 0) return false;
 
     _mode = CC1101Mode::Idle;
 
-    return writeBurst(CC1101Register::IOCFG2, _cc1101Config, sizeof(_cc1101Config));
+    if (!writeBurst(CC1101Register::IOCFG2, _cc1101Config, sizeof(_cc1101Config)))
+    {
+        TRACE("CC1101 writeBurst failed\n");
+        return false;
+    }
+
+    uint8_t marcState = readRegister(CC1101Register::MARCSTATE);
+    TRACE("CC1101 MARCSTATE: 0x%02X\n", marcState);
+
+    return ((marcState & 0x1F) == 1); // Should be in Idle state after reset
 }
 
 
@@ -135,12 +155,14 @@ state_t CC1101::strobe(CC1101Register reg, bool awaitMiso)
     if (!select()) return -1;
 
     uint8_t addr = getAddress(reg, false, false);
-    uint8_t state = _spi.transfer(addr);
+    uint8_t status = _spi.transfer(addr);
 
     if (awaitMiso && !awaitMisoLow()) return -1;
     deselect();
 
-    return static_cast<state_t>(state);
+    TRACE("CC1101 strobe 0x%02X. Status: 0x%02X\n", addr, status);
+
+    return static_cast<state_t>(status);
 }
 
 
@@ -162,7 +184,7 @@ bool CC1101::writeRegister(CC1101Register reg, uint8_t data)
 bool CC1101::writeBurst(CC1101Register reg, const uint8_t* dataPtr, uint8_t size)
 {
     uint8_t addr = getAddress(reg, false, true);
-    TRACE("CC1101 Write Burst 0x%02X: %d bytes\n", addr, size);
+    //TRACE("CC1101 Write Burst 0x%02X: %d bytes\n", addr, size);
 
     if (!select()) return false;
 
@@ -182,7 +204,7 @@ int CC1101::writeFIFO(const uint8_t* dataPtr, uint8_t size)
     uint8_t txBytes = readRegister(CC1101Register::TXBYTES);
     if (txBytes & 0x80)
     {
-        TRACE("CC1101: TX FIFO underflow\n");
+        TRACE("CC1101: TX FIFO underflow; flushing.\n");
         strobe(CC1101Register::SFTX);
         _mode = CC1101Mode::Idle;
         return CC1101_ERR_TX_FIFO_UNDERFLOW;
@@ -221,7 +243,7 @@ uint8_t CC1101::readRegister(CC1101Register reg)
 bool CC1101::readBurst(CC1101Register reg, uint8_t* dataPtr, uint8_t size)
 {
     uint8_t addr = getAddress(reg, true, true);
-    TRACE("CC1101 Read Burst 0x%02X: %d bytes\n", addr, size);
+    //TRACE("CC1101 Read Burst 0x%02X: %d bytes\n", addr, size);
 
     if (!select()) return false;
 
@@ -241,7 +263,7 @@ int CC1101::readFIFO(uint8_t* dataPtr, uint8_t size)
     uint8_t rxBytes = readRegister(CC1101Register::RXBYTES);
     if (rxBytes & 0x80)
     {
-        TRACE("CC1101: RX FIFO overflow\n");
+        TRACE("CC1101: RX FIFO overflow; flushing.\n");
         strobe(CC1101Register::SFRX);
         _mode = CC1101Mode::Idle;
         return CC1101_ERR_RX_FIFO_OVERFLOW;
@@ -313,15 +335,18 @@ bool CC1101::setMode(CC1101Mode mode)
             return false;
     }
 
-    for (int retries = 0; retries < 100; retries++)
+    for (int retries = 0; retries < 10; retries++)
     {
-        CC1101State state = getState(strobe(strobeReg));
+        uint8_t status = strobe(strobeReg);
+        CC1101State state = getState(status);
         if (state == newState)
         {
             _mode = mode;
             return true;
         }
-        delay(1);
+        if (state == CC1101State::TX_UNDERFLOW)
+            strobe(CC1101Register::SFTX);
+        delay(10);
     }
 
     TRACE("CC1101: Timeout waiting for state 0x%02X\n", newState);

@@ -101,6 +101,7 @@ struct RAMSES2Packet
 class RAMSES2
 {
     public:
+        uint32_t bytesReceived = 0;
         int errors = 0;
 
         RAMSES2(CC1101& cc1101, ILogger& logger) 
@@ -112,7 +113,7 @@ class RAMSES2
             _packetReceivedHandler = handler;
         }
 
-        bool begin();
+        bool begin(CC1101Mode radioMode);
         void byteReceived(uint8_t data);
         bool sendPacket(const RAMSES2Packet& packet);
         size_t createFrame(const RAMSES2Packet& packet, uint8_t** framePtr = nullptr);
@@ -131,6 +132,7 @@ class RAMSES2
         uint8_t _packetBuffer[RAMSES_MAX_PACKET_SIZE];
         void (*_packetReceivedHandler)(const RAMSES2Packet* packetPtr);
         bool _switchToIdle = false;
+        uint32_t _switchToReceiveMillis = 0;
 
         uint8_t manchesterEncode(uint8_t nibble);
         uint8_t manchesterDecode(uint8_t data);

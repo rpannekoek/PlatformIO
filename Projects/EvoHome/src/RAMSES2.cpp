@@ -9,7 +9,7 @@ const uint8_t RAMSES2::_frameHeader[] = { 0xFF, 0x00, 0x33, 0x55, 0x53 };
 const uint8_t RAMSES2::_frameTrailer[] = { 0x35, 0xAA };
 
 
-bool RAMSES2::begin()
+bool RAMSES2::begin(CC1101Mode radioMode)
 {
     Tracer tracer("RAMSES2::begin");
 
@@ -19,10 +19,13 @@ bool RAMSES2::begin()
         return false;
     }
 
-    if (!_cc1101.setMode(CC1101Mode::Receive))
+    if (radioMode != CC1101Mode::Idle)
     {
-        _logger.logEvent("Unable to set CC1101 in receive mode");
-        return false;
+        if (!_cc1101.setMode(radioMode))
+        {
+            _logger.logEvent("Unable to set CC1101 radio mode");
+            return false;
+        }
     }
 
     resetFrame();
@@ -65,7 +68,6 @@ bool RAMSES2::sendPacket(const RAMSES2Packet& packet)
     _frameSize = createFrame(packet);
     _frameIndex = 0;
     int bytesWritten = writeChunk();
-    TRACE("RAMSES2: writeChunk() returned %d\n", bytesWritten); 
     if (bytesWritten < 0) return false;
 
     if (!_cc1101.setMode(CC1101Mode::Transmit))
@@ -74,18 +76,15 @@ bool RAMSES2::sendPacket(const RAMSES2Packet& packet)
         return false;
     }
 
-    if (!_cc1101.awaitMode(CC1101Mode::Idle, 100))
+    if (!_cc1101.awaitMode(CC1101Mode::Idle, 1000))
     {
         _logger.logEvent("Timeout waiting for CC1101 transmit complete");
         return false;
     }
 
-    if (!_cc1101.setMode(CC1101Mode::Receive))
-    {
-        _logger.logEvent("Unable to set CC1101 in receive mode");
-        return false;
-    }
+    TRACE("CC1101 Transmit complete.\n");
 
+    _switchToReceiveMillis = millis() + 100;
     return true;
 }
 
@@ -175,17 +174,31 @@ void RAMSES2::doWork()
     switch (_cc1101.getMode())
     {
         case CC1101Mode::Idle:
-            // Nothing to do
+            if ((_switchToReceiveMillis) != 0 && (millis() >= _switchToReceiveMillis))
+            {
+                _switchToReceiveMillis = 0;
+                if (!_cc1101.setMode(CC1101Mode::Receive))
+                    _logger.logEvent("Unable to set CC1101 in receive mode");
+            }
             break;
 
         case CC1101Mode::Receive:
         {
             int bytesRead = _cc1101.readFIFO(_frameBuffer, sizeof(_frameBuffer));
             if (bytesRead > 0)
+            {
+                //TRACE("Received %d bytes from CC1101 FIFO\n", bytesRead);
+                bytesReceived += bytesRead;
                 for (int i = 0; i < bytesRead; i++) byteReceived(_frameBuffer[i]);
+            }
             else
             {
-                if (bytesRead < 0)
+                if (bytesRead == CC1101_ERR_RX_FIFO_OVERFLOW)
+                {
+                    _logger.logEvent("CC1101 RX FIFO overflow");
+                    _switchToReceiveMillis = millis() + 5000;
+                }
+                else if (bytesRead < 0)
                     _logger.logEvent("Error reading from CC1101 FIFO: %d", bytesRead);
                 resetFrame();
             }
@@ -193,8 +206,23 @@ void RAMSES2::doWork()
         }
 
         case CC1101Mode::Transmit:
-            writeChunk();
+        {
+            int bytesRemaining = _frameSize - _frameIndex;
+            TRACE("RAMSES2: %d bytes remaining\n", bytesRemaining);
+            if (bytesRemaining > 0)
+                writeChunk();
+            else
+            {
+                uint8_t txBytes = _cc1101.readRegister(CC1101Register::TXBYTES);
+                TRACE("CC1101 TXBYTES: %d\n", txBytes);
+                if (txBytes == 0)
+                {
+                    _switchToIdle = true;
+                    resetFrame();
+                }
+            }
             break;
+        }
     }
 }
 
@@ -202,8 +230,15 @@ void RAMSES2::doWork()
 int RAMSES2::writeChunk()
 {
     int bytesWritten = _cc1101.writeFIFO(_frameBuffer + _frameIndex, _frameSize - _frameIndex);
+    TRACE("CC1101 writeFIFO returned %d\n", bytesWritten);
+
     if (bytesWritten >= 0)
+    {
         _frameIndex += bytesWritten;
+
+        uint8_t txBytes = _cc1101.readRegister(CC1101Register::TXBYTES);
+        TRACE("CC1101 TXBYTES: %d\n", txBytes);
+    }
     else if (bytesWritten != CC1101_ERR_TX_FIFO_UNDERFLOW) // TX FIFO underflow is expected
     {
         _logger.logEvent("Error writing to CC1101 FIFO: %d", bytesWritten);
@@ -217,6 +252,8 @@ int RAMSES2::writeChunk()
 
 void RAMSES2::byteReceived(uint8_t data)
 {
+    //TRACE("byte: %02X _frameIndex=%d\n", data, _frameIndex);
+
     if (_frameIndex < 0)
     {
         // Scan for RAMSES frame header

@@ -149,7 +149,8 @@ void onTimeServerSynced()
 {
     currentTime = TimeServer.getCurrentTime();
 
-    RAMSES.begin();
+    if (RAMSES.begin(CC1101Mode::Idle))
+        WiFiSM.logEvent("RAMSES2 initialized");
 }
 
 
@@ -439,6 +440,7 @@ void handleHttpRootRequest()
     Html.writeRow("WiFi RSSI", "%d dBm", static_cast<int>(WiFi.RSSI()));
     Html.writeRow("Free Heap", "%0.1f kB", float(ESP.getFreeHeap()) / 1024);
     Html.writeRow("Uptime", "%0.1f days", float(WiFiSM.getUptime()) / SECONDS_PER_DAY);
+    Html.writeRow("Received", "%u", RAMSES.bytesReceived);
     Html.writeRow("Errors", "%d", RAMSES.errors);
     Html.writeRow("FTP Sync", ftpSync);
     Html.writeRow("Sync Entries", "%d / %d", logEntriesToSync, PersistentData.ftpSyncEntries);
