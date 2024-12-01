@@ -80,7 +80,7 @@ time_t lastFTPSyncTime = 0;
 void onPacketReceived(const RAMSES2Packet* packetPtr)
 {
     packetsReceived++;
-    //packetPtr->print(Serial);
+    packetPtr->print(Serial);
     PacketLog.add(packetPtr);
     PacketStats.processPacket(packetPtr);
     EvoHome.processPacket(packetPtr);
@@ -265,20 +265,84 @@ void handleHttpConfigFormPost()
 }
 
 
+void handleHttpZoneDataLogRequest()
+{
+    Tracer tracer("handleHttpZoneDataLogRequest");
+
+    // Use chunked response
+    WebServer.setContentLength(CONTENT_LENGTH_UNKNOWN);
+    WebServer.send(200, ContentTypeHtml, "");
+
+    Html.writeHeader("Zone Data Log", Nav);
+
+    Html.writeTableStart();
+    Html.writeRowStart();
+    Html.writeHeaderCell("Time", 0, 2);
+    for (int i = 0; i < EvoHome.zoneCount; i++)
+    {
+        ZoneInfo* zoneInfoPtr = EvoHome.getZoneInfo(i);
+        Html.writeHeaderCell(zoneInfoPtr->name, 4);
+    }
+    Html.writeRowEnd();
+    Html.writeRowStart();
+    for (int i = 0; i < EvoHome.zoneCount; i++)
+    {
+        Html.writeHeaderCell("T<sub>set</sub>");
+        Html.writeHeaderCell("T<sub>act</sub>");
+        Html.writeHeaderCell("Heat");
+        Html.writeHeaderCell("Battery");
+    }
+    Html.writeRowEnd();
+
+    ZoneDataLogEntry* logEntryPtr = EvoHome.zoneDataLog.getFirstEntry();
+    while (logEntryPtr != nullptr)
+    {
+        logEntryPtr->writeRow(Html, EvoHome.zoneCount);
+        if (HttpResponse.length() >= HTTP_CHUNK_SIZE)
+        {
+            WebServer.sendContent(HttpResponse.c_str(), HttpResponse.length());
+            HttpResponse.clear();
+        }
+        logEntryPtr = EvoHome.zoneDataLog.getNextEntry();
+    }
+
+    Html.writeTableEnd();
+    Html.writeFooter();
+
+    WebServer.sendContent(HttpResponse.c_str(), HttpResponse.length());
+    WebServer.sendContent("");
+}
+
 
 void handleHttpPacketLogRequest()
 {
     Tracer tracer("handleHttpPacketLogRequest");
 
+    // Use chunked response
+    WebServer.setContentLength(CONTENT_LENGTH_UNKNOWN);
+    WebServer.send(200, ContentTypeHtml, "");
+
     Html.writeHeader("Packet Log", Nav);
 
     Html.writePreStart();
-    printPacketLog(HttpResponse, "%T");
-    Html.writePreEnd();
 
+    const RAMSES2Packet* packetPtr = PacketLog.getFirstEntry();
+    while (packetPtr != nullptr)
+    {
+        packetPtr->print(HttpResponse, "%T");
+        if (HttpResponse.length() >= HTTP_CHUNK_SIZE)
+        {
+            WebServer.sendContent(HttpResponse.c_str(), HttpResponse.length());
+            HttpResponse.clear();
+        }
+        packetPtr = PacketLog.getNextEntry();
+    }
+
+    Html.writePreEnd();
     Html.writeFooter();
 
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
+    WebServer.sendContent(HttpResponse.c_str(), HttpResponse.length());
+    WebServer.sendContent("");
 }
 
 
@@ -303,7 +367,7 @@ void handleHttpPacketLogJsonRequest()
             HttpResponse.print(", ");    
         }
 
-        if (HttpResponse.length() >= 8192)
+        if (HttpResponse.length() >= HTTP_CHUNK_SIZE)
         {
             WebServer.sendContent(HttpResponse.c_str(), HttpResponse.length());
             HttpResponse.clear();
@@ -452,7 +516,7 @@ void handleHttpRootRequest()
     Html.writeSectionEnd();
 
     Html.writeSectionStart("EvoHome Zones");
-    EvoHome.writeHtmlTable(Html);
+    EvoHome.writeCurrentValues(Html);
     Html.writeSectionEnd();
 
     Html.writeSectionStart("Packet Statistics");
@@ -581,6 +645,13 @@ void setup()
             .icon = Files[HomeIcon],
             .label = PSTR("Home"),
             .handler = handleHttpRootRequest            
+        },
+        MenuItem
+        {
+            .icon = Files[GraphIcon],
+            .label = PSTR("Zone data log"),
+            .urlPath =PSTR("zonelog"),
+            .handler = handleHttpZoneDataLogRequest
         },
         MenuItem
         {

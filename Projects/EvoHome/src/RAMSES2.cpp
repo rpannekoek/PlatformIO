@@ -641,7 +641,7 @@ String RAMSES2Payload::getDomain(uint8_t domainId)
     {
         case 0xF9: return "CH";
         case 0xFA: return "DHW";
-        case 0xFC: return "BC";
+        case 0xFC: return "Boiler";
     }
 
     String result = "Zone #";
