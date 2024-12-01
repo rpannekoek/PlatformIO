@@ -17,9 +17,7 @@
 #include "PersistentData.h"
 #include "RAMSES2.h"
 #include "PacketStats.h"
-
-#define YELLOW 192,192,0
-#define CYAN 0,128,128
+#include "EvoHomeInfo.h"
 
 enum FileId
 {
@@ -64,6 +62,7 @@ CC1101 Radio(HSPI, CC1101_SCK_PIN, CC1101_MISO_PIN, CC1101_MOSI_PIN, CC1101_CSN_
 RAMSES2 RAMSES(Radio, Serial1, BuiltinLED, WiFiSM);
 Log<const RAMSES2Packet> PacketLog(RAMSES_PACKET_LOG_SIZE);
 PacketStatsClass PacketStats;
+EvoHomeInfo EvoHome;
 RAMSES2Packet PacketToSend;
 
 uint8_t testFrameBuffer[RAMSES_MAX_FRAME_SIZE];
@@ -82,6 +81,7 @@ void onPacketReceived(const RAMSES2Packet* packetPtr)
     //packetPtr->print(Serial);
     PacketLog.add(packetPtr);
     PacketStats.processPacket(packetPtr);
+    EvoHome.processPacket(packetPtr);
 
     logEntriesToSync = std::min(logEntriesToSync + 1, RAMSES_PACKET_LOG_SIZE);
     if (PersistentData.isFTPEnabled() && (logEntriesToSync >= PersistentData.ftpSyncEntries) & (syncFTPTime == 0))
@@ -447,6 +447,10 @@ void handleHttpRootRequest()
     Html.writeRow("FTP Sync", ftpSync);
     Html.writeRow("Sync Entries", "%d / %d", logEntriesToSync, PersistentData.ftpSyncEntries);
     Html.writeTableEnd();
+    Html.writeSectionEnd();
+
+    Html.writeSectionStart("EvoHome Zones");
+    EvoHome.writeHtmlTable(Html);
     Html.writeSectionEnd();
 
     Html.writeSectionStart("Packet Statistics");

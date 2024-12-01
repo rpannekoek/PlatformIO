@@ -55,24 +55,40 @@ struct RAMSES2Payload
     virtual const char* getType() const;
     virtual void printJson(Print& output) const;
     void print(Print& output) const;
+
+    static String getDomain(uint8_t domainId);
+    static float getTemperature(const uint8_t* dataPtr);
 };
 
 struct HeatDemandPayload : public RAMSES2Payload
 {
-    String getDomain() const;
-    float getHeatDemand() const;
+    uint8_t getDomainId() const { return bytes[0]; }
+    String getDomain() const { return RAMSES2Payload::getDomain(bytes[0]); }
+    float getHeatDemand() const { return float(bytes[1]) / 2; }
 
-    virtual const char* getType() const override;
+    virtual const char* getType() const override { return "Heat Demand"; }
     virtual void printJson(Print& output) const override;
 };
 
 struct BatteryStatusPayload : public RAMSES2Payload
 {
-    String getDomain() const;
-    float getBatteryLevel() const;
-    bool getBatteryLow() const;
+    uint8_t getDomainId() const { return bytes[0]; }
+    String getDomain() const { return RAMSES2Payload::getDomain(bytes[0]); };
+    float getBatteryLevel() const { return float(bytes[1]) / 2; }
+    bool getBatteryLow() const { return bytes[2] == 0; }
 
-    virtual const char* getType() const override;
+    virtual const char* getType() const override { return "Battery Status"; }
+    virtual void printJson(Print& output) const override;
+};
+
+struct TemperaturePayload: public RAMSES2Payload
+{
+    uint8_t getCount() const { return size / 3; }
+    uint8_t getDomainId(int i) const { return bytes[i*3]; }
+    String getDomain(int i) const { return RAMSES2Payload::getDomain(bytes[i*3]); }
+    float getTemperature(int i) const { return RAMSES2Payload::getTemperature(bytes + i*3 + 1); };
+
+    virtual const char* getType() const override { return "Temperature"; }
     virtual void printJson(Print& output) const override;
 };
 

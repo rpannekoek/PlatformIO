@@ -69,19 +69,28 @@ class PacketStatsClass
 
             html.writeTableStart();
             html.writeRowStart();
-            html.writeHeaderCell("Address/Opcode");
+            html.writeHeaderCell("Address", 0, 2);
+            html.writeHeaderCell("Total", 0, 2);
+            html.writeHeaderCell("Opcode", opcodes.size());
+            html.writeHeaderCell("RSSI (dBm)", 3);
+            html.writeRowEnd();
+            html.writeRowStart();
             for (uint16_t opcode : opcodes)
             {
-                String opcodeStr = String(opcode, 16);
+                char opcodeStr[8];
+                snprintf(opcodeStr, sizeof(opcodeStr), "%04X", opcode);
                 html.writeHeaderCell(opcodeStr);
             }
-            html.writeHeaderCell("Total");
-            html.writeHeaderCell("RSSI<sub>avg</sub>");
+            html.writeHeaderCell("Min");
+            html.writeHeaderCell("Max");
+            html.writeHeaderCell("Avg");
             html.writeRowEnd();
+
             for (const auto& [addr, statsPtr] : statsByAddress)
             {
                 html.writeRowStart();
                 html.writeCell("%s:%06d", addr.getDeviceType().c_str(), addr.deviceId);
+                html.writeCell(statsPtr->totalPacketsReceived);
                 for (int i = 0; i < opcodes.size(); i++)
                 {
                     if (statsPtr->packetsReceived[i] == 0)
@@ -89,10 +98,12 @@ class PacketStatsClass
                     else
                         html.writeCell(statsPtr->packetsReceived[i]);
                 }
-                html.writeCell(statsPtr->totalPacketsReceived);
+                html.writeCell(statsPtr->minRSSI);
+                html.writeCell(statsPtr->maxRSSI);
                 html.writeCell(statsPtr->getAverageRSSI());
                 html.writeRowEnd();
             }
+
             html.writeTableEnd();
         }
 

@@ -537,6 +537,10 @@ RAMSES2Payload* RAMSES2Packet::createPayload()
         case 0x1060:
             return new BatteryStatusPayload();
 
+        case 0x2309:
+        case 0x30C9:
+            return new TemperaturePayload();
+
         default:
             return new RAMSES2Payload();
     }
@@ -603,15 +607,8 @@ void RAMSES2Payload::printJson(Print& output) const
 }
 
 
-const char* HeatDemandPayload::getType() const
+String RAMSES2Payload::getDomain(uint8_t domainId)
 {
-    return "Heat Demand";
-}
-
-
-String HeatDemandPayload::getDomain() const
-{
-    uint8_t domainId = bytes[0];
     switch (domainId)
     {
         case 0xF9: return "CH";
@@ -619,15 +616,18 @@ String HeatDemandPayload::getDomain() const
         case 0xFC: return "BC";
     }
 
-    String result = "Zone ";
-    result += domainId;
+    String result = "Zone #";
+    result += (domainId + 1);
     return result;
 }
 
 
-float HeatDemandPayload::getHeatDemand() const
+float RAMSES2Payload::getTemperature(const uint8_t* dataPtr)
 {
-    return float(bytes[1]) / 2;
+    int16_t data = dataPtr[0];
+    data <<= 8;
+    data |= dataPtr[1];
+    return float(data) / 100;
 }
 
 
@@ -640,32 +640,6 @@ void HeatDemandPayload::printJson(Print& output) const
 }
 
 
-const char* BatteryStatusPayload::getType() const
-{
-    return "Battery Status";
-}
-
-
-String BatteryStatusPayload::getDomain() const
-{
-    String result = "Zone ";
-    result += bytes[0];
-    return result;
-}
-
-
-float BatteryStatusPayload::getBatteryLevel() const
-{
-    return float(bytes[1]) / 2;
-}
-
-
-bool BatteryStatusPayload::getBatteryLow() const
-{
-    return bytes[2] == 0;
-}
-
-
 void BatteryStatusPayload::printJson(Print& output) const
 {
     output.printf(
@@ -673,4 +647,19 @@ void BatteryStatusPayload::printJson(Print& output) const
         getDomain().c_str(),
         getBatteryLevel(),
         getBatteryLow() ? "true" : "false");
+}
+
+
+void TemperaturePayload::printJson(Print& output) const
+{
+    output.print("[ ");
+    for (int i = 0; i < getCount(); i++)
+    {
+        if (i != 0) output.print(", ");
+        output.printf(
+            "{ \"domain\": \"%s\", \"temperature\": %0.1f }",
+            getDomain(i).c_str(),
+            getTemperature(i));
+    }
+    output.print(" ]");
 }
