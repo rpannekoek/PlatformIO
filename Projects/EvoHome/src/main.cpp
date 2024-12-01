@@ -29,6 +29,7 @@ enum FileId
     SettingsIcon,
     UploadIcon,
     BinaryIcon,
+    ToolIcon,
     _LastFile
 };
 
@@ -41,7 +42,8 @@ const char* Files[] =
     "LogFile.svg",
     "Settings.svg",
     "Upload.svg",
-    "Binary.svg"
+    "Binary.svg",
+    "Tool.svg"
 };
 
 #ifdef USE_SIMPLE_LED
@@ -509,21 +511,6 @@ void handleSerialRequest()
             onPacketReceived(testPacketPtr);
         }
     }
-    else if (cmd.startsWith("testD"))
-    {
-        uint8_t packetBuffer[] = { 0x16, 0x11, 0x22, 0x33, 0x44, 0x0, 0x8, 0x2, 0xF9, 123};
-        RAMSES2Packet testPacket;
-        testPacket.rssi = 0;
-        testPacket.timestamp = currentTime;
-        if (testPacket.deserialize(packetBuffer, sizeof(packetBuffer)))
-        {
-            testPacket.print(Serial);
-            testPacket.printJson(Serial);
-            TRACE("\nPayload type: '%s'\n", testPacket.payloadPtr->getType());
-        }
-        else
-            TRACE("Packet deserialization failed\n");
-    }
     else if (cmd.startsWith("testS"))
     {
         static uint8_t packetBuffer[RAMSES_MAX_PACKET_SIZE];
@@ -541,6 +528,29 @@ void handleSerialRequest()
         RAMSES.resetFrame();
         for (int i = 0; i < frameSize; i++)
             RAMSES.byteReceived(testFrameBuffer[i]);    
+    }
+    else if (cmd.startsWith("testDevInfo"))
+    {
+        PacketToSend.type = RAMSES2PackageType::Request;
+        PacketToSend.addr[0].parse("18:002858"); // Fake HGI (this device)
+        PacketToSend.addr[1].parse("01:044473"); // EvoHome Controller
+        PacketToSend.opcode = 0x10E0;
+        PacketToSend.payloadPtr = PacketToSend.createPayload();
+        PacketToSend.payloadPtr->size = 1;
+        PacketToSend.payloadPtr->bytes[0] = 0;
+        RAMSES.sendPacket(PacketToSend);
+    }
+    else if (cmd.startsWith("testZoneName"))
+    {
+        PacketToSend.type = RAMSES2PackageType::Request;
+        PacketToSend.addr[0].parse("18:002858"); // Fake HGI (this device)
+        PacketToSend.addr[1].parse("01:044473"); // EvoHome Controller
+        PacketToSend.opcode = 0x0004;
+        PacketToSend.payloadPtr = PacketToSend.createPayload();
+        PacketToSend.payloadPtr->size = 2;
+        PacketToSend.payloadPtr->bytes[0] = 0;
+        PacketToSend.payloadPtr->bytes[1] = 0;
+        RAMSES.sendPacket(PacketToSend);
     }
 }
 
@@ -581,7 +591,7 @@ void setup()
         },
         MenuItem
         {
-            .icon = Files[BinaryIcon],
+            .icon = Files[ToolIcon],
             .label = PSTR("Send packet"),
             .urlPath =PSTR("send"),
             .handler = handleHttpSendPacketRequest,

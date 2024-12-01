@@ -142,7 +142,6 @@ class RAMSES2
         LED& _led;
         ILogger& _logger;
         TaskHandle_t _taskHandle;
-        size_t _frameSize;
         int _frameIndex;
         uint8_t _frameBuffer[RAMSES_MAX_FRAME_SIZE];
         uint8_t _packetBuffer[RAMSES_MAX_PACKET_SIZE];
@@ -155,7 +154,7 @@ class RAMSES2
         static void run(void* taskParam);
         void doWork();
         void packetReceived(size_t size);
-        int writeChunk();
+        bool sendFrame(size_t size);
 };
 
 #endif

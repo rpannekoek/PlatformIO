@@ -192,7 +192,7 @@ void WiFiStateMachine::logEvent(String format, ...)
 
 void WiFiStateMachine::logEvent(const char* msg)
 {
-    Tracer tracer(F("WiFiStateMachine::logEvent"), msg);
+    TRACE("logEvent: %s\n", msg);
 
     size_t timestamp_size = 23; // strlen("2019-01-30 12:23:34 : ") + 1;
 
@@ -209,15 +209,11 @@ void WiFiStateMachine::logEvent(const char* msg)
     strcat(event, msg);
 
     if (_eventStringLogPtr == nullptr)
-    {
         _eventLogPtr->add(event);
-        TRACE(F("%u event log entries\n"), _eventLogPtr->count());
-    }
     else
     {
         _eventStringLogPtr->add(event);
         delete[] event;
-        TRACE(F("%u event log entries\n"), _eventStringLogPtr->count());
     }
 }
 

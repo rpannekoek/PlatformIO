@@ -25,6 +25,12 @@ bool RAMSES2::begin(bool startReceive)
         return false;
     }
 
+    if (!_cc1101.setTxPower(CC1101TxPower::High))
+    {
+        _logger.logEvent("Unable to set CC1101 Tx power");
+        return false;
+    }
+
     _rxSerial.begin(38400, SERIAL_8N1, _cc1101.getGDO2Pin());
 
     if (startReceive) _switchToReceiveMillis = millis() + 100;
@@ -34,7 +40,7 @@ bool RAMSES2::begin(bool startReceive)
         "RAMSES2",
         8192, // Stack Size (words)
         this,
-        18, // Priority
+        3, // Priority
         &_taskHandle,
         PRO_CPU_NUM); // Run on Core #0
 
@@ -55,7 +61,7 @@ bool RAMSES2::sendPacket(const RAMSES2Packet& packet)
 
     if (_cc1101.getMode() != CC1101Mode::Idle)
     {
-        _switchToIdle = true;
+        _switchToIdle = true; // Signal worker thread
         if (!_cc1101.awaitMode(CC1101Mode::Idle, 100))
         {
             _logger.logEvent("Timeout waiting for CC1101 idle");
@@ -63,8 +69,45 @@ bool RAMSES2::sendPacket(const RAMSES2Packet& packet)
         }
     }
 
-    _frameSize = createFrame(packet);
-    _frameIndex = 0;
+    size_t frameSize = createFrame(packet);
+
+    _led.setOn();
+    bool sendOk = sendFrame(frameSize);
+    _led.setOff();
+
+    if (!_cc1101.setMode(CC1101Mode::Idle))
+    {
+        _logger.logEvent("Unable to set CC1101 to idle");
+        return false;
+    }
+
+    _switchToReceiveMillis = millis() + 100;
+    return sendOk;
+}
+
+
+bool RAMSES2::sendFrame(size_t size)
+{
+    const uint32_t delayMs = 5; // approx. 24 bytes @ 38.4 kpbs
+    const uint32_t timeoutMs = 100;
+
+    Tracer tracer("RAMSES2::sendFrame");
+
+    if (!_cc1101.writeRegister(CC1101Register::PKTLEN, size))
+    {
+        _logger.logEvent("Error setting PKTLEN");
+        return false;
+    }
+
+    _cc1101.strobe(CC1101Register::SFTX);
+
+    int bytesWritten = _cc1101.writeFIFO(_frameBuffer, size);
+    TRACE("writeFIFO:%d\n", bytesWritten);
+    if (bytesWritten < 0)
+    {
+        _logger.logEvent("Error writing to CC1101 FIFO: %d", bytesWritten);
+        return false;
+    }
 
     if (!_cc1101.setMode(CC1101Mode::Transmit))
     {
@@ -72,19 +115,36 @@ bool RAMSES2::sendPacket(const RAMSES2Packet& packet)
         return false;
     }
 
-    int bytesWritten = writeChunk();
-    if (bytesWritten < 0) return false;
-
-    if (!_cc1101.awaitMode(CC1101Mode::Idle, 1000))
+    int i = bytesWritten;
+    while (i < size)
     {
-        _logger.logEvent("Timeout waiting for CC1101 transmit complete");
-        return false;
+        delay(delayMs);
+        bytesWritten = _cc1101.writeFIFO(_frameBuffer + i, size - i);
+        TRACE("writeFIFO:%d\n", bytesWritten);
+        if (bytesWritten < 0)
+        {
+            _logger.logEvent("Error writing to CC1101 FIFO: %d", bytesWritten);
+            return false;
+        }
+        i += bytesWritten;
+    } 
+
+    bool timeout = true;
+    for (uint32_t waitedMs = 0; waitedMs < timeoutMs; waitedMs += delayMs )
+    {
+        uint8_t txBytes = _cc1101.readRegister(CC1101Register::TXBYTES);
+        TRACE("TXBYTES:%d\n", txBytes);
+        if ((txBytes == 0) || (txBytes & 0x80)) 
+        {
+            timeout = false;
+            break;
+        }
+        delay(delayMs);
     }
+    if (timeout)
+        _logger.logEvent("Timeout waiting for transmit");
 
-    TRACE("CC1101 Transmit complete.\n");
-
-    _switchToReceiveMillis = millis() + 100;
-    return true;
+    return !timeout;
 }
 
 
@@ -171,7 +231,7 @@ void RAMSES2::run(void* taskParam)
     while (true)
     {
         instancePtr->doWork();
-        delay(5); // approx. 24 bytes @ 38.4 kbps
+        delay(10); // approx. 48 bytes @ 38.4 kbps
     }
 }
 
@@ -191,52 +251,20 @@ void RAMSES2::doWork()
             break;
 
         case CC1101Mode::Receive:
-        {
             if (_rxSerial.available())
             {
                 size_t bytesRead = _rxSerial.read(_frameBuffer, sizeof(_frameBuffer));
+                //TRACE("RX:%d\n", bytesRead);
                 for (int i = 0; i < bytesRead; i++) byteReceived(_frameBuffer[i]);
             }
             else
                 resetFrame();
             break;
-        }
 
         case CC1101Mode::Transmit:
-        {
-            if (_frameIndex < _frameSize)
-                writeChunk();
-            else
-            {
-                uint8_t txBytes = _cc1101.readRegister(CC1101Register::TXBYTES);
-                TRACE("TXBYTES:%d\n", txBytes);
-                if ((txBytes == 0) || txBytes & 0x80)
-                {
-                    _switchToIdle = true;
-                    resetFrame();
-                }
-            }
+            // Nothing to do
             break;
-        }
     }
-}
-
-
-int RAMSES2::writeChunk()
-{
-    int bytesWritten = _cc1101.writeFIFO(_frameBuffer + _frameIndex, _frameSize - _frameIndex);
-    TRACE("writeFIFO:%d\n", bytesWritten);
-
-    if (bytesWritten >= 0)
-        _frameIndex += bytesWritten;
-    else if (bytesWritten != CC1101_ERR_TX_FIFO_UNDERFLOW) // TX FIFO underflow is expected
-    {
-        _logger.logEvent("Error writing to CC1101 FIFO: %d", bytesWritten);
-        _switchToIdle = true;
-        resetFrame();
-    }
-    
-    return bytesWritten;
 }
 
 
@@ -260,7 +288,7 @@ void RAMSES2::byteReceived(uint8_t data)
     }
     else if (_frameIndex / 2 == RAMSES_MAX_PACKET_SIZE)
     {
-        _logger.logEvent("RAMSES2: Packet is more than %d bytes\n", RAMSES_MAX_PACKET_SIZE);
+        _logger.logEvent("RAMSES2 Frame too long");
         errors++;
         resetFrame();
     }
@@ -270,7 +298,7 @@ void RAMSES2::byteReceived(uint8_t data)
         uint8_t decodedNibble = manchesterDecode(data);
         if (decodedNibble & 0xF0)
         {
-            _logger.logEvent("RAMSES2: Invalid manchester code (0x%02X)\n", data);
+            _logger.logEvent("RAMSES2 Invalid code");
             errors++;
             resetFrame();
         }
@@ -289,7 +317,7 @@ void RAMSES2::packetReceived(size_t size)
     for (int i = 0; i < size; i++) checksum += _packetBuffer[i];
     if (checksum != 0)
     {
-        _logger.logEvent("RAMSES2: Checksum failure (0x%02X)", checksum);
+        _logger.logEvent("RAMSES2 Invalid checksum");
         errors++;
         return;
     }
@@ -297,7 +325,7 @@ void RAMSES2::packetReceived(size_t size)
     RAMSES2Packet* packetPtr = new RAMSES2Packet();
     if (!packetPtr->deserialize(_packetBuffer, size - 1))
     {
-        _logger.logEvent("RAMSES2: Packet deserialization failed");
+        _logger.logEvent("RAMSES2 Invalid packet");
         errors++;
         return;
     }

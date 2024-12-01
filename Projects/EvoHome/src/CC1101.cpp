@@ -325,14 +325,14 @@ bool CC1101::setMode(CC1101Mode mode)
         case CC1101Mode::Receive:
             strobeReg = CC1101Register::SRX;
             newState = CC1101State::RX;
-            if (!writeRegister(CC1101Register::PKTCTRL0, 0x32)) // Async
+            if (!writeRegister(CC1101Register::PKTCTRL0, 0x32)) // Async, infinite packet
                 TRACE("Unable to set PCKTCTRL0\n");
             break;
 
         case CC1101Mode::Transmit:
             strobeReg = CC1101Register::STX;
             newState = CC1101State::TX;
-            if (!writeRegister(CC1101Register::PKTCTRL0, 0x02)) // FIFO
+            if (!writeRegister(CC1101Register::PKTCTRL0, 0x00)) // FIFO, fixed packet
                 TRACE("Unable to set PCKTCTRL0\n");
             break;
 
