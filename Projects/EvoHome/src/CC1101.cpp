@@ -2,7 +2,7 @@
 #include <Tracer.h>
 #include "CC1101.h"
 
-const uint8_t _cc1101Config[] =
+const uint8_t CC1101::_initConfig[] =
 {
     0x0D,  //  IOCFG2 	 GDO2 Async Data Out [evofw3: 0x0D > Async Data Out] [evofw2: 0x0B > Serial Clock]
     0x2E,  //  IOCFG1 	 GDO1 not used
@@ -76,7 +76,7 @@ bool CC1101::begin()
     }
 
     // Sanity-check: read back config registers;
-    uint8_t configRegisters[sizeof(_cc1101Config)];
+    uint8_t configRegisters[sizeof(_initConfig)];
     if (!readBurst(CC1101Register::IOCFG2, configRegisters, sizeof(configRegisters)))
     {
         TRACE("CC1101 readBurst failed\n");
@@ -102,7 +102,7 @@ bool CC1101::reset()
 
     _mode = CC1101Mode::Idle;
 
-    if (!writeBurst(CC1101Register::IOCFG2, _cc1101Config, sizeof(_cc1101Config)))
+    if (!writeBurst(CC1101Register::IOCFG2, _initConfig, sizeof(_initConfig)))
     {
         TRACE("CC1101 writeBurst failed\n");
         return false;
@@ -161,7 +161,7 @@ state_t CC1101::strobe(CC1101Register reg, bool awaitMiso)
     if (awaitMiso && !awaitMisoLow()) return -1;
     deselect();
 
-    TRACE("CC1101 strobe 0x%02X. Status: 0x%02X\n", addr, status);
+    //TRACE("CC1101 strobe 0x%02X. Status: 0x%02X\n", addr, status);
 
     return static_cast<state_t>(status);
 }
@@ -340,21 +340,20 @@ bool CC1101::setMode(CC1101Mode mode)
             return false;
     }
 
-    for (int retries = 0; retries < 10; retries++)
+    uint8_t status;
+    for (int retries = 0; retries < 20; retries++)
     {
-        uint8_t status = strobe(strobeReg);
+        status = strobe(strobeReg);
         CC1101State state = getState(status);
         if (state == newState)
         {
             _mode = mode;
             return true;
         }
-        if (state == CC1101State::TX_UNDERFLOW)
-            strobe(CC1101Register::SFTX);
-        delay(10);
+        delay(1);
     }
 
-    TRACE("CC1101: Timeout waiting for state 0x%02X\n", newState);
+    TRACE("CC1101: Timeout waiting for state 0x%02X. Status: 0x%02X\n", newState, status);
     return false;
 }
 

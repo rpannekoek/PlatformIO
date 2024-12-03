@@ -54,6 +54,45 @@ bool RAMSES2::begin(bool startReceive)
 }
 
 
+size_t RAMSES2::uartEncode(size_t size)
+{
+    static const uint8_t uartBreakCondition[] = { 0x00, 0xFF, 0x00, 0x00, 0x00, 0xFF };
+
+    memset(_sendBuffer, 0xFF, sizeof(_sendBuffer));
+    memcpy(_sendBuffer, uartBreakCondition, sizeof(uartBreakCondition));
+
+    int i = 0; // input index
+    int n = sizeof(uartBreakCondition); // output index
+    uint8_t inputBit = 1; // lsb first
+    uint8_t outputBit = 0x80; // msb first
+    do
+    {
+        if (inputBit == 1)
+        {
+            // Add start bit (0)
+            _sendBuffer[n] ^= outputBit;
+            if (outputBit == 1) { outputBit = 0x80; n++; } else outputBit >>= 1;
+        }
+
+        if ((_frameBuffer[i] & inputBit) == 0) _sendBuffer[n] ^= outputBit;
+        if (outputBit == 1) { outputBit = 0x80; n++; } else outputBit >>= 1;
+
+        if (inputBit == 0x80)
+        {
+            inputBit = 1;
+            i++;
+            // Add stop bit (1)
+            if (outputBit == 1) { outputBit = 0x80; n++; } else outputBit >>= 1;
+        }
+        else
+            inputBit <<= 1;
+    }
+    while (i < size);
+    
+    return n + 1;
+}
+
+
 bool RAMSES2::sendPacket(const RAMSES2Packet& packet)
 {
     Tracer tracer("RAMSES2::sendPacket");
@@ -70,9 +109,13 @@ bool RAMSES2::sendPacket(const RAMSES2Packet& packet)
     }
 
     size_t frameSize = createFrame(packet);
+    size_t sendBufferSize = uartEncode(frameSize);
+
+    TRACE("UART encoded to %d bytes:\n", sendBufferSize);
+    Tracer::hexDump(_sendBuffer, sendBufferSize);
 
     _led.setOn();
-    bool sendOk = sendFrame(frameSize);
+    bool sendOk = sendFrame(sendBufferSize);
     _led.setOff();
 
     if (!_cc1101.setMode(CC1101Mode::Idle))
@@ -101,9 +144,9 @@ bool RAMSES2::sendFrame(size_t size)
 
     _cc1101.strobe(CC1101Register::SFTX);
 
-    int bytesWritten = _cc1101.writeFIFO(_frameBuffer, size);
+    int bytesWritten = _cc1101.writeFIFO(_sendBuffer, size);
     TRACE("writeFIFO:%d\n", bytesWritten);
-    if (bytesWritten < 0)
+    if (bytesWritten <= 0)
     {
         _logger.logEvent("Error writing to CC1101 FIFO: %d", bytesWritten);
         return false;
@@ -119,8 +162,7 @@ bool RAMSES2::sendFrame(size_t size)
     while (i < size)
     {
         delay(delayMs);
-        bytesWritten = _cc1101.writeFIFO(_frameBuffer + i, size - i);
-        TRACE("writeFIFO:%d\n", bytesWritten);
+        bytesWritten = _cc1101.writeFIFO(_sendBuffer + i, size - i);
         if (bytesWritten < 0)
         {
             _logger.logEvent("Error writing to CC1101 FIFO: %d", bytesWritten);

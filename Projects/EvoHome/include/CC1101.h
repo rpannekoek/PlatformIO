@@ -154,6 +154,7 @@ class CC1101
         int8_t _csnPin;
         int8_t _gdo2Pin;
         volatile CC1101Mode _mode;
+        static const uint8_t _initConfig[];
 
         uint8_t getAddress(CC1101Register reg, bool read, bool burst);
         bool awaitMisoLow();

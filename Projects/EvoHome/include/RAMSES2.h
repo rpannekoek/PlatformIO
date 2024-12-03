@@ -9,6 +9,7 @@
 constexpr size_t RAMSES_MAX_PAYLOAD_SIZE = 64;
 constexpr size_t RAMSES_MAX_PACKET_SIZE = RAMSES_MAX_PAYLOAD_SIZE + 16;
 constexpr size_t RAMSES_MAX_FRAME_SIZE = (RAMSES_MAX_PACKET_SIZE + 1) * 2 + 12;
+constexpr size_t RAMSES_SEND_BUFFER_SIZE = (RAMSES_MAX_FRAME_SIZE * 10 / 8) + 6; // incl. start&stop bits
 
 constexpr uint16_t PARAM_NULL = 0xFFFF;
 
@@ -145,6 +146,7 @@ class RAMSES2
         int _frameIndex;
         uint8_t _frameBuffer[RAMSES_MAX_FRAME_SIZE];
         uint8_t _packetBuffer[RAMSES_MAX_PACKET_SIZE];
+        uint8_t _sendBuffer[RAMSES_SEND_BUFFER_SIZE];
         void (*_packetReceivedHandler)(const RAMSES2Packet* packetPtr);
         bool _switchToIdle = false;
         uint32_t _switchToReceiveMillis = 0;
@@ -155,6 +157,7 @@ class RAMSES2
         void doWork();
         void packetReceived(size_t size);
         bool sendFrame(size_t size);
+        size_t uartEncode(size_t);
 };
 
 #endif
