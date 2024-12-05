@@ -46,10 +46,10 @@ const char* Files[] =
     "Tool.svg"
 };
 
-#ifdef USE_SIMPLE_LED
-SimpleLED BuiltinLED(LED_BUILTIN);
-#else
+#ifdef USE_RGB_LED
 RGBLED BuiltinLED(LED_BUILTIN);
+#else
+SimpleLED BuiltinLED(LED_BUILTIN);
 #endif
 
 ESPWebServer WebServer(80); // Default HTTP port
@@ -70,24 +70,40 @@ RAMSES2Packet PacketToSend;
 uint8_t testFrameBuffer[RAMSES_MAX_FRAME_SIZE];
 String sendResult;
 size_t packetsReceived = 0;
-size_t logEntriesToSync = 0;
+size_t packetLogEntriesToSync = 0;
 
 time_t currentTime = 0;
+time_t lastPacketReceivedTime = 0;
 time_t syncFTPTime = 0;
 time_t lastFTPSyncTime = 0;
 
 
 void onPacketReceived(const RAMSES2Packet* packetPtr)
 {
+    // Reset RSSI stats at midnight
+    if ((currentTime / SECONDS_PER_DAY) > (lastPacketReceivedTime / SECONDS_PER_DAY))
+    {
+        PacketStats.resetRSSI();
+        WiFiSM.logEvent("Reset RSSI stats");
+    }
+    lastPacketReceivedTime = currentTime;
+
     packetsReceived++;
     packetPtr->print(Serial);
     PacketLog.add(packetPtr);
     PacketStats.processPacket(packetPtr);
     EvoHome.processPacket(packetPtr);
 
-    logEntriesToSync = std::min(logEntriesToSync + 1, RAMSES_PACKET_LOG_SIZE);
-    if (PersistentData.isFTPEnabled() && (logEntriesToSync >= PersistentData.ftpSyncEntries) & (syncFTPTime == 0))
-        syncFTPTime = currentTime;
+    if (PersistentData.ftpSyncPacketLog)
+        packetLogEntriesToSync = std::min(packetLogEntriesToSync + 1, RAMSES_PACKET_LOG_SIZE);
+    
+    if (PersistentData.isFTPEnabled() && (syncFTPTime == 0))
+    {
+        if (packetLogEntriesToSync >= PersistentData.ftpSyncEntries)
+            syncFTPTime = currentTime;
+        else if (EvoHome.zoneDataLogEntriesToSync >= PersistentData.ftpSyncEntries)
+            syncFTPTime = currentTime;
+    }
 }
 
 
@@ -121,18 +137,12 @@ bool trySyncFTP(Print* printTo)
     }
 
     char filename[64];
-    snprintf(filename, sizeof(filename), "%s.log", PersistentData.hostName);
+    snprintf(filename, sizeof(filename), "%s.csv", PersistentData.hostName);
     bool success = false;
     WiFiClient& dataClient = FTPClient.append(filename);
     if (dataClient.connected())
     {
-        if (logEntriesToSync > 0)
-        {
-            const RAMSES2Packet* firstPacketPtr = PacketLog.getEntryFromEnd(logEntriesToSync);
-            printPacketLog(dataClient, "%F %T", firstPacketPtr);
-            logEntriesToSync = 0;
-        }
-        else if (printTo != nullptr)
+        if (!EvoHome.writeZoneDataLogCsv(dataClient) && (printTo != nullptr))
             printTo->println("Nothing to sync.");
         dataClient.stop();
 
@@ -143,6 +153,28 @@ bool trySyncFTP(Print* printTo)
         }
         else
             FTPClient.setUnexpectedResponse();
+    }
+
+    if (success && PersistentData.ftpSyncPacketLog && (packetLogEntriesToSync != 0))
+    {
+        if (FTPClient.passive())
+        {
+            snprintf(filename, sizeof(filename), "%s_Packets.log", PersistentData.hostName);
+            WiFiClient& dataClient = FTPClient.append(filename);
+            if (dataClient.connected())
+            {
+                const RAMSES2Packet* firstPacketPtr = PacketLog.getEntryFromEnd(packetLogEntriesToSync);
+                printPacketLog(dataClient, "%F %T", firstPacketPtr);
+                packetLogEntriesToSync = 0;
+                dataClient.stop();
+
+                if (FTPClient.readServerResponse() != 226)
+                {
+                    FTPClient.setUnexpectedResponse();
+                    success = false;
+                }
+            }
+        }
     }
 
     FTPClient.end();
@@ -275,19 +307,25 @@ void handleHttpZoneDataLogRequest()
 
     Html.writeHeader("Zone Data Log", Nav);
 
+    int currentPage = WebServer.hasArg("page") ? WebServer.arg("page").toInt() : 0;
+    int totalPages = (EvoHome.zoneDataLog.count() > 0) ? ((EvoHome.zoneDataLog.count() - 1)/ PAGE_SIZE) + 1 : 1;
+    Html.writePager(totalPages, currentPage);
+
     Html.writeTableStart();
     Html.writeRowStart();
     Html.writeHeaderCell("Time", 0, 2);
     for (int i = 0; i < EvoHome.zoneCount; i++)
     {
         ZoneInfo* zoneInfoPtr = EvoHome.getZoneInfo(i);
-        Html.writeHeaderCell(zoneInfoPtr->name, 4);
+        Html.writeHeaderCell(zoneInfoPtr->name, 5);
     }
+    Html.writeHeaderCell("Boiler heat", 0, 2);
     Html.writeRowEnd();
     Html.writeRowStart();
     for (int i = 0; i < EvoHome.zoneCount; i++)
     {
         Html.writeHeaderCell("T<sub>set</sub>");
+        Html.writeHeaderCell("T<sub>ovr</sub>");
         Html.writeHeaderCell("T<sub>act</sub>");
         Html.writeHeaderCell("Heat");
         Html.writeHeaderCell("Battery");
@@ -295,7 +333,12 @@ void handleHttpZoneDataLogRequest()
     Html.writeRowEnd();
 
     ZoneDataLogEntry* logEntryPtr = EvoHome.zoneDataLog.getFirstEntry();
-    while (logEntryPtr != nullptr)
+    for (int i = 0; (i < (currentPage * PAGE_SIZE)) && (logEntryPtr != nullptr); i++)
+    {
+        logEntryPtr = EvoHome.zoneDataLog.getNextEntry();
+    }
+
+    for (int i = 0; (i < PAGE_SIZE) && (logEntryPtr != nullptr); i++)
     {
         logEntryPtr->writeRow(Html, EvoHome.zoneCount);
         if (HttpResponse.length() >= HTTP_CHUNK_SIZE)
@@ -508,18 +551,38 @@ void handleHttpRootRequest()
     Html.writeRow("WiFi RSSI", "%d dBm", static_cast<int>(WiFi.RSSI()));
     Html.writeRow("Free Heap", "%0.1f kB", float(ESP.getFreeHeap()) / 1024);
     Html.writeRow("Uptime", "%0.1f days", float(WiFiSM.getUptime()) / SECONDS_PER_DAY);
+    Html.writeRow("Last packet", "%s", formatTime("%T", lastPacketReceivedTime));
     Html.writeRow("Received", "%u", packetsReceived);
-    Html.writeRow("Errors", "%d", RAMSES.errors);
+    uint32_t totalErrors = RAMSES.errors.getTotal();
+    float errorPercentage = (packetsReceived + totalErrors) == 0 ? 0 : float(totalErrors) * 100 / (packetsReceived + totalErrors);
+    Html.writeRow("Errors", "%0.1f %%", errorPercentage);
     Html.writeRow("FTP Sync", ftpSync);
-    Html.writeRow("Sync Entries", "%d / %d", logEntriesToSync, PersistentData.ftpSyncEntries);
+    Html.writeRow(
+        "Sync Entries", "%d / %d",
+        std::max(packetLogEntriesToSync, EvoHome.zoneDataLogEntriesToSync),
+        PersistentData.ftpSyncEntries);
     Html.writeTableEnd();
     Html.writeSectionEnd();
 
-    Html.writeSectionStart("EvoHome Zones");
+    Html.writeSectionStart("Errors");
+    Html.writeTableStart();
+    Html.writeRow("Total", "%d", totalErrors);
+    Html.writeRow("Framesize", "%d", RAMSES.errors.frameTooLong);
+    Html.writeRow("Manchester", "%d", RAMSES.errors.invalidManchesterCode);
+    Html.writeRow("Checksum", "%d", RAMSES.errors.invalidChecksum);
+    Html.writeRow("Deserialization", "%d", RAMSES.errors.deserializationFailed);
+    Html.writeTableEnd();
+    Html.writeSectionEnd();
+
+    Html.writeSectionStart("Current values");
     EvoHome.writeCurrentValues(Html);
     Html.writeSectionEnd();
 
-    Html.writeSectionStart("Packet Statistics");
+    Html.writeSectionStart("Addresses");
+    EvoHome.writeDeviceAddresses(Html);
+    Html.writeSectionEnd();
+
+    Html.writeSectionStart("Packet statistics");
     PacketStats.writeHtmlTable(Html);
     Html.writeSectionEnd();
 
@@ -575,6 +638,10 @@ void handleSerialRequest()
             onPacketReceived(testPacketPtr);
         }
     }
+    else if (cmd.startsWith("testC"))
+    {
+        EvoHome.writeZoneDataLogCsv(Serial);
+    }
     else if (cmd.startsWith("testS"))
     {
         static uint8_t packetBuffer[RAMSES_MAX_PACKET_SIZE];
@@ -616,6 +683,12 @@ void handleSerialRequest()
         PacketToSend.payloadPtr->bytes[1] = 0;
         RAMSES.sendPacket(PacketToSend);
     }
+}
+
+
+void onWiFiUpdating()
+{
+    RAMSES.switchToIdle();
 }
 
 
@@ -698,6 +771,7 @@ void setup()
     WiFiSM.registerStaticFiles(Files, _LastFile);
     WiFiSM.on(WiFiInitState::TimeServerSynced, onTimeServerSynced);
     WiFiSM.on(WiFiInitState::Initialized, onWiFiInitialized);
+    WiFiSM.on(WiFiInitState::Updating, onWiFiUpdating);
     WiFiSM.scanAccessPoints();
     WiFiSM.begin(PersistentData.wifiSSID, PersistentData.wifiKey, PersistentData.hostName);
 

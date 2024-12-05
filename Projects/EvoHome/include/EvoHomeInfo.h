@@ -4,11 +4,13 @@
 #include <RAMSES2.h>
 
 constexpr size_t EVOHOME_MAX_ZONES = 8;
-constexpr size_t EVOHOME_LOG_SIZE = 100;
+constexpr size_t EVOHOME_LOG_SIZE = 250;
+constexpr size_t MAX_ADDR_PER_ZONE = 2;
 
 struct ZoneData
 {
     float setpoint = -1;
+    float override = -1;
     float temperature = -1;
     float heatDemand = -1;
     float batteryLevel = -1;
@@ -16,17 +18,28 @@ struct ZoneData
     bool equals(const ZoneData& other) const
     {
         return std::abs(setpoint - other.setpoint) < 0.1
+            && std::abs(override - other.override) < 0.1
             && std::abs(temperature - other.temperature) < 0.1
             && std::abs(heatDemand - other.heatDemand) < 1.0
             && std::abs(batteryLevel - other.batteryLevel) < 1.0;
     }
 
+    void writeCsv(Print& output)
+    {
+        writeCsv(output, setpoint);
+        writeCsv(output, override);
+        writeCsv(output, temperature);
+        writeCsv(output, heatDemand);
+        writeCsv(output, batteryLevel);
+    }
+
     void writeCells(HtmlWriter& html)
     {
-        writeCell(html, setpoint, F("%0.1f °C"));
-        writeCell(html, temperature, F("%0.1f °C"));
-        writeCell(html, heatDemand, F("%0.1f %%"));
-        writeCell(html, batteryLevel, F("%0.1f %%"));
+        writeCell(html, setpoint, F("%0.1f"));
+        writeCell(html, override, F("%0.1f"));
+        writeCell(html, temperature, F("%0.1f"));
+        writeCell(html, heatDemand, F("%0.0f"));
+        writeCell(html, batteryLevel, F("%0.0f"));
     }
 
     void writeCell(HtmlWriter& html, float value, const __FlashStringHelper* format)
@@ -36,12 +49,21 @@ struct ZoneData
         else
             html.writeCell(value, format);
     }
+
+    void writeCsv(Print& output, float value)
+    {
+        if (value < 0)
+            output.print(";");
+        else
+            output.printf("%0.1f;", value);
+    }
 };
 
 struct ZoneDataLogEntry
 {
     time_t time;
     ZoneData zones[EVOHOME_MAX_ZONES];
+    float boilerHeatDemand = -1;
 
     bool equals(const ZoneDataLogEntry& other) const
     {
@@ -56,7 +78,21 @@ struct ZoneDataLogEntry
         html.writeCell(formatTime("%T", time));
         for (int i = 0; i < zoneCount; i++)
             zones[i].writeCells(html);
+        if (boilerHeatDemand < 0)
+            html.writeCell("");
+        else
+            html.writeCell(boilerHeatDemand, F("%0.1f %%"));
         html.writeRowEnd();
+    }
+
+    void writeCsv(Print& output, uint8_t zoneCount)
+    {
+        output.printf("%s;", formatTime("%F %T", time));
+        for (int i = 0; i < zoneCount; i++)
+            zones[i].writeCsv(output);
+        if (boilerHeatDemand >= 0)
+            output.printf("%0.1f", boilerHeatDemand);
+        output.println();
     }
 };
 
@@ -64,6 +100,7 @@ struct ZoneInfo
 {
     uint8_t domainId;
     String name;
+    RAMSES2Address deviceAddress[MAX_ADDR_PER_ZONE];
     ZoneData current;
 
     ZoneInfo(uint8_t domaindId, const String& name)
@@ -72,11 +109,41 @@ struct ZoneInfo
         this->name = name;
     }
 
-    void writeRow(HtmlWriter& html)
+    bool setDeviceAddress(const RAMSES2Address addr)
+    {
+        for (int i = 0; i < MAX_ADDR_PER_ZONE; i++)
+        {
+            if (deviceAddress[i] == addr) return true;
+            if (deviceAddress[i].isNull()) 
+            {
+                deviceAddress[i] = addr;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void writeCurrentValues(HtmlWriter& html)
     {
         html.writeRowStart();
         html.writeCell(name);
         current.writeCells(html);
+        html.writeRowEnd();
+    }
+
+    void writeDeviceAddresses(HtmlWriter& html)
+    {
+        html.writeRowStart();
+        html.writeCell(name);
+        html.writeCellStart("");
+        for (int i = 0; i < MAX_ADDR_PER_ZONE; i++)
+        {
+            if (deviceAddress[i].isNull()) break;
+            StringBuilder addr(16);
+            deviceAddress[i].print(addr);
+            html.writeDiv("%s", addr.c_str());
+        }
+        html.writeCellEnd();
         html.writeRowEnd();
     }
 };
@@ -85,6 +152,7 @@ class EvoHomeInfo
 {
     public:
         uint8_t zoneCount = 0;
+        size_t zoneDataLogEntriesToSync = 0;
         StaticLog<ZoneDataLogEntry> zoneDataLog;
 
         EvoHomeInfo() : zoneDataLog(EVOHOME_LOG_SIZE)
@@ -92,22 +160,24 @@ class EvoHomeInfo
 
         void processPacket(const RAMSES2Packet* packetPtr)
         {
+            ZoneInfo* zoneInfoPtr = nullptr;
             switch (packetPtr->opcode)
             {
                 case 0x1060:
-                    processBatteryStatus(static_cast<const BatteryStatusPayload*>(packetPtr->payloadPtr));
+                    zoneInfoPtr = processBatteryStatus(
+                        static_cast<const BatteryStatusPayload*>(packetPtr->payloadPtr));
                     break;
 
                 case 0x2309:
                 case 0x30C9:
-                    processTemperatures(
+                    zoneInfoPtr = processTemperatures(
                         packetPtr->opcode,
                         static_cast<const TemperaturePayload*>(packetPtr->payloadPtr));
                     break;
 
                 case 0x0008:
                 case 0x3150:
-                    processHeatDemand(
+                    zoneInfoPtr = processHeatDemand(
                         packetPtr->opcode,
                         static_cast<const HeatDemandPayload*>(packetPtr->payloadPtr));
                     break;
@@ -116,12 +186,15 @@ class EvoHomeInfo
                     return;
             }
 
-            time_t currentTime = time(nullptr);
+            if ((zoneInfoPtr != nullptr) && (packetPtr->addr[0].deviceType != 1))
+                zoneInfoPtr->setDeviceAddress(packetPtr->addr[0]);
+
             if ((_lastLogEntryPtr == nullptr) 
-                || ((currentTime > _lastLogEntryPtr->time + 1) && !_lastLogEntryPtr->equals(_currentLogEntry)))
+                || ((packetPtr->timestamp > _lastLogEntryPtr->time + 1) && !_lastLogEntryPtr->equals(_currentLogEntry)))
             {
-                _currentLogEntry.time = currentTime;
+                _currentLogEntry.time = packetPtr->timestamp;
                 _lastLogEntryPtr = zoneDataLog.add(&_currentLogEntry);
+                zoneDataLogEntriesToSync = std::min(zoneDataLogEntriesToSync + 1, EVOHOME_LOG_SIZE);
             }
         }
 
@@ -130,14 +203,42 @@ class EvoHomeInfo
             html.writeTableStart();
             html.writeRowStart();
             html.writeHeaderCell("Zone");
-            html.writeHeaderCell("Setpoint");
-            html.writeHeaderCell("Temperature");
-            html.writeHeaderCell("Heat demand");
-            html.writeHeaderCell("Battery");
+            html.writeHeaderCell("T<sub>set</sub> (°C)");
+            html.writeHeaderCell("T<sub>ovr</sub> (°C)");
+            html.writeHeaderCell("T<sub>act</sub> (°C)");
+            html.writeHeaderCell("Heat (%)");
+            html.writeHeaderCell("Battery (%)");
             html.writeRowEnd();
             for (auto const& [zoneId, zoneInfoPtr] : _zoneInfoById)
-                zoneInfoPtr->writeRow(html);
+                zoneInfoPtr->writeCurrentValues(html);
             html.writeTableEnd();
+        }
+
+        void writeDeviceAddresses(HtmlWriter& html)
+        {
+            html.writeTableStart();
+            html.writeRowStart();
+            html.writeHeaderCell("Zone");
+            html.writeHeaderCell("Address");
+            html.writeRowEnd();
+            for (auto const& [zoneId, zoneInfoPtr] : _zoneInfoById)
+                zoneInfoPtr->writeDeviceAddresses(html);
+            html.writeTableEnd();
+        }
+
+        bool writeZoneDataLogCsv(Print& output)
+        {
+            if (zoneDataLogEntriesToSync == 0) return false;
+
+            ZoneDataLogEntry* logEntryPtr = zoneDataLog.getEntryFromEnd(zoneDataLogEntriesToSync);
+            while (logEntryPtr != nullptr)
+            {
+                logEntryPtr->writeCsv(output, zoneCount);
+                logEntryPtr = zoneDataLog.getNextEntry();
+            }
+
+            zoneDataLogEntriesToSync = 0;
+            return true;
         }
 
         ZoneInfo* getZoneInfo(uint8_t domainId)
@@ -166,16 +267,20 @@ class EvoHomeInfo
             return &_currentLogEntry.zones[zoneId];
         }
 
-        void processTemperatures(uint16_t opcode, const TemperaturePayload* payloadPtr)
+        ZoneInfo* processTemperatures(uint16_t opcode, const TemperaturePayload* payloadPtr)
         {
+            ZoneInfo* zoneInfoPtr = nullptr;
             for (int i = 0; i < payloadPtr->getCount(); i++)
             {
-                ZoneInfo* zoneInfoPtr = getZoneInfo(payloadPtr->getDomainId(i));
+                zoneInfoPtr = getZoneInfo(payloadPtr->getDomainId(i));
                 ZoneData* zoneDataPtr = getZoneData(zoneInfoPtr->domainId);
                 float temperature = payloadPtr->getTemperature(i);
                 if (opcode == 0x2309)
                 {
-                    zoneInfoPtr->current.setpoint = temperature;
+                    if (payloadPtr->getCount() == 1)
+                        zoneInfoPtr->current.override = temperature;
+                    else
+                        zoneInfoPtr->current.setpoint = temperature;
                     if (zoneDataPtr != nullptr) zoneDataPtr->setpoint = temperature;
                 }
                 else
@@ -184,23 +289,27 @@ class EvoHomeInfo
                     if (zoneDataPtr != nullptr) zoneDataPtr->temperature = temperature;
                 }
             }
+            return (payloadPtr->getCount() == 1) ? zoneInfoPtr : nullptr;
         }
 
-        void processHeatDemand(uint16_t opcode, const HeatDemandPayload* payloadPtr)
+        ZoneInfo* processHeatDemand(uint16_t opcode, const HeatDemandPayload* payloadPtr)
         {
             ZoneInfo* zoneInfoPtr = getZoneInfo(payloadPtr->getDomainId());
             ZoneData* zoneDataPtr = getZoneData(zoneInfoPtr->domainId);
             float heatDemand = payloadPtr->getHeatDemand();
             zoneInfoPtr->current.heatDemand = heatDemand;
             if (zoneDataPtr != nullptr) zoneDataPtr->heatDemand = heatDemand;
+            else if (zoneInfoPtr->domainId == 0xFC) _currentLogEntry.boilerHeatDemand = heatDemand;
+            return zoneInfoPtr; 
         }
 
-        void processBatteryStatus(const BatteryStatusPayload* payloadPtr)
+        ZoneInfo* processBatteryStatus(const BatteryStatusPayload* payloadPtr)
         {
             ZoneInfo* zoneInfoPtr = getZoneInfo(payloadPtr->getDomainId());
             ZoneData* zoneDataPtr = getZoneData(zoneInfoPtr->domainId);
             float batteryLevel = payloadPtr->getBatteryLevel();
             zoneInfoPtr->current.batteryLevel = batteryLevel;
             if (zoneDataPtr != nullptr) zoneDataPtr->batteryLevel = batteryLevel;
+            return zoneInfoPtr;
         }
 };

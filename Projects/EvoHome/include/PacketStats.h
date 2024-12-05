@@ -11,17 +11,19 @@ struct AddressStats
 {
     uint16_t packetsReceived[STATS_MAX_OPCODE];
     uint16_t totalPacketsReceived = 0;
+    time_t lastPacketAt = 0;
     int16_t minRSSI = 0;
     int16_t maxRSSI = -666;
-    int sumRSSI = 0;
+    int32_t sumRSSI = 0;
 
     AddressStats()
     {
         memset(packetsReceived, 0, STATS_MAX_OPCODE * sizeof(uint16_t));
     }
 
-    void update(int opcodeIndex, int16_t rssi)
+    void update(int opcodeIndex, int16_t rssi, time_t time)
     {
+        lastPacketAt = time;
         packetsReceived[opcodeIndex]++;
         totalPacketsReceived++;
         minRSSI = std::min(minRSSI, rssi);
@@ -30,6 +32,12 @@ struct AddressStats
     }
 
     int16_t getAverageRSSI() { return sumRSSI / totalPacketsReceived; }
+
+    void resetRSSI()
+    {
+        minRSSI = 0;
+        maxRSSI = -666;
+    }
 };
 
 class PacketStatsClass
@@ -58,7 +66,7 @@ class PacketStatsClass
                 }
                 else
                     statsPtr = loc->second;
-                statsPtr->update(opcodeIndex, packetPtr->rssi);
+                statsPtr->update(opcodeIndex, packetPtr->rssi, packetPtr->timestamp);
             }
             else
                 TRACE("No address found\n");                
@@ -70,6 +78,7 @@ class PacketStatsClass
             html.writeTableStart();
             html.writeRowStart();
             html.writeHeaderCell("Address", 0, 2);
+            html.writeHeaderCell("Last", 0, 2);
             html.writeHeaderCell("Total", 0, 2);
             html.writeHeaderCell("Opcode", opcodes.size());
             html.writeHeaderCell("RSSI (dBm)", 3);
@@ -90,6 +99,7 @@ class PacketStatsClass
             {
                 html.writeRowStart();
                 html.writeCell("%s:%06d", addr.getDeviceType().c_str(), addr.deviceId);
+                html.writeCell(formatTime("%T", statsPtr->lastPacketAt));
                 html.writeCell(statsPtr->totalPacketsReceived);
                 for (int i = 0; i < opcodes.size(); i++)
                 {
@@ -105,6 +115,12 @@ class PacketStatsClass
             }
 
             html.writeTableEnd();
+        }
+
+        void resetRSSI()
+        {
+            for (const auto& [addr, statsPtr] : statsByAddress)
+                statsPtr->resetRSSI();
         }
 
     private:

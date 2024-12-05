@@ -36,6 +36,11 @@ struct RAMSES2Address
     void print(Print& output) const;
     void printJson(Print& output) const;
 
+    friend bool operator==(const RAMSES2Address& lhs, const RAMSES2Address& rhs)
+    {
+        return (lhs.deviceType == rhs.deviceType) && (lhs.deviceId == rhs.deviceId);
+    }
+
     friend bool operator<(const RAMSES2Address& lhs, const RAMSES2Address& rhs)
     {
         return (lhs.deviceType < rhs.deviceType)
@@ -116,10 +121,23 @@ struct RAMSES2Packet
     void printJson(Print& output) const;
 };
 
+struct RAMSES2Errors
+{
+    uint32_t frameTooLong = 0;
+    uint32_t invalidManchesterCode = 0;
+    uint32_t invalidChecksum = 0;
+    uint32_t deserializationFailed = 0;
+
+    uint32_t getTotal()
+    {
+        return frameTooLong + invalidManchesterCode + invalidChecksum + deserializationFailed;
+    }
+};
+
 class RAMSES2
 {
     public:
-        int errors = 0;
+        RAMSES2Errors errors;
 
         RAMSES2(CC1101& cc1101, HardwareSerial& uart, LED& led, ILogger& logger); 
 
@@ -133,6 +151,7 @@ class RAMSES2
         bool sendPacket(const RAMSES2Packet& packet);
         size_t createFrame(const RAMSES2Packet& packet, uint8_t* framePtr = nullptr);
         void resetFrame();
+        void switchToIdle() { _switchToIdle = true; }
 
     private:
         static const uint8_t _frameHeader[];

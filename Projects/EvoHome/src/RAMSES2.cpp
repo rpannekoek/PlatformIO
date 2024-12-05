@@ -330,8 +330,7 @@ void RAMSES2::byteReceived(uint8_t data)
     }
     else if (_frameIndex / 2 == RAMSES_MAX_PACKET_SIZE)
     {
-        _logger.logEvent("RAMSES2 Frame too long");
-        errors++;
+        errors.frameTooLong++;
         resetFrame();
     }
     else 
@@ -340,8 +339,7 @@ void RAMSES2::byteReceived(uint8_t data)
         uint8_t decodedNibble = manchesterDecode(data);
         if (decodedNibble & 0xF0)
         {
-            _logger.logEvent("RAMSES2 Invalid code");
-            errors++;
+            errors.invalidManchesterCode++;
             resetFrame();
         }
         else if (_frameIndex % 2 == 0)
@@ -359,16 +357,14 @@ void RAMSES2::packetReceived(size_t size)
     for (int i = 0; i < size; i++) checksum += _packetBuffer[i];
     if (checksum != 0)
     {
-        _logger.logEvent("RAMSES2 Invalid checksum");
-        errors++;
+        errors.invalidChecksum++;
         return;
     }
 
     RAMSES2Packet* packetPtr = new RAMSES2Packet();
     if (!packetPtr->deserialize(_packetBuffer, size - 1))
     {
-        _logger.logEvent("RAMSES2 Invalid packet");
-        errors++;
+        errors.deserializationFailed++;
         return;
     }
 
