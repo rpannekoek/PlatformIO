@@ -11,6 +11,9 @@ class StringBuilder : public Print
     // Constructor
     StringBuilder(size_t size);
 
+    // Destructor
+    ~StringBuilder();
+
     void clear();
     void printf(const __FlashStringHelper* fformat, ...);
 

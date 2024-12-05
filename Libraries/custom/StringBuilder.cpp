@@ -9,6 +9,11 @@ StringBuilder::StringBuilder(size_t size)
     clear();
 }
 
+// Destructor
+StringBuilder::~StringBuilder()
+{
+    free(_buffer);
+}
 
 void StringBuilder::clear()
 {
