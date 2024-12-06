@@ -57,10 +57,10 @@ WiFiNTP TimeServer;
 WiFiFTPClient FTPClient(FTP_TIMEOUT_MS);
 StringBuilder HttpResponse(12 * 1024);
 HtmlWriter Html(HttpResponse, Files[Logo], Files[Styles], MAX_BAR_LENGTH);
-Log<const char> EventLog(MAX_EVENT_LOG_SIZE);
+StringLog EventLog(MAX_EVENT_LOG_SIZE, 128);
 WiFiStateMachine WiFiSM(BuiltinLED, TimeServer, WebServer, EventLog);
 Navigation Nav;
-CC1101 Radio(HSPI, CC1101_SCK_PIN, CC1101_MISO_PIN, CC1101_MOSI_PIN, CC1101_CSN_PIN, CC1101_GDO2_PIN);
+CC1101 Radio(HSPI, CC1101_SCK_PIN, CC1101_MISO_PIN, CC1101_MOSI_PIN, CC1101_CSN_PIN, CC1101_GDO2_PIN, CC1101_GDO0_PIN);
 RAMSES2 RAMSES(Radio, Serial1, BuiltinLED, WiFiSM);
 Log<const RAMSES2Packet> PacketLog(RAMSES_PACKET_LOG_SIZE);
 PacketStatsClass PacketStats;
@@ -445,17 +445,18 @@ void handleHttpSendPacketRequest()
     Html.writeFormStart("/send", "grid");
     Html.writeDropdown("type", "type", RAMSES2Packet::typeId, 4, static_cast<int>(PacketToSend.type));
 
+    StringBuilder addrStr(16);
     for (int i = 0; i < 3; i++)
     {
         String name = "addr";
         name += i;
-        StringBuilder addrStr(16);
+        addrStr.clear();
         if (!PacketToSend.addr[i].isNull())
-            PacketToSend.addr[i].print(addrStr);
+            PacketToSend.addr[i].print(addrStr, true);
         Html.writeTextBox(name, name, addrStr.c_str(), 10);
     }
 
-    Html.writeTextBox("opcode", "opcode", String(PacketToSend.opcode, 16), 4);
+    Html.writeTextBox("opcode", "opcode", String(static_cast<uint16_t>(PacketToSend.opcode), 16), 4);
 
     static StringBuilder payloadStr(RAMSES_MAX_PAYLOAD_SIZE * 3 + 1);
     payloadStr.clear();
@@ -508,7 +509,7 @@ void handleHttpSendPacketPost()
 
     int opcode = 0;
     if (sscanf(WebServer.arg("opcode").c_str(), "%04X", &opcode) == 1)
-        PacketToSend.opcode = opcode;
+        PacketToSend.opcode = static_cast<RAMSES2Opcode>(opcode);
     else
         TRACE("Parsing opcode failed\n");
 
@@ -604,29 +605,49 @@ void handleSerialRequest()
 
     if (cmd.startsWith("testP"))
     {
-        for (int i = 0; i < RAMSES_PACKET_LOG_SIZE; i++)
+        RAMSES.switchToIdle();
+        Tracer::traceFreeHeap();
+        for (int i = 0; i < 100; i++)
         {
             RAMSES2Packet* testPacketPtr = new RAMSES2Packet();
             testPacketPtr->type = static_cast<RAMSES2PackageType>(i % 4);
             testPacketPtr->param[0] = i + 1;
             testPacketPtr->addr[0].deviceType = i % 8;
             testPacketPtr->addr[0].deviceId = (i % 8) * 4;
-            if (i % 2 == 1) 
+            if (testPacketPtr->type == RAMSES2PackageType::Request) 
+            {
+                testPacketPtr->addr[1].deviceType = i % 8;
+                testPacketPtr->addr[1].deviceId = (i % 8) << 8;
+            }
+            else
             {
                 testPacketPtr->addr[2].deviceType = i % 8;
                 testPacketPtr->addr[2].deviceId = (i % 8) << 8;
             }
-            testPacketPtr->opcode = (i % 20) << 3;
-            if (testPacketPtr->opcode == 8)
+            if (testPacketPtr->type == RAMSES2PackageType::Info)
             {
-                HeatDemandPayload* testHeatDemandPayloadPtr = new HeatDemandPayload();
-                testHeatDemandPayloadPtr->size = 2;
-                testHeatDemandPayloadPtr->bytes[0] = i;
-                testHeatDemandPayloadPtr->bytes[1] = i;
-                testPacketPtr->payloadPtr = testHeatDemandPayloadPtr;
+                if (i & 8)
+                {
+                    testPacketPtr->opcode = RAMSES2Opcode::ZoneHeatDemand;
+                    testPacketPtr->payloadPtr = testPacketPtr->createPayload();
+                    testPacketPtr->payloadPtr->size = 2;
+                    testPacketPtr->payloadPtr->bytes[0] = (i >> 2) % 4;
+                    testPacketPtr->payloadPtr->bytes[1] = i % 100;
+                }
+                else
+                {
+                    testPacketPtr->opcode = RAMSES2Opcode::ZoneSetpoint;
+                    testPacketPtr->payloadPtr = testPacketPtr->createPayload();
+                    testPacketPtr->payloadPtr->size = 3;
+                    testPacketPtr->payloadPtr->bytes[0] = (i >> 2) % 4;
+                    testPacketPtr->payloadPtr->bytes[1] = i % 100;
+                    testPacketPtr->payloadPtr->bytes[2] = 0;
+                }
             }
             else
             {
+                // Arbitrary test data
+                testPacketPtr->opcode = static_cast<RAMSES2Opcode>((i % 16) << 4);
                 RAMSES2Payload* testPayloadPtr = new RAMSES2Payload(); 
                 testPayloadPtr->size = 1 + i % 8;
                 for (int i = 0; i < testPayloadPtr->size; i++) testPayloadPtr->bytes[i] = i << 2;
@@ -636,6 +657,15 @@ void handleSerialRequest()
             testPacketPtr->timestamp = currentTime + i;
 
             onPacketReceived(testPacketPtr);
+        }
+        Tracer::traceFreeHeap();
+    }
+    else if (cmd.startsWith("testW"))
+    {
+        for (int i = 0; i < 10; i++)
+        {
+            handleHttpRootRequest();
+            Tracer::traceFreeHeap();
         }
     }
     else if (cmd.startsWith("testC"))
@@ -660,12 +690,17 @@ void handleSerialRequest()
         for (int i = 0; i < frameSize; i++)
             RAMSES.byteReceived(testFrameBuffer[i]);    
     }
+    if (cmd.startsWith("testU"))
+    {
+        for (int i = 0; i < 5000; i++)
+            Serial1.write(0xF0);
+    }
     else if (cmd.startsWith("testDevInfo"))
     {
         PacketToSend.type = RAMSES2PackageType::Request;
         PacketToSend.addr[0].parse("18:002858"); // Fake HGI (this device)
         PacketToSend.addr[1].parse("01:044473"); // EvoHome Controller
-        PacketToSend.opcode = 0x10E0;
+        PacketToSend.opcode = RAMSES2Opcode::DeviceInfo;
         PacketToSend.payloadPtr = PacketToSend.createPayload();
         PacketToSend.payloadPtr->size = 1;
         PacketToSend.payloadPtr->bytes[0] = 0;
@@ -676,7 +711,7 @@ void handleSerialRequest()
         PacketToSend.type = RAMSES2PackageType::Request;
         PacketToSend.addr[0].parse("18:002858"); // Fake HGI (this device)
         PacketToSend.addr[1].parse("01:044473"); // EvoHome Controller
-        PacketToSend.opcode = 0x0004;
+        PacketToSend.opcode = RAMSES2Opcode::ZoneName;
         PacketToSend.payloadPtr = PacketToSend.createPayload();
         PacketToSend.payloadPtr->size = 2;
         PacketToSend.payloadPtr->bytes[0] = 0;
@@ -705,7 +740,9 @@ void setup()
     #endif
 
     BuiltinLED.begin();
-    //EventLog.begin();
+    EventLog.begin();
+    if (HttpResponse.usePSRAM())
+        WiFiSM.logEvent("Using PSRAM for HTTP responses");
 
     PersistentData.begin();
     TimeServer.begin(PersistentData.ntpServer);

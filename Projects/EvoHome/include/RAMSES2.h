@@ -21,6 +21,18 @@ enum struct RAMSES2PackageType : uint8_t
     Response
 };
 
+enum struct RAMSES2Opcode : uint16_t
+{
+    Null = 0,
+    ZoneName = 0x0004,
+    RelayHeatDemand = 0x0008,
+    BatteryStatus = 0x1060,
+    DeviceInfo = 0x10E0,
+    ZoneSetpoint = 0x2309,
+    ZoneTemperature = 0x30C9,
+    ZoneHeatDemand = 0x3150
+};
+
 struct RAMSES2Address
 {
     uint8_t deviceType = 0xFF; // null
@@ -33,7 +45,7 @@ struct RAMSES2Address
     size_t serialize(uint8_t* dataPtr) const;
     size_t deserialize(const uint8_t* dataPtr);
     bool parse(const String& addrString);
-    void print(Print& output) const;
+    void print(Print& output, bool raw) const;
     void printJson(Print& output) const;
 
     friend bool operator==(const RAMSES2Address& lhs, const RAMSES2Address& rhs)
@@ -103,7 +115,7 @@ struct RAMSES2Packet
     static const char* typeId[];
 
     uint16_t param[2];
-    uint16_t opcode = 0;
+    RAMSES2Opcode opcode = RAMSES2Opcode::Null;
     RAMSES2PackageType type = RAMSES2PackageType::Request;
     RAMSES2Address addr[3];
     RAMSES2Payload* payloadPtr = nullptr;
@@ -158,7 +170,7 @@ class RAMSES2
         static const uint8_t _frameTrailer[];
 
         CC1101& _cc1101;
-        HardwareSerial& _rxSerial;
+        HardwareSerial& _serial;
         LED& _led;
         ILogger& _logger;
         TaskHandle_t _taskHandle;

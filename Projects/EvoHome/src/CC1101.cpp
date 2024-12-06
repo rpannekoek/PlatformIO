@@ -46,7 +46,7 @@ const uint8_t CC1101::_initConfig[] =
 };
 
 
-CC1101::CC1101(uint8_t spiBus, int8_t sckPin, int8_t misoPin, int8_t mosiPin, int8_t csnPin, int8_t gdo2Pin)
+CC1101::CC1101(uint8_t spiBus, int8_t sckPin, int8_t misoPin, int8_t mosiPin, int8_t csnPin, int8_t gdo2Pin, int8_t gdo0Pin)
     : _spi(spiBus)
 {
     _sckPin = sckPin;
@@ -54,9 +54,17 @@ CC1101::CC1101(uint8_t spiBus, int8_t sckPin, int8_t misoPin, int8_t mosiPin, in
     _mosiPin = mosiPin;
     _csnPin = csnPin;
     _gdo2Pin = gdo2Pin;
+    _gdo0Pin = gdo0Pin;
 
     pinMode(_csnPin, OUTPUT);
     digitalWrite(_csnPin, HIGH);
+}
+
+
+bool CC1101::attachSerial(HardwareSerial& serial)
+{
+    serial.begin(38400, SERIAL_8N1, _gdo2Pin, _gdo0Pin);
+    return true;
 }
 
 

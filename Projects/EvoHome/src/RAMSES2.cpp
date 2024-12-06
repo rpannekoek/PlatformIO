@@ -10,7 +10,7 @@ const uint8_t RAMSES2::_frameTrailer[] = { 0x35, 0xAA };
 
 
 RAMSES2::RAMSES2(CC1101& cc1101, HardwareSerial& uart, LED& led, ILogger& logger) 
-    : _cc1101(cc1101), _rxSerial(uart), _led(led), _logger(logger)
+    : _cc1101(cc1101), _serial(uart), _led(led), _logger(logger)
 {
 }
 
@@ -31,7 +31,7 @@ bool RAMSES2::begin(bool startReceive)
         return false;
     }
 
-    _rxSerial.begin(38400, SERIAL_8N1, _cc1101.getGDO2Pin());
+    _cc1101.attachSerial(_serial);
 
     if (startReceive) _switchToReceiveMillis = millis() + 100;
 
@@ -273,7 +273,7 @@ void RAMSES2::run(void* taskParam)
     while (true)
     {
         instancePtr->doWork();
-        delay(10); // approx. 48 bytes @ 38.4 kbps
+        delay(25); // approx. 100 bytes @ 38.4 kbps (UART Rx buffer is 256 bytes)
     }
 }
 
@@ -293,9 +293,9 @@ void RAMSES2::doWork()
             break;
 
         case CC1101Mode::Receive:
-            if (_rxSerial.available())
+            if (_serial.available())
             {
-                size_t bytesRead = _rxSerial.read(_frameBuffer, sizeof(_frameBuffer));
+                size_t bytesRead = _serial.read(_frameBuffer, sizeof(_frameBuffer));
                 //TRACE("RX:%d\n", bytesRead);
                 for (int i = 0; i < bytesRead; i++) byteReceived(_frameBuffer[i]);
             }
@@ -435,12 +435,14 @@ bool RAMSES2Address::parse(const String& str)
 }
 
 
-void RAMSES2Address::print(Print& output) const
+void RAMSES2Address::print(Print& output, bool raw) const
 {
     if (isNull())
         output.print("--:------");
-    else
+    else if (raw)
         output.printf("%02d:%06d", deviceType, deviceId);
+    else
+        output.printf("%s:%06d", getDeviceType().c_str(), deviceId);
 }
 
 
@@ -472,8 +474,8 @@ size_t RAMSES2Packet::serialize(uint8_t* dataPtr, size_t size) const
     if (param[0] != PARAM_NULL) dataPtr[i++] = param[0];
     if (param[1] != PARAM_NULL) dataPtr[i++] = param[1];
 
-    dataPtr[i++] = opcode >> 8;
-    dataPtr[i++] = opcode & 0xFF;
+    dataPtr[i++] = static_cast<uint16_t>(opcode) >> 8;
+    dataPtr[i++] = static_cast<uint16_t>(opcode) & 0xFF;
 
     if (payloadPtr != nullptr) i += payloadPtr->serialize(dataPtr + i, (size - i));
 
@@ -518,7 +520,7 @@ bool RAMSES2Packet::deserialize(const uint8_t* dataPtr, size_t size)
     if (flags & 0x2) param[0] = *dataPtr++;
     if (flags & 0x1) param[1] = *dataPtr++;
 
-    opcode = dataPtr[0] << 8 | dataPtr[1];
+    opcode = static_cast<RAMSES2Opcode>(dataPtr[0] << 8 | dataPtr[1]);
     dataPtr += 2;
     if (dataPtr >= endPtr) return false;
 
@@ -547,11 +549,11 @@ void RAMSES2Packet::print(Print& output, const char* timestampFormat) const
 
     for (int i = 0; i < 3; i++)
     {
-        addr[i].print(output);
+        addr[i].print(output, true);
         output.print(" ");
     }
 
-    output.printf("%04X ", opcode);
+    output.printf("%04X ", static_cast<uint16_t>(opcode));
 
     if (payloadPtr != nullptr) payloadPtr->print(output);
 
@@ -579,7 +581,7 @@ void RAMSES2Packet::printJson(Print& output) const
         }
     }
 
-    output.printf("\"opcode\": \"%04X\", ", opcode);
+    output.printf("\"opcode\": \"%04X\", ", static_cast<uint16_t>(opcode));
     
     if (payloadPtr != nullptr)
     {
@@ -596,15 +598,15 @@ RAMSES2Payload* RAMSES2Packet::createPayload()
 {
     switch (opcode)
     {
-        case 0x0008:
-        case 0x3150:
+        case RAMSES2Opcode::RelayHeatDemand:
+        case RAMSES2Opcode::ZoneHeatDemand:
             return new HeatDemandPayload();
 
-        case 0x1060:
+        case RAMSES2Opcode::BatteryStatus:
             return new BatteryStatusPayload();
 
-        case 0x2309:
-        case 0x30C9:
+        case RAMSES2Opcode::ZoneSetpoint:
+        case RAMSES2Opcode::ZoneTemperature:
             return new TemperaturePayload();
 
         default:

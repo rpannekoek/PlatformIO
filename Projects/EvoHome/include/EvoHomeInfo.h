@@ -4,7 +4,7 @@
 #include <RAMSES2.h>
 
 constexpr size_t EVOHOME_MAX_ZONES = 8;
-constexpr size_t EVOHOME_LOG_SIZE = 250;
+constexpr size_t EVOHOME_LOG_SIZE = 200;
 constexpr size_t MAX_ADDR_PER_ZONE = 2;
 
 struct ZoneData
@@ -69,7 +69,7 @@ struct ZoneDataLogEntry
     {
         for (int i = 0; i < EVOHOME_MAX_ZONES; i++)
             if (!zones[i].equals(other.zones[i])) return false;
-        return true;
+        return boilerHeatDemand == other.boilerHeatDemand;
     }
 
     void writeRow(HtmlWriter& html, uint8_t zoneCount)
@@ -133,15 +133,17 @@ struct ZoneInfo
 
     void writeDeviceAddresses(HtmlWriter& html)
     {
+        StringBuilder addrStr(16);
+
         html.writeRowStart();
         html.writeCell(name);
         html.writeCellStart("");
         for (int i = 0; i < MAX_ADDR_PER_ZONE; i++)
         {
             if (deviceAddress[i].isNull()) break;
-            StringBuilder addr(16);
-            deviceAddress[i].print(addr);
-            html.writeDiv("%s", addr.c_str());
+            addrStr.clear();
+            deviceAddress[i].print(addrStr, false);
+            html.writeDiv("%s", addrStr.c_str());
         }
         html.writeCellEnd();
         html.writeRowEnd();
@@ -163,20 +165,20 @@ class EvoHomeInfo
             ZoneInfo* zoneInfoPtr = nullptr;
             switch (packetPtr->opcode)
             {
-                case 0x1060:
+                case RAMSES2Opcode::BatteryStatus:
                     zoneInfoPtr = processBatteryStatus(
                         static_cast<const BatteryStatusPayload*>(packetPtr->payloadPtr));
                     break;
 
-                case 0x2309:
-                case 0x30C9:
+                case RAMSES2Opcode::ZoneSetpoint:
+                case RAMSES2Opcode::ZoneTemperature:
                     zoneInfoPtr = processTemperatures(
                         packetPtr->opcode,
                         static_cast<const TemperaturePayload*>(packetPtr->payloadPtr));
                     break;
 
-                case 0x0008:
-                case 0x3150:
+                //case RAMSES2Opcode::RelayHeatDemand: // It seems CTL always sends 0 to zone 0xFC (boiler)
+                case RAMSES2Opcode::ZoneHeatDemand:
                     zoneInfoPtr = processHeatDemand(
                         packetPtr->opcode,
                         static_cast<const HeatDemandPayload*>(packetPtr->payloadPtr));
@@ -186,7 +188,7 @@ class EvoHomeInfo
                     return;
             }
 
-            if ((zoneInfoPtr != nullptr) && (packetPtr->addr[0].deviceType != 1))
+            if ((zoneInfoPtr != nullptr) && (packetPtr->addr[0].deviceType != 1)) 
                 zoneInfoPtr->setDeviceAddress(packetPtr->addr[0]);
 
             if ((_lastLogEntryPtr == nullptr) 
@@ -267,20 +269,33 @@ class EvoHomeInfo
             return &_currentLogEntry.zones[zoneId];
         }
 
-        ZoneInfo* processTemperatures(uint16_t opcode, const TemperaturePayload* payloadPtr)
+        ZoneInfo* processTemperatures(RAMSES2Opcode opcode, const TemperaturePayload* payloadPtr)
         {
-            ZoneInfo* zoneInfoPtr = nullptr;
+            if (payloadPtr->getCount() == 1)
+            {
+                // Single zone setpoint/temperature reported by TRV
+                // TRV seems to always report temperature with zone=0, so we ignore those
+                ZoneInfo* zoneInfoPtr = nullptr;
+                if (opcode == RAMSES2Opcode::ZoneSetpoint)
+                {
+                    zoneInfoPtr = getZoneInfo(payloadPtr->getDomainId(0));
+                    ZoneData* zoneDataPtr = getZoneData(zoneInfoPtr->domainId);
+                    float temperature = payloadPtr->getTemperature(0);
+                    zoneInfoPtr->current.override = temperature;
+                    if (zoneDataPtr != nullptr) zoneDataPtr->override = temperature;
+                }
+                return zoneInfoPtr;
+            }
+
+            // Multiple zone setpoint/temperatures reported by CTL
             for (int i = 0; i < payloadPtr->getCount(); i++)
             {
-                zoneInfoPtr = getZoneInfo(payloadPtr->getDomainId(i));
+                ZoneInfo* zoneInfoPtr = getZoneInfo(payloadPtr->getDomainId(i));
                 ZoneData* zoneDataPtr = getZoneData(zoneInfoPtr->domainId);
                 float temperature = payloadPtr->getTemperature(i);
-                if (opcode == 0x2309)
+                if (opcode == RAMSES2Opcode::ZoneSetpoint)
                 {
-                    if (payloadPtr->getCount() == 1)
-                        zoneInfoPtr->current.override = temperature;
-                    else
-                        zoneInfoPtr->current.setpoint = temperature;
+                    zoneInfoPtr->current.setpoint = temperature;
                     if (zoneDataPtr != nullptr) zoneDataPtr->setpoint = temperature;
                 }
                 else
@@ -289,10 +304,10 @@ class EvoHomeInfo
                     if (zoneDataPtr != nullptr) zoneDataPtr->temperature = temperature;
                 }
             }
-            return (payloadPtr->getCount() == 1) ? zoneInfoPtr : nullptr;
+            return nullptr;
         }
 
-        ZoneInfo* processHeatDemand(uint16_t opcode, const HeatDemandPayload* payloadPtr)
+        ZoneInfo* processHeatDemand(RAMSES2Opcode opcode, const HeatDemandPayload* payloadPtr)
         {
             ZoneInfo* zoneInfoPtr = getZoneInfo(payloadPtr->getDomainId());
             ZoneData* zoneDataPtr = getZoneData(zoneInfoPtr->domainId);

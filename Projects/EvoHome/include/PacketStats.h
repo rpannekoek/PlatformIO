@@ -84,10 +84,10 @@ class PacketStatsClass
             html.writeHeaderCell("RSSI (dBm)", 3);
             html.writeRowEnd();
             html.writeRowStart();
-            for (uint16_t opcode : opcodes)
+            for (RAMSES2Opcode opcode : opcodes)
             {
                 char opcodeStr[8];
-                snprintf(opcodeStr, sizeof(opcodeStr), "%04X", opcode);
+                snprintf(opcodeStr, sizeof(opcodeStr), "%04X", static_cast<uint16_t>(opcode));
                 html.writeHeaderCell(opcodeStr);
             }
             html.writeHeaderCell("Min");
@@ -95,10 +95,13 @@ class PacketStatsClass
             html.writeHeaderCell("Avg");
             html.writeRowEnd();
 
+            StringBuilder addrStr(16);
             for (const auto& [addr, statsPtr] : statsByAddress)
             {
                 html.writeRowStart();
-                html.writeCell("%s:%06d", addr.getDeviceType().c_str(), addr.deviceId);
+                addrStr.clear();
+                addr.print(addrStr, false);
+                html.writeCell(addrStr.c_str());
                 html.writeCell(formatTime("%T", statsPtr->lastPacketAt));
                 html.writeCell(statsPtr->totalPacketsReceived);
                 for (int i = 0; i < opcodes.size(); i++)
@@ -124,10 +127,10 @@ class PacketStatsClass
         }
 
     private:
-        std::vector<uint16_t> opcodes;
+        std::vector<RAMSES2Opcode> opcodes;
         std::map<RAMSES2Address, AddressStats*> statsByAddress;
 
-        int getOpcodeIndex(uint16_t opcode)
+        int getOpcodeIndex(RAMSES2Opcode opcode)
         {
             for (int i = 0; i < opcodes.size(); i++)
                 if (opcode == opcodes[i]) return i;
