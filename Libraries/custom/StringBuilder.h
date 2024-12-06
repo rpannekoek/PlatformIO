@@ -14,6 +14,7 @@ class StringBuilder : public Print
     // Destructor
     ~StringBuilder();
 
+    bool usePSRAM();
     void clear();
     void printf(const __FlashStringHelper* fformat, ...);
 

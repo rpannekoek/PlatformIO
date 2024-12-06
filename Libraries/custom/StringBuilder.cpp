@@ -4,7 +4,7 @@
 // Constructor
 StringBuilder::StringBuilder(size_t size)
 {
-    _buffer = (char*) malloc(size);
+    _buffer = static_cast<char*>(malloc(size));
     _capacity = size;
     clear();
 }
@@ -14,6 +14,19 @@ StringBuilder::~StringBuilder()
 {
     free(_buffer);
 }
+
+
+bool StringBuilder::usePSRAM()
+{
+#ifdef BOARD_HAS_PSRAM
+    free(_buffer);
+    _buffer = static_cast<char*>(ps_malloc(_capacity));
+    return true;
+#else
+    return false;
+#endif    
+}
+
 
 void StringBuilder::clear()
 {

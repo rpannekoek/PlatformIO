@@ -213,9 +213,12 @@ class StringLog
             delete[] _entries;
         }
 
-        void begin()
+        void begin(bool usePSRAM = true)
         {
-            _entries = static_cast<char*>(ESP_MALLOC(_entrySize * _size));
+            if (usePSRAM)
+                _entries = static_cast<char*>(ESP_MALLOC(_entrySize * _size));
+            else
+                _entries = static_cast<char*>(malloc(_entrySize * _size));
         }
 
         uint16_t count()
