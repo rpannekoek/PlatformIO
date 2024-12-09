@@ -1,17 +1,21 @@
 #ifndef RAMSES2_H
 #define RAMSES2_H
 
+#include <vector>
 #include <Print.h>
 #include <Logger.h>
 #include <LED.h>
 #include "CC1101.h"
 
 constexpr size_t RAMSES_MAX_PAYLOAD_SIZE = 64;
-constexpr size_t RAMSES_MAX_PACKET_SIZE = RAMSES_MAX_PAYLOAD_SIZE + 16;
-constexpr size_t RAMSES_MAX_FRAME_SIZE = (RAMSES_MAX_PACKET_SIZE + 1) * 2 + 12;
+constexpr size_t RAMSES_MAX_PACKET_SIZE = RAMSES_MAX_PAYLOAD_SIZE + 16; // flags, 3 addr, 2 param, opcode, length
+constexpr size_t RAMSES_MAX_FRAME_SIZE = (RAMSES_MAX_PACKET_SIZE + 1) * 2 + 12; // checksum, preamble, header, trailer
 constexpr size_t RAMSES_SEND_BUFFER_SIZE = (RAMSES_MAX_FRAME_SIZE * 10 / 8) + 6; // incl. start&stop bits
+constexpr size_t RAMSES_MIN_PACKET_SIZE = 7; // flags, 1 addr, opcode, length
+constexpr size_t RAMSES_MIN_FRAME_SIZE = (RAMSES_MIN_PACKET_SIZE + 1) * 2;
 
 constexpr uint16_t PARAM_NULL = 0xFFFF;
+constexpr uint8_t MAX_MANCHESTER_ERROR_BYTES = 8;
 
 enum struct RAMSES2PackageType : uint8_t
 {
@@ -133,23 +137,55 @@ struct RAMSES2Packet
     void printJson(Print& output) const;
 };
 
-struct RAMSES2Errors
+struct ManchesterErrorInfo
 {
+    int packetIndex;
+    uint8_t errorBits;
+};
+
+struct HeaderMismatchInfo
+{
+    uint32_t count = 0;
+    uint32_t totalBitErrors = 0;
+    uint8_t lastValue = 0;
+    uint8_t lastErrorBits = 0;
+
+    float getAvgBitErrors() const { return (count == 0) ? 0 : float(totalBitErrors) / count; } 
+};
+
+struct RAMSES2ErrorInfo
+{
+    uint32_t frameTooShort = 0;
     uint32_t frameTooLong = 0;
     uint32_t invalidManchesterCode = 0;
     uint32_t invalidChecksum = 0;
     uint32_t deserializationFailed = 0;
 
+    uint32_t repairedManchesterCode = 0;
+    uint32_t ignoredManchesterCode = 0;
+
+    time_t lastManchesterErrorTimestamp = 0;
+    uint8_t lastManchesterBitErrors = 0;
+    std::vector<ManchesterErrorInfo> manchesterErrors;
+    HeaderMismatchInfo headerMismatchInfo[3];
+
+    time_t lastErrorPacketTimestamp = 0;
+    size_t lastErrorPacketSize = 0;
+    uint8_t lastErrorPacket[RAMSES_MAX_PACKET_SIZE];
+
     uint32_t getTotal()
     {
-        return frameTooLong + invalidManchesterCode + invalidChecksum + deserializationFailed;
+        // Excluding header mismatches and repaired
+        return frameTooShort + frameTooLong + invalidManchesterCode + invalidChecksum + deserializationFailed;
     }
 };
 
 class RAMSES2
 {
     public:
-        RAMSES2Errors errors;
+        RAMSES2ErrorInfo errors;
+        uint8_t maxHeaderBitErrors = 0;
+        uint8_t maxManchesterBitErrors = 1;
 
         RAMSES2(CC1101& cc1101, HardwareSerial& uart, LED& led, ILogger& logger); 
 
@@ -159,15 +195,16 @@ class RAMSES2
         }
 
         bool begin(bool startReceive);
-        void byteReceived(uint8_t data);
+        void dataReceived(const uint8_t* data, size_t size);
         bool sendPacket(const RAMSES2Packet& packet);
         size_t createFrame(const RAMSES2Packet& packet, uint8_t* framePtr = nullptr);
-        void resetFrame();
+        void resetFrame(bool success);
         void switchToIdle() { _switchToIdle = true; }
 
     private:
         static const uint8_t _frameHeader[];
         static const uint8_t _frameTrailer[];
+        static const int _afterSyncWordIndex;
 
         CC1101& _cc1101;
         HardwareSerial& _serial;
@@ -181,12 +218,23 @@ class RAMSES2
         void (*_packetReceivedHandler)(const RAMSES2Packet* packetPtr);
         bool _switchToIdle = false;
         uint32_t _switchToReceiveMillis = 0;
+        uint8_t _headerBitErrors = 0;
+        uint8_t _manchesterBitErrors = 0;
+        ManchesterErrorInfo _lastManchesterError;
 
-        uint8_t manchesterEncode(uint8_t nibble);
-        uint8_t manchesterDecode(uint8_t data);
+        static inline uint8_t countBits(uint8_t data)
+        {
+            uint8_t result = 0;
+            for (uint8_t bit = 0x80; bit >= 1; bit >>= 1)
+                if (data & bit) result++;
+            return result;
+        }
+
+        inline uint8_t manchesterEncode(uint8_t nibble);
+        inline uint8_t manchesterDecode(uint8_t data, uint8_t& errorNibble);
         static void run(void* taskParam);
         void doWork();
-        void packetReceived(size_t size);
+        bool packetReceived(size_t size);
         bool sendFrame(size_t size);
         size_t uartEncode(size_t);
 };

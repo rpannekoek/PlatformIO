@@ -8,6 +8,8 @@ const char* RAMSES2Packet::typeId[] = { "Request", "Info",  "Write", "Response" 
 const uint8_t RAMSES2::_frameHeader[] = { 0xFF, 0x00, 0x33, 0x55, 0x53 };
 const uint8_t RAMSES2::_frameTrailer[] = { 0x35, 0xAA };
 
+const int RAMSES2::_afterSyncWordIndex = 2 - sizeof(_frameHeader);
+
 
 RAMSES2::RAMSES2(CC1101& cc1101, HardwareSerial& uart, LED& led, ILogger& logger) 
     : _cc1101(cc1101), _serial(uart), _led(led), _logger(logger)
@@ -224,14 +226,32 @@ size_t RAMSES2::createFrame(const RAMSES2Packet& packet, uint8_t* framePtr)
 }
 
 
-void RAMSES2::resetFrame()
+void RAMSES2::resetFrame(bool success)
 {
-    if (_frameIndex > -4) 
+    if (!success && (_frameIndex >= _afterSyncWordIndex))
+    {
         TRACE("_frameIndex=%d\n", _frameIndex);
-
-    if (_led.isOn()) _led.setOff();
+        if (_frameIndex > 1)
+        {
+            int packetSize = _frameIndex / 2;
+            errors.lastErrorPacketSize = packetSize;
+            errors.lastErrorPacketTimestamp = time(nullptr);
+            memcpy(errors.lastErrorPacket, _packetBuffer, packetSize);  
+        }
+    }
 
     _frameIndex = -sizeof(_frameHeader);
+    _headerBitErrors = 0;
+    if (_manchesterBitErrors > 0)
+    {
+        errors.lastManchesterBitErrors = _manchesterBitErrors;
+        errors.lastManchesterErrorTimestamp = time(nullptr);
+        _manchesterBitErrors = 0;
+        _lastManchesterError.packetIndex = -1;
+        _lastManchesterError.errorBits = 0;
+    }
+
+    if (_led.isOn()) _led.setOff();
 
     if (_switchToIdle)
     {
@@ -255,15 +275,35 @@ uint8_t RAMSES2::manchesterEncode(uint8_t nibble)
 }
 
 
-uint8_t RAMSES2::manchesterDecode(uint8_t data)
+uint8_t RAMSES2::manchesterDecode(uint8_t data, uint8_t& errorNibble)
 {
-    // Map 4 bits (nibble) to 2 bits. 0xFF means invalid.
-    static uint8_t const nibbleDecode[16] = 
+    // Map 4 bits (nibble) to 2 bits.
+    // High nibble contains the bits with errors
+    static uint16_t const nibbleDecode[16] = 
     {
-        0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x03, 0x02, 0xFF,
-        0xFF, 0x01, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF
+        0x30, // 0000 - 2 errors
+        0x21, // 0001 - 1 error
+        0x20, // 0010 - 1 error
+        0x30, // 0011 - 2 errors
+        0x12, // 0100 - 1 error
+        0x03, // 0101 - ok
+        0x02, // 0110 - ok
+        0x12, // 0111 - 1 error
+        0x10, // 1000 - 1 error
+        0x01, // 1001 - ok
+        0x00, // 1010 - ok
+        0x10, // 1011 - 1 error
+        0x30, // 1100 - 2 errors
+        0x21, // 1101 - 1 error
+        0x20, // 1110 - 1 error
+        0x30  // 1111 - 2 errors
     };
-    return nibbleDecode[data & 0xF] | (nibbleDecode[(data >> 4) & 0xF] << 2);
+
+    uint8_t lowNibble = nibbleDecode[data & 0x0F];
+    uint8_t highNibble = nibbleDecode[data >> 4];
+    uint8_t combined =  lowNibble | (highNibble << 2);
+    errorNibble = combined >> 4;
+    return combined & 0x0F;
 }
 
 
@@ -296,11 +336,8 @@ void RAMSES2::doWork()
             if (_serial.available())
             {
                 size_t bytesRead = _serial.read(_frameBuffer, sizeof(_frameBuffer));
-                //TRACE("RX:%d\n", bytesRead);
-                for (int i = 0; i < bytesRead; i++) byteReceived(_frameBuffer[i]);
+                dataReceived(_frameBuffer, bytesRead);
             }
-            else
-                resetFrame();
             break;
 
         case CC1101Mode::Transmit:
@@ -310,75 +347,161 @@ void RAMSES2::doWork()
 }
 
 
-void RAMSES2::byteReceived(uint8_t data)
+void RAMSES2::dataReceived(const uint8_t* dataPtr, size_t size)
 {
-    if (_frameIndex < 0)
+    //TRACE("RX:%d\n", size);
+    for (int i = 0; i < size; i++)
     {
-        // Scan for RAMSES frame header
-        if (data == _frameHeader[_frameIndex + sizeof(_frameHeader)])
+        uint8_t data = dataPtr[i];
+
+        if (_frameIndex < 0)
         {
-            if (++_frameIndex == 0)
-                _led.setOn();
+            // Scan for RAMSES frame header
+            bool proceed = true;
+            uint8_t errorBits = data ^ _frameHeader[_frameIndex + sizeof(_frameHeader)];
+            if (errorBits)
+            {
+                if (_frameIndex >= _afterSyncWordIndex)
+                {
+                    uint8_t bitErrors = countBits(errorBits);
+                    _headerBitErrors += bitErrors;
+                    TRACE("%02X=>%u/%u\n", data, bitErrors, _headerBitErrors);
+                    int headerIndex = _frameIndex - _afterSyncWordIndex;
+                    HeaderMismatchInfo& headerMismatchInfo = errors.headerMismatchInfo[headerIndex];
+                    headerMismatchInfo.count++;
+                    headerMismatchInfo.totalBitErrors += bitErrors;
+                    headerMismatchInfo.lastValue = data;
+                    headerMismatchInfo.lastErrorBits = errorBits;
+                    proceed = _headerBitErrors <= maxHeaderBitErrors;
+                }
+                else
+                    proceed = false;
+            }
+            if (proceed)
+            {
+                if (++_frameIndex == 0)
+                    _led.setOn();
+            }
+            else
+                resetFrame(false);
         }
-        else
-            resetFrame();
-    }
-    else if (data == _frameTrailer[0])
-    {
-         packetReceived(_frameIndex / 2);
-         resetFrame();
-    }
-    else if (_frameIndex / 2 == RAMSES_MAX_PACKET_SIZE)
-    {
-        errors.frameTooLong++;
-        resetFrame();
-    }
-    else 
-    {
-        // Manchester encoded frame data
-        uint8_t decodedNibble = manchesterDecode(data);
-        if (decodedNibble & 0xF0)
+        else if (data == _frameTrailer[0])
         {
-            errors.invalidManchesterCode++;
-            resetFrame();
+            bool success = false;
+            if (_frameIndex < RAMSES_MIN_FRAME_SIZE)
+                errors.frameTooShort++;
+            else if (_manchesterBitErrors > maxManchesterBitErrors)
+                errors.invalidManchesterCode++;
+            else
+                success = packetReceived(_frameIndex / 2);
+            resetFrame(success);
         }
-        else if (_frameIndex % 2 == 0)
-            _packetBuffer[_frameIndex / 2] = decodedNibble << 4;
-        else
-            _packetBuffer[_frameIndex / 2] |= decodedNibble;
-        _frameIndex++;
+        else if (_frameIndex / 2 == RAMSES_MAX_PACKET_SIZE)
+        {
+            errors.frameTooLong++;
+            resetFrame(false);
+        }
+        else 
+        {
+            // Manchester encoded frame data
+            int packetIndex = _frameIndex / 2;
+            uint8_t errorNibble;
+            uint8_t decodedNibble = manchesterDecode(data, errorNibble);
+            if (errorNibble)
+            {
+                if (_manchesterBitErrors == 0)
+                    errors.manchesterErrors.clear();
+                _manchesterBitErrors += countBits(errorNibble);
+            }
+
+            if (_frameIndex % 2 == 0)
+            {
+                _packetBuffer[packetIndex] = decodedNibble << 4;
+                if (errorNibble) 
+                {
+                    _lastManchesterError.packetIndex = packetIndex;
+                    _lastManchesterError.errorBits = errorNibble << 4;
+                    errors.manchesterErrors.push_back(_lastManchesterError);
+                }
+            }
+            else
+            {
+                _packetBuffer[packetIndex] |= decodedNibble;
+                if (errorNibble) 
+                {
+                    if (_lastManchesterError.packetIndex == packetIndex)
+                    {
+                        _lastManchesterError.errorBits |= errorNibble;
+                        errors.manchesterErrors.pop_back();
+                    }
+                    else
+                    {
+                        _lastManchesterError.packetIndex = packetIndex;
+                        _lastManchesterError.errorBits = errorNibble;
+                    }
+                    errors.manchesterErrors.push_back(_lastManchesterError);
+                }
+            }
+            if (errors.manchesterErrors.size() <= MAX_MANCHESTER_ERROR_BYTES)
+                _frameIndex++;
+            else
+            {
+                errors.invalidManchesterCode++;
+                resetFrame(false);
+            }
+        }
     }
 }
 
 
-void RAMSES2::packetReceived(size_t size)
+bool RAMSES2::packetReceived(size_t size)
 {
     uint8_t checksum = 0;
     for (int i = 0; i < size; i++) checksum += _packetBuffer[i];
     if (checksum != 0)
     {
-        errors.invalidChecksum++;
-        return;
+        if (!_manchesterBitErrors)
+        {
+            errors.invalidChecksum++;
+            return false;
+        }
+
+        // There were manchester bit errors
+        // Try to correct the checksum error by changing some of those bits.
+        uint8_t* correctBytePtr = _packetBuffer + _lastManchesterError.packetIndex;
+        uint8_t corrected = *correctBytePtr ^ _lastManchesterError.errorBits;
+        uint8_t delta = *correctBytePtr - corrected;
+        if (checksum != delta)
+        {
+            errors.invalidManchesterCode++;
+            return false;
+        }
+        *correctBytePtr = corrected;
+        errors.repairedManchesterCode++;
     }
+    else if (_manchesterBitErrors)
+        errors.ignoredManchesterCode++;
 
     RAMSES2Packet* packetPtr = new RAMSES2Packet();
     if (!packetPtr->deserialize(_packetBuffer, size - 1))
     {
         errors.deserializationFailed++;
-        return;
+        delete packetPtr;
+        return false;
     }
 
     if (_packetReceivedHandler == nullptr) 
     {
         TRACE("RAMSES2: No packet received handler registered\n");
         delete packetPtr;
-        return;
+        return true;
     }
 
     packetPtr->rssi = _cc1101.readRSSI();
     packetPtr->timestamp = time(nullptr);
 
     _packetReceivedHandler(packetPtr);
+    return true;
 }
 
 
@@ -485,7 +608,7 @@ size_t RAMSES2Packet::serialize(uint8_t* dataPtr, size_t size) const
 
 bool RAMSES2Packet::deserialize(const uint8_t* dataPtr, size_t size)
 {
-    if (size < 8) return false;
+    if (size < RAMSES_MIN_PACKET_SIZE) return false;
     const uint8_t* endPtr = dataPtr + size;
 
     uint8_t flags = *dataPtr++;

@@ -186,6 +186,8 @@ void onTimeServerSynced()
 {
     currentTime = TimeServer.getCurrentTime();
 
+    RAMSES.maxHeaderBitErrors = PersistentData.maxHeaderBitErrors;
+    RAMSES.maxManchesterBitErrors = PersistentData.maxManchesterBitErrors;
     if (RAMSES.begin(true))
         WiFiSM.logEvent("RAMSES2 initialized");
 }
@@ -292,6 +294,9 @@ void handleHttpConfigFormPost()
     PersistentData.parseHtmlFormData([](const String& id) -> String { return WebServer.arg(id); });
     PersistentData.validate();
     PersistentData.writeToEEPROM();
+
+    RAMSES.maxHeaderBitErrors = PersistentData.maxHeaderBitErrors;
+    RAMSES.maxManchesterBitErrors = PersistentData.maxManchesterBitErrors;
 
     handleHttpConfigFormRequest();
 }
@@ -525,6 +530,103 @@ void handleHttpSendPacketPost()
 }
 
 
+const char* asBinary(uint8_t data)
+{
+    static char result[9];
+    uint8_t bit = 0x80;
+    for (int i = 0; i < 8; i++)
+    {
+        result[i] = (data & bit) ? '1' : '0';
+        bit >>= 1;
+    }
+    result[8] = 0;
+    return result;
+}
+
+
+void handleHttpFrameErrorsRequest()
+{
+    RAMSES2ErrorInfo& errors = RAMSES.errors;
+
+    Html.writeHeader("Frame Errors", Nav);
+
+    Html.writeHeading("Errors by type", 2);
+    Html.writeTableStart();
+    Html.writeRow("Total errors", "%u", errors.getTotal());
+    Html.writeRow("Frame too short", "%u", errors.frameTooShort);
+    Html.writeRow("Frame too long", "%u", errors.frameTooLong);
+    Html.writeRow("Manchester code", "%u", errors.invalidManchesterCode);
+    Html.writeRow("Checksum", "%u", errors.invalidChecksum);
+    Html.writeRow("Deserialization", "%u", errors.deserializationFailed);
+    Html.writeTableEnd();
+
+    Html.writeHeading("Manchester encoding errors", 2);
+    Html.writeTableStart();
+    Html.writeRow("Ignored", "%u", errors.ignoredManchesterCode);
+    Html.writeRow("Repaired", "%u", errors.repairedManchesterCode);
+    Html.writeRow("Failed", "%u", errors.invalidManchesterCode);
+    Html.writeTableEnd();
+
+    Html.writeParagraph(
+        "Last manchester error: %u bit errors at %s",
+        errors.lastManchesterBitErrors,
+        formatTime("%T", errors.lastManchesterErrorTimestamp));
+    Html.writeTableStart();
+    Html.writeRowStart();
+    Html.writeHeaderCell("Position");
+    Html.writeHeaderCell("Error bits");
+    Html.writeRowEnd();
+    for (const ManchesterErrorInfo& errInfo : errors.manchesterErrors)
+    {
+        Html.writeRowStart();
+        Html.writeCell(errInfo.packetIndex + 1);
+        Html.writeCell(asBinary(errInfo.errorBits));
+        Html.writeRowEnd();        
+    }
+    Html.writeTableEnd();
+
+    Html.writeHeading("Last error packet", 2);
+    Html.writeParagraph(
+        "Last error packet (fragment) received at %s",
+        formatTime("%T", errors.lastErrorPacketTimestamp));
+    Html.writePreStart();
+    hexDump(HttpResponse, errors.lastErrorPacket, errors.lastErrorPacketSize);
+    if (errors.lastErrorPacketSize >= RAMSES_MIN_PACKET_SIZE)
+    {
+        RAMSES2Packet packet;
+        if (packet.deserialize(errors.lastErrorPacket, errors.lastErrorPacketSize))
+            packet.print(HttpResponse);
+    }
+    Html.writePreEnd();
+
+    Html.writeHeading("Header mismatches", 2);
+    Html.writeTableStart();
+    Html.writeRowStart();
+    Html.writeHeaderCell("Position");
+    Html.writeHeaderCell("Count");
+    Html.writeHeaderCell("Avg bit errors");
+    Html.writeHeaderCell("Last value");
+    Html.writeHeaderCell("Last error bits");
+    Html.writeRowEnd();
+    for (int i = 0; i < 3; i++)
+    {
+        const HeaderMismatchInfo& headerMismatchInfo = errors.headerMismatchInfo[i];
+        Html.writeRowStart();
+        Html.writeCell(i + 1);
+        Html.writeCell(headerMismatchInfo.count);
+        Html.writeCell(headerMismatchInfo.getAvgBitErrors(), F("%0.1f"));
+        Html.writeCell(asBinary(headerMismatchInfo.lastValue));
+        Html.writeCell(asBinary(headerMismatchInfo.lastErrorBits));
+        Html.writeRowEnd();
+    }
+    Html.writeTableEnd();
+
+    Html.writeFooter();
+
+    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
+}
+
+
 void handleHttpRootRequest()
 {
     Tracer tracer("handleHttpRootRequest");
@@ -537,7 +639,7 @@ void handleHttpRootRequest()
     
     Html.writeHeader("Home", Nav);
 
-    const char* ftpSync;
+    String ftpSync;
     if (!PersistentData.isFTPEnabled())
         ftpSync = "Disabled";
     else if (lastFTPSyncTime == 0)
@@ -562,16 +664,6 @@ void handleHttpRootRequest()
         "Sync Entries", "%d / %d",
         std::max(packetLogEntriesToSync, EvoHome.zoneDataLogEntriesToSync),
         PersistentData.ftpSyncEntries);
-    Html.writeTableEnd();
-    Html.writeSectionEnd();
-
-    Html.writeSectionStart("Errors");
-    Html.writeTableStart();
-    Html.writeRow("Total", "%d", totalErrors);
-    Html.writeRow("Framesize", "%d", RAMSES.errors.frameTooLong);
-    Html.writeRow("Manchester", "%d", RAMSES.errors.invalidManchesterCode);
-    Html.writeRow("Checksum", "%d", RAMSES.errors.invalidChecksum);
-    Html.writeRow("Deserialization", "%d", RAMSES.errors.deserializationFailed);
     Html.writeTableEnd();
     Html.writeSectionEnd();
 
@@ -686,9 +778,22 @@ void handleSerialRequest()
         size_t frameSize = RAMSES.createFrame(PacketToSend, testFrameBuffer);
 
         // Simulate packet received
-        RAMSES.resetFrame();
-        for (int i = 0; i < frameSize; i++)
-            RAMSES.byteReceived(testFrameBuffer[i]);    
+        RAMSES.resetFrame(true);
+        RAMSES.dataReceived(testFrameBuffer, frameSize);
+    }
+    else if (cmd.startsWith("testM"))
+    {
+        size_t frameSize = RAMSES.createFrame(PacketToSend, testFrameBuffer);
+
+        // Create manchester encoding single bit error
+        testFrameBuffer[12] ^= 1;
+
+        TRACE("Introduced manchester encoding error:\n");
+        Tracer::hexDump(testFrameBuffer, frameSize);
+
+        // Simulate packet received
+        RAMSES.resetFrame(true);
+        RAMSES.dataReceived(testFrameBuffer, frameSize);
     }
     if (cmd.startsWith("testU"))
     {
@@ -769,6 +874,13 @@ void setup()
             .label = PSTR("Packet log"),
             .urlPath =PSTR("packets"),
             .handler = handleHttpPacketLogRequest
+        },
+        MenuItem
+        {
+            .icon = Files[BinaryIcon],
+            .label = PSTR("Frame errors"),
+            .urlPath =PSTR("errors"),
+            .handler = handleHttpFrameErrorsRequest
         },
         MenuItem
         {
