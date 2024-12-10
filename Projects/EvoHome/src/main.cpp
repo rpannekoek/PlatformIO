@@ -827,7 +827,7 @@ void handleSerialRequest()
 
 void onWiFiUpdating()
 {
-    RAMSES.switchToIdle();
+    RAMSES.end();
 }
 
 

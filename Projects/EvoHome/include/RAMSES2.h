@@ -204,6 +204,7 @@ class RAMSES2
         }
 
         bool begin(bool startReceive);
+        bool end();
         void dataReceived(const uint8_t* data, size_t size);
         bool sendPacket(const RAMSES2Packet& packet);
         size_t createFrame(const RAMSES2Packet& packet, uint8_t* framePtr = nullptr);
@@ -230,6 +231,7 @@ class RAMSES2
         uint8_t _headerBitErrors = 0;
         uint8_t _manchesterBitErrors = 0;
         ManchesterErrorInfo _lastManchesterError;
+        float _rssi;
 
         static inline uint8_t countBits(uint8_t data)
         {

@@ -56,6 +56,20 @@ bool RAMSES2::begin(bool startReceive)
 }
 
 
+bool RAMSES2::end()
+{
+    if (_cc1101.getMode() != CC1101Mode::Idle)
+    {
+        _switchToIdle = true;
+        if (!_cc1101.awaitMode(CC1101Mode::Idle, 100))
+            TRACE("Timeout awaiting CC1101 to get idle\n");
+    }
+
+    if (_taskHandle != nullptr) vTaskDelete(_taskHandle);
+    return true;
+}
+
+
 size_t RAMSES2::uartEncode(size_t size)
 {
     static const uint8_t uartBreakCondition[] = { 0x00, 0xFF, 0x00, 0x00, 0x00, 0xFF };
@@ -313,7 +327,9 @@ void RAMSES2::run(void* taskParam)
     while (true)
     {
         instancePtr->doWork();
-        delay(25); // approx. 100 bytes @ 38.4 kbps (UART Rx buffer is 256 bytes)
+        // Wait 5 ms => approx. 20 bytes @ 38.4 kbps
+        // UART Rx buffer is 256 bytes, but we need to determine RSSI while frame is being received.
+        delay(5); 
     }
 }
 
@@ -380,7 +396,10 @@ void RAMSES2::dataReceived(const uint8_t* dataPtr, size_t size)
             if (proceed)
             {
                 if (++_frameIndex == 0)
+                {
+                    _rssi = _cc1101.readRSSI(); // Read RSSI immediately after header received
                     _led.setOn();
+                }
             }
             else
                 resetFrame(false);
@@ -442,13 +461,14 @@ void RAMSES2::dataReceived(const uint8_t* dataPtr, size_t size)
                     errors.manchesterErrors.push_back(_lastManchesterError);
                 }
             }
-            if (errors.manchesterErrors.size() <= MAX_MANCHESTER_ERROR_BYTES)
-                _frameIndex++;
-            else
+
+            if (errorNibble && (errors.manchesterErrors.size() > MAX_MANCHESTER_ERROR_BYTES))
             {
                 errors.invalidManchesterCode++;
                 resetFrame(false);
             }
+            else
+                _frameIndex++;
         }
     }
 }
@@ -490,17 +510,17 @@ bool RAMSES2::packetReceived(size_t size)
         return false;
     }
 
-    if (_packetReceivedHandler == nullptr) 
+    packetPtr->rssi = _rssi;
+    packetPtr->timestamp = time(nullptr);
+
+    if (_packetReceivedHandler != nullptr) 
+        _packetReceivedHandler(packetPtr);
+    else
     {
         TRACE("RAMSES2: No packet received handler registered\n");
         delete packetPtr;
-        return true;
     }
 
-    packetPtr->rssi = _cc1101.readRSSI();
-    packetPtr->timestamp = time(nullptr);
-
-    _packetReceivedHandler(packetPtr);
     return true;
 }
 
