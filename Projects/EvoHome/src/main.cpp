@@ -322,7 +322,7 @@ void handleHttpZoneDataLogRequest()
     for (int i = 0; i < EvoHome.zoneCount; i++)
     {
         ZoneInfo* zoneInfoPtr = EvoHome.getZoneInfo(i);
-        Html.writeHeaderCell(zoneInfoPtr->name, 5);
+        Html.writeHeaderCell(zoneInfoPtr->name, 4);
     }
     Html.writeHeaderCell("Boiler heat", 0, 2);
     Html.writeRowEnd();
@@ -333,7 +333,6 @@ void handleHttpZoneDataLogRequest()
         Html.writeHeaderCell("T<sub>ovr</sub>");
         Html.writeHeaderCell("T<sub>act</sub>");
         Html.writeHeaderCell("Heat");
-        Html.writeHeaderCell("Battery");
     }
     Html.writeRowEnd();
 
@@ -671,8 +670,8 @@ void handleHttpRootRequest()
     EvoHome.writeCurrentValues(Html);
     Html.writeSectionEnd();
 
-    Html.writeSectionStart("Addresses");
-    EvoHome.writeDeviceAddresses(Html);
+    Html.writeSectionStart("Devices");
+    EvoHome.writeDeviceInfo(Html);
     Html.writeSectionEnd();
 
     Html.writeSectionStart("Packet statistics");
@@ -704,16 +703,16 @@ void handleSerialRequest()
             RAMSES2Packet* testPacketPtr = new RAMSES2Packet();
             testPacketPtr->type = static_cast<RAMSES2PackageType>(i % 4);
             testPacketPtr->param[0] = i + 1;
-            testPacketPtr->addr[0].deviceType = i % 8;
+            testPacketPtr->addr[0].deviceType = static_cast<RAMSES2DeviceType>(i % 8);
             testPacketPtr->addr[0].deviceId = (i % 8) * 4;
             if (testPacketPtr->type == RAMSES2PackageType::Request) 
             {
-                testPacketPtr->addr[1].deviceType = i % 8;
+                testPacketPtr->addr[1].deviceType = static_cast<RAMSES2DeviceType>(i % 8);
                 testPacketPtr->addr[1].deviceId = (i % 8) << 8;
             }
             else
             {
-                testPacketPtr->addr[2].deviceType = i % 8;
+                testPacketPtr->addr[2].deviceType = static_cast<RAMSES2DeviceType>(i % 8);
                 testPacketPtr->addr[2].deviceId = (i % 8) << 8;
             }
             if (testPacketPtr->type == RAMSES2PackageType::Info)

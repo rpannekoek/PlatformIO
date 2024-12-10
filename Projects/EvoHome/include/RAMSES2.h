@@ -37,13 +37,22 @@ enum struct RAMSES2Opcode : uint16_t
     ZoneHeatDemand = 0x3150
 };
 
+enum struct RAMSES2DeviceType : uint8_t
+{
+    CTL = 1,
+    TRV = 4,
+    OTB = 10,
+    HGI = 18,
+    Null = 0xFF
+};
+
 struct RAMSES2Address
 {
-    uint8_t deviceType = 0xFF; // null
+    RAMSES2DeviceType deviceType = RAMSES2DeviceType::Null;
     uint32_t deviceId = 0;
 
-    bool isNull() const { return deviceType == 0xFF; }
-    void setNull() { deviceType = 0xFF; }
+    bool isNull() const { return deviceType == RAMSES2DeviceType::Null; }
+    void setNull() { deviceType = RAMSES2DeviceType::Null; }
     String getDeviceType() const;
 
     size_t serialize(uint8_t* dataPtr) const;

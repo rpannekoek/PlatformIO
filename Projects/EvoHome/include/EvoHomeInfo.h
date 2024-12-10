@@ -5,7 +5,6 @@
 
 constexpr size_t EVOHOME_MAX_ZONES = 8;
 constexpr size_t EVOHOME_LOG_SIZE = 200;
-constexpr size_t MAX_ADDR_PER_ZONE = 2;
 
 struct ZoneData
 {
@@ -13,15 +12,13 @@ struct ZoneData
     float override = -1;
     float temperature = -1;
     float heatDemand = -1;
-    float batteryLevel = -1;
 
     bool equals(const ZoneData& other) const
     {
         return std::abs(setpoint - other.setpoint) < 0.1
             && std::abs(override - other.override) < 0.1
             && std::abs(temperature - other.temperature) < 0.1
-            && std::abs(heatDemand - other.heatDemand) < 1.0
-            && std::abs(batteryLevel - other.batteryLevel) < 1.0;
+            && std::abs(heatDemand - other.heatDemand) < 1.0;
     }
 
     void writeCsv(Print& output)
@@ -30,7 +27,7 @@ struct ZoneData
         writeCsv(output, override);
         writeCsv(output, temperature);
         writeCsv(output, heatDemand);
-        writeCsv(output, batteryLevel);
+        writeCsv(output, -1); // Battery level no longer in ZoneData
     }
 
     void writeCells(HtmlWriter& html)
@@ -39,7 +36,6 @@ struct ZoneData
         writeCell(html, override, F("%0.1f"));
         writeCell(html, temperature, F("%0.1f"));
         writeCell(html, heatDemand, F("%0.0f"));
-        writeCell(html, batteryLevel, F("%0.0f"));
     }
 
     void writeCell(HtmlWriter& html, float value, const __FlashStringHelper* format)
@@ -100,7 +96,7 @@ struct ZoneInfo
 {
     uint8_t domainId;
     String name;
-    RAMSES2Address deviceAddress[MAX_ADDR_PER_ZONE];
+    std::map<RAMSES2Address, float> batteryLevelByAddress;
     ZoneData current;
 
     ZoneInfo(uint8_t domaindId, const String& name)
@@ -109,18 +105,11 @@ struct ZoneInfo
         this->name = name;
     }
 
-    bool setDeviceAddress(const RAMSES2Address addr)
+    void setDeviceAddress(const RAMSES2Address& addr)
     {
-        for (int i = 0; i < MAX_ADDR_PER_ZONE; i++)
-        {
-            if (deviceAddress[i] == addr) return true;
-            if (deviceAddress[i].isNull()) 
-            {
-                deviceAddress[i] = addr;
-                return true;
-            }
-        }
-        return false;
+        auto loc = batteryLevelByAddress.find(addr);
+        if (loc == batteryLevelByAddress.end())
+            batteryLevelByAddress[addr] = -1;
     }
 
     void writeCurrentValues(HtmlWriter& html)
@@ -131,22 +120,29 @@ struct ZoneInfo
         html.writeRowEnd();
     }
 
-    void writeDeviceAddresses(HtmlWriter& html)
+    void writeDeviceInfo(HtmlWriter& html)
     {
         StringBuilder addrStr(16);
 
-        html.writeRowStart();
-        html.writeCell(name);
-        html.writeCellStart("");
-        for (int i = 0; i < MAX_ADDR_PER_ZONE; i++)
+        bool first = true;
+        for (auto const& [addr, batteryLevel] : batteryLevelByAddress)
         {
-            if (deviceAddress[i].isNull()) break;
             addrStr.clear();
-            deviceAddress[i].print(addrStr, false);
-            html.writeDiv("%s", addrStr.c_str());
+            addr.print(addrStr, false);
+
+            html.writeRowStart();
+            if (first)
+            {
+                first = false;
+                html.writeHeaderCell(name, 0, batteryLevelByAddress.size());
+            }
+            html.writeCell(addrStr.c_str());
+            if (batteryLevel < 0)
+                html.writeCell("");
+            else
+                html.writeCell(batteryLevel, F("%0.0f %%"));
+            html.writeRowEnd();
         }
-        html.writeCellEnd();
-        html.writeRowEnd();
     }
 };
 
@@ -167,6 +163,7 @@ class EvoHomeInfo
             {
                 case RAMSES2Opcode::BatteryStatus:
                     zoneInfoPtr = processBatteryStatus(
+                        packetPtr->addr[0],
                         static_cast<const BatteryStatusPayload*>(packetPtr->payloadPtr));
                     break;
 
@@ -179,16 +176,20 @@ class EvoHomeInfo
 
                 //case RAMSES2Opcode::RelayHeatDemand: // It seems CTL always sends 0 to zone 0xFC (boiler)
                 case RAMSES2Opcode::ZoneHeatDemand:
-                    zoneInfoPtr = processHeatDemand(
-                        packetPtr->opcode,
-                        static_cast<const HeatDemandPayload*>(packetPtr->payloadPtr));
+                    // It seems OTB always sends 0 to zone 0xFC too
+                    if (packetPtr->addr[0].deviceType != RAMSES2DeviceType::OTB)
+                    {
+                        zoneInfoPtr = processHeatDemand(
+                            packetPtr->opcode,
+                            static_cast<const HeatDemandPayload*>(packetPtr->payloadPtr));
+                    }
                     break;
 
                 default:
                     return;
             }
 
-            if ((zoneInfoPtr != nullptr) && (packetPtr->addr[0].deviceType != 1)) 
+            if ((zoneInfoPtr != nullptr) && (packetPtr->addr[0].deviceType != RAMSES2DeviceType::CTL)) 
                 zoneInfoPtr->setDeviceAddress(packetPtr->addr[0]);
 
             if ((_lastLogEntryPtr == nullptr) 
@@ -209,22 +210,22 @@ class EvoHomeInfo
             html.writeHeaderCell("T<sub>ovr</sub> (°C)");
             html.writeHeaderCell("T<sub>act</sub> (°C)");
             html.writeHeaderCell("Heat (%)");
-            html.writeHeaderCell("Battery (%)");
             html.writeRowEnd();
             for (auto const& [zoneId, zoneInfoPtr] : _zoneInfoById)
                 zoneInfoPtr->writeCurrentValues(html);
             html.writeTableEnd();
         }
 
-        void writeDeviceAddresses(HtmlWriter& html)
+        void writeDeviceInfo(HtmlWriter& html)
         {
             html.writeTableStart();
             html.writeRowStart();
             html.writeHeaderCell("Zone");
             html.writeHeaderCell("Address");
+            html.writeHeaderCell("Battery");
             html.writeRowEnd();
             for (auto const& [zoneId, zoneInfoPtr] : _zoneInfoById)
-                zoneInfoPtr->writeDeviceAddresses(html);
+                zoneInfoPtr->writeDeviceInfo(html);
             html.writeTableEnd();
         }
 
@@ -318,13 +319,10 @@ class EvoHomeInfo
             return zoneInfoPtr; 
         }
 
-        ZoneInfo* processBatteryStatus(const BatteryStatusPayload* payloadPtr)
+        ZoneInfo* processBatteryStatus(RAMSES2Address addr, const BatteryStatusPayload* payloadPtr)
         {
             ZoneInfo* zoneInfoPtr = getZoneInfo(payloadPtr->getDomainId());
-            ZoneData* zoneDataPtr = getZoneData(zoneInfoPtr->domainId);
-            float batteryLevel = payloadPtr->getBatteryLevel();
-            zoneInfoPtr->current.batteryLevel = batteryLevel;
-            if (zoneDataPtr != nullptr) zoneDataPtr->batteryLevel = batteryLevel;
-            return zoneInfoPtr;
+            zoneInfoPtr->batteryLevelByAddress[addr] = payloadPtr->getBatteryLevel();
+            return nullptr;
         }
 };

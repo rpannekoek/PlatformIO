@@ -509,7 +509,7 @@ size_t RAMSES2Address::serialize(uint8_t* dataPtr) const
 {
     if (isNull()) return 0;
 
-    dataPtr[0] = (deviceType << 2) | deviceId >> 16;
+    dataPtr[0] = (static_cast<uint8_t>(deviceType) << 2) | deviceId >> 16;
     dataPtr[1] = (deviceId & 0xFF00) >> 8;
     dataPtr[2] = (deviceId & 0xFF); 
     return 3;
@@ -518,7 +518,7 @@ size_t RAMSES2Address::serialize(uint8_t* dataPtr) const
 
 size_t RAMSES2Address::deserialize(const uint8_t* dataPtr)
 {
-    deviceType = dataPtr[0] >> 2;
+    deviceType = static_cast<RAMSES2DeviceType>(dataPtr[0] >> 2);
     deviceId = static_cast<uint32_t>(dataPtr[0] & 0x3) << 16
         | static_cast<uint32_t>(dataPtr[1]) << 8
         | static_cast<uint32_t>(dataPtr[2]);
@@ -529,21 +529,20 @@ size_t RAMSES2Address::deserialize(const uint8_t* dataPtr)
 
 String RAMSES2Address::getDeviceType() const
 {
-    static std::map<uint8_t, const char*> knownDeviceTypes = 
+    static std::map<RAMSES2DeviceType, const char*> knownDeviceTypes = 
     {
-        { 1, "CTL" },
-        { 4, "TRV" },
-        { 10, "OTB" },
-        { 18, "HGI" },
-        { 63, "***" },
-        { 0xFF, "NUL" }
+        { RAMSES2DeviceType::CTL, "CTL" },
+        { RAMSES2DeviceType::TRV, "TRV" },
+        { RAMSES2DeviceType::OTB, "OTB" },
+        { RAMSES2DeviceType::HGI, "HGI" },
+        { RAMSES2DeviceType::Null, "NUL" }
     };
 
     auto loc = knownDeviceTypes.find(deviceType);
     if (loc != knownDeviceTypes.end())
         return loc->second;
     else
-        return String(deviceType);
+        return String(static_cast<uint8_t>(deviceType));
 }
 
 
@@ -552,7 +551,7 @@ bool RAMSES2Address::parse(const String& str)
     int devType = 0;
     int devId = 0;
     if (sscanf(str.c_str(), "%d:%d", &devType, &devId) != 2) return false;
-    deviceType = devType;
+    deviceType = static_cast<RAMSES2DeviceType>(devType);
     deviceId = devId;
     return true;
 }
@@ -563,7 +562,7 @@ void RAMSES2Address::print(Print& output, bool raw) const
     if (isNull())
         output.print("--:------");
     else if (raw)
-        output.printf("%02d:%06d", deviceType, deviceId);
+        output.printf("%02d:%06d", static_cast<uint8_t>(deviceType), deviceId);
     else
         output.printf("%s:%06d", getDeviceType().c_str(), deviceId);
 }
