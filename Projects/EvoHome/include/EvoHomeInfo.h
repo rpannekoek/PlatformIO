@@ -5,6 +5,7 @@
 
 constexpr size_t EVOHOME_MAX_ZONES = 8;
 constexpr size_t EVOHOME_LOG_SIZE = 200;
+constexpr time_t OVERRIDE_TIMEOUT = SECONDS_PER_HOUR;
 
 struct ZoneData
 {
@@ -110,6 +111,7 @@ struct ZoneInfo
     String name;
     std::vector<DeviceInfo*> devices;
     ZoneData current;
+    time_t overrideTime = 0;
 
     ZoneInfo(uint8_t domaindId, const String& name)
     {
@@ -185,6 +187,7 @@ class EvoHomeInfo
                 case RAMSES2Opcode::ZoneTemperature:
                     zoneInfoPtr = processTemperatures(
                         packetPtr->opcode,
+                        packetPtr->timestamp,
                         static_cast<const TemperaturePayload*>(packetPtr->payloadPtr));
                     break;
 
@@ -308,7 +311,7 @@ class EvoHomeInfo
             return &_currentLogEntry.zones[zoneId];
         }
 
-        ZoneInfo* processTemperatures(RAMSES2Opcode opcode, const TemperaturePayload* payloadPtr)
+        ZoneInfo* processTemperatures(RAMSES2Opcode opcode, time_t time, const TemperaturePayload* payloadPtr)
         {
             if (payloadPtr->getCount() == 1)
             {
@@ -319,9 +322,13 @@ class EvoHomeInfo
                 {
                     zoneInfoPtr = getZoneInfo(payloadPtr->getDomainId(0));
                     ZoneData* zoneDataPtr = getZoneData(zoneInfoPtr->domainId);
-                    float temperature = payloadPtr->getTemperature(0);
-                    zoneInfoPtr->current.override = temperature;
-                    if (zoneDataPtr != nullptr) zoneDataPtr->override = temperature;
+                    float setpoint = payloadPtr->getTemperature(0);
+                    if (abs(setpoint - zoneInfoPtr->current.setpoint) >= 0.1)
+                        zoneInfoPtr->overrideTime = time;
+                    else
+                        setpoint = -1;
+                    zoneInfoPtr->current.override = setpoint;
+                    if (zoneDataPtr != nullptr) zoneDataPtr->override = setpoint;
                 }
                 return zoneInfoPtr;
             }
@@ -336,6 +343,12 @@ class EvoHomeInfo
                 {
                     zoneInfoPtr->current.setpoint = temperature;
                     if (zoneDataPtr != nullptr) zoneDataPtr->setpoint = temperature;
+                    if ((zoneInfoPtr->current.override >= 0)
+                        && (time >= zoneInfoPtr->overrideTime + OVERRIDE_TIMEOUT))
+                    {
+                        zoneInfoPtr->current.override = -1;
+                        if (zoneDataPtr != nullptr) zoneDataPtr->override = -1;
+                    }
                 }
                 else
                 {
