@@ -486,21 +486,31 @@ bool RAMSES2::packetReceived(size_t size)
             return false;
         }
 
-        // There were manchester bit errors
+        // Checksum is wrong and there were manchester encoding errors.
         // Try to correct the checksum error by changing some of those bits.
-        uint8_t* correctBytePtr = _packetBuffer + _lastManchesterError.packetIndex;
-        uint8_t corrected = *correctBytePtr ^ _lastManchesterError.errorBits;
-        uint8_t delta = *correctBytePtr - corrected;
-        if (checksum != delta)
+        bool repaired = false;
+        for (const ManchesterErrorInfo& errInfo : errors.manchesterErrors)
         {
+            uint8_t* correctBytePtr = _packetBuffer + errInfo.packetIndex;
+            uint8_t corrected = *correctBytePtr ^ errInfo.errorBits;
+            uint8_t delta = *correctBytePtr - corrected;
+            if (checksum == delta)
+            {
+                *correctBytePtr = corrected;
+                errors.repairedManchesterCode++;
+                repaired = true;
+                break;
+            }
+        }
+        if (!repaired)
+        {
+            // Unable to repair. Report this as invalid manchester code.
             errors.invalidManchesterCode++;
             return false;
         }
-        *correctBytePtr = corrected;
-        errors.repairedManchesterCode++;
     }
     else if (_manchesterBitErrors)
-        errors.ignoredManchesterCode++;
+        errors.ignoredManchesterCode++; // Checksum is okay, despite manchester encoding errors.
 
     RAMSES2Packet* packetPtr = new RAMSES2Packet();
     if (!packetPtr->deserialize(_packetBuffer, size - 1))
@@ -669,7 +679,7 @@ bool RAMSES2Packet::deserialize(const uint8_t* dataPtr, size_t size)
     payloadPtr = createPayload();
     size_t payloadSize = payloadPtr->deserialize(dataPtr);
 
-    return ((payloadSize != 0) && (dataPtr + payloadSize == endPtr)); 
+    return ((payloadSize != 0) && (dataPtr + payloadSize <= endPtr)); 
 }
 
 

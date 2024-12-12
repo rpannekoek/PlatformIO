@@ -590,12 +590,24 @@ void handleHttpFrameErrorsRequest()
         formatTime("%T", errors.lastErrorPacketTimestamp));
     Html.writePreStart();
     hexDump(HttpResponse, errors.lastErrorPacket, errors.lastErrorPacketSize);
-    if (errors.lastErrorPacketSize >= RAMSES_MIN_PACKET_SIZE)
+    HttpResponse.println();
+    if (errors.lastManchesterErrorTimestamp == errors.lastErrorPacketTimestamp)
     {
-        RAMSES2Packet packet;
-        if (packet.deserialize(errors.lastErrorPacket, errors.lastErrorPacketSize))
-            packet.print(HttpResponse);
+        int packetIndex = 0;
+        for (const ManchesterErrorInfo& errInfo : errors.manchesterErrors)
+        {
+            if (errInfo.packetIndex >= 16) break;
+            for (int i = packetIndex; i < errInfo.packetIndex; i++) HttpResponse.print("   ");
+            HttpResponse.print("^^ ");
+            packetIndex = errInfo.packetIndex + 1;
+        }
+        HttpResponse.println();
     }
+    RAMSES2Packet packet;
+    if (packet.deserialize(errors.lastErrorPacket, errors.lastErrorPacketSize))
+        packet.print(HttpResponse);
+    else
+        HttpResponse.println("[Unable to deserialize packet]");
     Html.writePreEnd();
 
     Html.writeHeading("Header mismatches", 2);
