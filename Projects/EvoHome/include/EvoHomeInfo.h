@@ -92,11 +92,23 @@ struct ZoneDataLogEntry
     }
 };
 
+struct DeviceInfo
+{
+    RAMSES2Address address;
+    int domainId = -1;
+    float batteryLevel = -1;
+
+    DeviceInfo(const RAMSES2Address& addr)
+    {
+        address = addr;
+    }
+};
+
 struct ZoneInfo
 {
     uint8_t domainId;
     String name;
-    std::map<RAMSES2Address, float> batteryLevelByAddress;
+    std::vector<DeviceInfo*> devices;
     ZoneData current;
 
     ZoneInfo(uint8_t domaindId, const String& name)
@@ -105,11 +117,12 @@ struct ZoneInfo
         this->name = name;
     }
 
-    void setDeviceAddress(const RAMSES2Address& addr)
+    void attachDevice(DeviceInfo* deviceInfoPtr)
     {
-        auto loc = batteryLevelByAddress.find(addr);
-        if (loc == batteryLevelByAddress.end())
-            batteryLevelByAddress[addr] = -1;
+        for (const DeviceInfo* device : devices)
+            if (device->address == deviceInfoPtr->address) return; // Device already attached
+        devices.push_back(deviceInfoPtr);
+        deviceInfoPtr->domainId = domainId;
     }
 
     void writeCurrentValues(HtmlWriter& html)
@@ -125,18 +138,19 @@ struct ZoneInfo
         StringBuilder addrStr(16);
 
         bool first = true;
-        for (auto const& [addr, batteryLevel] : batteryLevelByAddress)
+        for (DeviceInfo* deviceInfoPtr : devices)
         {
             addrStr.clear();
-            addr.print(addrStr, false);
+            deviceInfoPtr->address.print(addrStr, false);
 
             html.writeRowStart();
             if (first)
             {
                 first = false;
-                html.writeHeaderCell(name, 0, batteryLevelByAddress.size());
+                html.writeHeaderCell(name, 0, devices.size());
             }
             html.writeCell(addrStr.c_str());
+            float batteryLevel = deviceInfoPtr->batteryLevel;
             if (batteryLevel < 0)
                 html.writeCell("");
             else
@@ -189,8 +203,17 @@ class EvoHomeInfo
                     return;
             }
 
-            if ((zoneInfoPtr != nullptr) && (packetPtr->addr[0].deviceType != RAMSES2DeviceType::CTL)) 
-                zoneInfoPtr->setDeviceAddress(packetPtr->addr[0]);
+            if (zoneInfoPtr != nullptr) 
+            {
+                // Zone has been resolved; attach sender device to the zone if not attached yet.
+                const RAMSES2Address& senderAddr = packetPtr->addr[0];
+                if (senderAddr.deviceType != RAMSES2DeviceType::CTL)
+                {
+                    DeviceInfo* deviceInfoPtr = getDeviceInfo(senderAddr);
+                    if (deviceInfoPtr->domainId < 0)
+                        zoneInfoPtr->attachDevice(deviceInfoPtr);
+                }
+            }
 
             if ((_lastLogEntryPtr == nullptr) 
                 || ((packetPtr->timestamp > _lastLogEntryPtr->time + 1) && !_lastLogEntryPtr->equals(_currentLogEntry)))
@@ -260,8 +283,23 @@ class EvoHomeInfo
 
     private:
         std::map<uint8_t, ZoneInfo*> _zoneInfoById;
+        std::map<RAMSES2Address, DeviceInfo*> _deviceInfoByAddress;
         ZoneDataLogEntry _currentLogEntry;
         ZoneDataLogEntry* _lastLogEntryPtr = nullptr;
+
+        DeviceInfo* getDeviceInfo(const RAMSES2Address& addr)
+        {
+            DeviceInfo* result;
+            auto loc = _deviceInfoByAddress.find(addr);
+            if (loc == _deviceInfoByAddress.end())
+            {
+                result = new DeviceInfo(addr);
+                _deviceInfoByAddress[addr] = result;
+            }
+            else
+                result = loc->second;
+            return result;
+        }
 
         ZoneData* getZoneData(uint8_t zoneId)
         {
@@ -321,8 +359,11 @@ class EvoHomeInfo
 
         ZoneInfo* processBatteryStatus(RAMSES2Address addr, const BatteryStatusPayload* payloadPtr)
         {
-            ZoneInfo* zoneInfoPtr = getZoneInfo(payloadPtr->getDomainId());
-            zoneInfoPtr->batteryLevelByAddress[addr] = payloadPtr->getBatteryLevel();
-            return nullptr;
+            DeviceInfo* deviceInfoPtr = getDeviceInfo(addr);
+            deviceInfoPtr->batteryLevel = payloadPtr->getBatteryLevel();
+
+            // TRVs may incorrectly report domainId=0, so don't trust that.
+            uint8_t domainId = payloadPtr->getDomainId();
+            return (domainId == 0) ? nullptr : getZoneInfo(domainId);
         }
 };
