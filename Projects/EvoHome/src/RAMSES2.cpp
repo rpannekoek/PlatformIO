@@ -6,7 +6,7 @@
 const char* RAMSES2Packet::typeId[] = { "Request", "Info",  "Write", "Response" };
 
 const uint8_t RAMSES2::_frameHeader[] = { 0xFF, 0x00, 0x33, 0x55, 0x53 };
-const uint8_t RAMSES2::_frameTrailer[] = { 0x35, 0xAA };
+const uint8_t RAMSES2::_frameTrailer[] = { 0x35, 0x55 };
 
 const int RAMSES2::_afterSyncWordIndex = 2 - sizeof(_frameHeader);
 
@@ -72,7 +72,7 @@ bool RAMSES2::end()
 
 size_t RAMSES2::uartEncode(size_t size)
 {
-    static const uint8_t uartBreakCondition[] = { 0x00, 0xFF, 0x00, 0x00, 0x00, 0xFF };
+    static const uint8_t uartBreakCondition[] = { 0x00, 0xFF, 0x00, 0x00 };
 
     memset(_sendBuffer, 0xFF, sizeof(_sendBuffer));
     memcpy(_sendBuffer, uartBreakCondition, sizeof(uartBreakCondition));
@@ -222,7 +222,7 @@ size_t RAMSES2::createFrame(const RAMSES2Packet& packet, uint8_t* framePtr)
 
     // Build frame: preamble, header, manchester encoded packet + checksum, trailer
     int i = 5;
-    memset(framePtr, 0xAA, i); // preamble 
+    memset(framePtr, 0x55, i); // preamble 
     memcpy(framePtr + i, _frameHeader, sizeof(_frameHeader));
     i += sizeof(_frameHeader);
     for (int n = 0; n < packetSize; n++)
