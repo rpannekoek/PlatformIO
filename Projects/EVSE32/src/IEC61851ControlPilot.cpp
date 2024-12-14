@@ -1,10 +1,11 @@
 #include <Tracer.h>
 #include "IEC61851ControlPilot.h"
 
-#define PWM_FREQ 1000
-#define STATUS_POLL_INTERVAL 1.0F
-#define OVERSAMPLING 5
-#define ADC_OFFSET 0.7F
+constexpr uint32_t PWM_FREQ = 1000;
+constexpr uint8_t PWM_RESOLUTION_BITS = 8;
+constexpr float STATUS_POLL_INTERVAL = 1.0;
+constexpr int OVERSAMPLING = 5;
+constexpr float ADC_OFFSET = 0.7;
 
 const char* _statusNames[] =
 {
@@ -50,7 +51,7 @@ bool IEC61851ControlPilot::begin(float scale)
     _adcChannel = static_cast<adc1_channel_t>(adcChannel);
 
     adc1_config_width(ADC_WIDTH_BIT_12);
-    adc1_config_channel_atten(_adcChannel, ADC_ATTEN_DB_11);
+    adc1_config_channel_atten(_adcChannel, ADC_ATTEN_DB_12);
 
     pinMode(_inputPin, ANALOG);
     pinMode(_outputPin, OUTPUT);
@@ -60,8 +61,15 @@ bool IEC61851ControlPilot::begin(float scale)
 
     _statusTicker.attach(STATUS_POLL_INTERVAL, determineStatus, this);
 
+#if (ESP_ARDUINO_VERSION_MAJOR == 2)
     uint32_t freq = ledcSetup(_pwmChannel, PWM_FREQ, 8); // 1 kHz, 8 bits
     return freq == PWM_FREQ;
+#else
+    // No separate PWM channel initialization anymore (see ledcAttach)
+    // Most LEDC functions now expect pin instead of channel; let _pwmChannel be the pin number for compatibility.
+    _pwmChannel = _outputPin;
+    return true;
+#endif
 }
 
 
@@ -103,9 +111,13 @@ void IEC61851ControlPilot::setOff()
 {
     Tracer tracer(F("IEC61851ControlPilot::setOff"));
 
+#if (ESP_ARDUINO_VERSION_MAJOR == 2)
     ledcDetachPin(_outputPin);
-    digitalWrite(_outputPin, 0); // 0 V
+#else
+    ledcDetach(_outputPin);
+#endif
 
+    digitalWrite(_outputPin, 0); // 0 V
     _dutyCycle = 0;
 }
 
@@ -114,9 +126,13 @@ void IEC61851ControlPilot::setReady()
 {
     Tracer tracer(F("IEC61851ControlPilot::setReady"));
 
+#if (ESP_ARDUINO_VERSION_MAJOR == 2)
     ledcDetachPin(_outputPin);
-    digitalWrite(_outputPin, 1); // 12 V
+#else
+    ledcDetach(_outputPin);
+#endif
 
+    digitalWrite(_outputPin, 1); // 12 V
     _dutyCycle = 1;
 }
 
@@ -129,7 +145,12 @@ float IEC61851ControlPilot::setCurrentLimit(float ampere)
     _dutyCycle =  ampere / 60.0F;
     uint32_t duty = static_cast<uint32_t>(std::round(_dutyCycle * 256));
 
+#if (ESP_ARDUINO_VERSION_MAJOR == 2)
     ledcAttachPin(_outputPin, _pwmChannel);
+#else
+    if (!ledcAttach(_outputPin, PWM_FREQ, PWM_RESOLUTION_BITS))
+        TRACE("Unable to attach LEDC to pin %u\n", _outputPin);
+#endif
     ledcWrite(_pwmChannel, duty);
 
     TRACE(

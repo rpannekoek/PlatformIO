@@ -592,9 +592,9 @@ void RAMSES2Address::print(Print& output, bool raw) const
     if (isNull())
         output.print("--:------");
     else if (raw)
-        output.printf("%02d:%06d", static_cast<uint8_t>(deviceType), deviceId);
+        output.printf("%02u:%06lu", static_cast<uint8_t>(deviceType), deviceId);
     else
-        output.printf("%s:%06d", getDeviceType().c_str(), deviceId);
+        output.printf("%s:%06lu", getDeviceType().c_str(), deviceId);
 }
 
 
@@ -604,7 +604,7 @@ void RAMSES2Address::printJson(Print& output) const
         output.print("{}");
     else
         output.printf(
-            "{ \"deviceType\": \"%s\", \"deviceId\": %d }",
+            "{ \"deviceType\": \"%s\", \"deviceId\": %lu }",
             getDeviceType().c_str(),
             deviceId);
 }

@@ -2,6 +2,7 @@
 #define WIFI_STATE_MACHINE_H
 
 #include <stdint.h>
+#include <WiFi.h>
 #include <ESPWebServer.h>
 #include <WiFiNTP.h>
 #include <Log.h>

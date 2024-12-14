@@ -13,7 +13,7 @@ uint64_t parseSerial(const char* str)
 const char* formatSerial(uint64_t serial)
 {
     static char result[16];
-    snprintf(result, sizeof(result), "%0X%08X",
+    snprintf(result, sizeof(result), "%0lX%08lX",
         ((uint32_t)((serial >> 32) & 0xFFFFFFFF)),
         ((uint32_t)(serial & 0xFFFFFFFF)));
     return result;

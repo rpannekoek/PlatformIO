@@ -223,15 +223,15 @@ void setup()
     WiFiSM.scanAccessPoints();
     WiFiSM.begin(PersistentData.wifiSSID, PersistentData.wifiKey, PersistentData.hostName);
 
-    uint64_t dtuSerial = parseSerial(PersistentData.dtuSerial);
-    rf24_pa_dbm_e paLevel = static_cast<rf24_pa_dbm_e>(PersistentData.dtuTxLevel);
-
     Hoymiles.init();
     Hoymiles.setPollInterval(pollInterval);
 
 #ifdef DISABLE_NRF
     WiFiSM.logEvent("NRF Radio disabled");
 #else
+    uint64_t dtuSerial = parseSerial(PersistentData.dtuSerial);
+    rf24_pa_dbm_e paLevel = static_cast<rf24_pa_dbm_e>(PersistentData.dtuTxLevel);
+
     NRFSPI.begin(NRF_SCK, NRF_MISO, NRF_MOSI, NRF_CS_PIN);
     Hoymiles.initNRF(&NRFSPI, NRF_CE_PIN, NRF_IRQ_PIN);
     HoymilesRadio_NRF* nrfRadioPtr = Hoymiles.getRadioNrf();

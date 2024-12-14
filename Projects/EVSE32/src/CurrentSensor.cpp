@@ -29,7 +29,7 @@ bool CurrentSensor::begin(uint16_t zero, float scale)
     _adcChannel = static_cast<adc1_channel_t>(adcChannel);
 
     adc1_config_width(ADC_WIDTH_BIT_12);
-    adc1_config_channel_atten(_adcChannel, ADC_ATTEN_DB_11);
+    adc1_config_channel_atten(_adcChannel, ADC_ATTEN_DB_12);
 
     pinMode(_pin, ANALOG);
 

@@ -82,7 +82,19 @@ void WiFiStateMachine::begin(String ssid, String password, String hostName, uint
 
 #ifdef ESP32
     esp_core_dump_init();
+#if (ESP_ARDUINO_VERSION_MAJOR == 2)
     esp_task_wdt_init(TASK_WDT_TIMEOUT, true);
+#else
+    /* Task WDT is already initialized
+    esp_task_wdt_config_t wdtConfig = 
+    {
+        .timeout_ms = TASK_WDT_TIMEOUT * 1000,
+        .idle_core_mask = 1,
+        .trigger_panic = true
+    };
+    esp_task_wdt_reconfigure(&wdtConfig);
+    */
+#endif
     enableLoopWDT();
 #endif
 
@@ -204,7 +216,7 @@ void WiFiStateMachine::logEvent(const char* msg)
         strftime(event, timestamp_size, "%F %H:%M:%S : ", localtime(&currentTime));
     }
     else
-        snprintf(event, timestamp_size, "@ %u ms : ", static_cast<uint32_t>(millis()));
+        snprintf(event, timestamp_size, "@ %lu ms : ", static_cast<uint32_t>(millis()));
     
     strcat(event, msg);
 
@@ -279,7 +291,9 @@ void WiFiStateMachine::initializeSTA()
     WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
     WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
     // ESP32 doesn't reliably set the status to WL_DISCONNECTED despite disconnect() call.
+#if (ESP_ARDUINO_VERSION_MAJOR == 2)
     WiFiSTAClass::_setStatus(WL_DISCONNECTED);
+#endif
 #endif
     ArduinoOTA.setHostname(_hostName.c_str());
     WiFi.begin(_ssid.c_str(), _password.c_str());
@@ -389,7 +403,9 @@ void WiFiStateMachine::run()
                     TRACE(F("forceSleepWake() failed.\n"));
 #else
                 // ESP32 doesn't reliably set status:
+#if (ESP_ARDUINO_VERSION_MAJOR == 2)
                 WiFiSTAClass::_setStatus(WL_CONNECTION_LOST);
+#endif
                 if (!WiFi.reconnect())
                     TRACE(F("reconnect() failed.\n"));
 #endif

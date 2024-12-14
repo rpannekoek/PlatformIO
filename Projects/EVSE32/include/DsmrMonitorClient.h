@@ -1,6 +1,7 @@
 #ifndef HEATMON_CLIENT_H
 #define HEATMON_CLIENT_H
 
+#include <WiFiClient.h>
 #include <HTTPClient.h>
 
 struct PhaseData

@@ -16,7 +16,7 @@ const char* formatTimeSpan(uint32_t seconds, bool includeHours)
         snprintf(
             result,
             sizeof(result),
-            "%02d:%02d:%02d",
+            "%02lu:%02lu:%02lu",
             seconds / 3600,
             (seconds / 60) % 60,
             seconds % 60);
@@ -26,7 +26,7 @@ const char* formatTimeSpan(uint32_t seconds, bool includeHours)
         snprintf(
             result,
             sizeof(result),
-            "%02d:%02d",
+            "%02lu:%02lu",
             seconds / 60,
             seconds % 60);
     }

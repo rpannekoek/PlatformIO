@@ -67,10 +67,17 @@ bool RGBLED::setOn(bool on)
 {
     if (!LED::setOn(on)) return false;
 #ifdef ESP32
+#if (ESP_ARDUINO_VERSION_MAJOR == 2)
     if (on)
         neopixelWrite(_pin, _green, _red, _blue);
     else
         neopixelWrite(_pin, 0, 0, 0);
+#else
+    if (on)
+        rgbLedWrite(_pin, _red, _green, _blue);
+    else
+        rgbLedWrite(_pin, 0, 0, 0);
+#endif
     return true;
 #else
     return false;

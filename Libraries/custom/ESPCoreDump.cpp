@@ -11,12 +11,12 @@ bool writeCoreDump(Print& output)
         return false;
     };
     
-    output.printf("PC: 0x%08x\n", coreDumpSummary.exc_pc);
-    output.printf("EXCCAUSE: 0x%08x\n", coreDumpSummary.ex_info.exc_cause);
-    output.printf("EXCVADDR: 0x%08x\n", coreDumpSummary.ex_info.exc_vaddr);
+    output.printf("PC: 0x%08lx\n", coreDumpSummary.exc_pc);
+    output.printf("EXCCAUSE: 0x%08lx\n", coreDumpSummary.ex_info.exc_cause);
+    output.printf("EXCVADDR: 0x%08lx\n", coreDumpSummary.ex_info.exc_vaddr);
     output.print("Backtrace: ");
     for (int i = 0; i < coreDumpSummary.exc_bt_info.depth; i++)
-        output.printf("0x%08x ", coreDumpSummary.exc_bt_info.bt[i]);
+        output.printf("0x%08lx ", coreDumpSummary.exc_bt_info.bt[i]);
     output.println();
 
     esp_core_dump_image_erase();
