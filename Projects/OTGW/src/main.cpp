@@ -48,11 +48,12 @@ constexpr float MAX_FLOW_RATE = 12.0; // l/min
 #endif
 
 #ifdef ESP8266
-    constexpr bool LED_INVERTED = true;
     constexpr uint8_t OTGW_RESET_PIN = 14;
+    SimpleLED BuiltinLED(LED_BUILTIN, true);
 #else
     constexpr bool LED_INVERTED = false;
     constexpr uint8_t OTGW_RESET_PIN = 7;
+    RGBLED BuiltinLED(LED_BUILTIN);
 #endif
 
 #if defined(ESP8266) || defined(DEBUG_ESP_PORT)
@@ -134,11 +135,10 @@ HeatMonClient HeatMon;
 WeatherAPI WeatherService;
 StringBuilder HttpResponse(12 * 1024); // 12KB HTTP response buffer
 HtmlWriter Html(HttpResponse, Files[FileId::Logo], Files[FileId::Styles], 40);
-Log<const char> EventLog(EVENT_LOG_LENGTH);
+StringLog EventLog(EVENT_LOG_LENGTH, 128);
 StringLog OTGWMessageLog(OTGW_MESSAGE_LOG_LENGTH, 10);
 StaticLog<OpenThermLogEntry> OpenThermLog(OT_LOG_LENGTH);
 StaticLog<StatusLogEntry> StatusLog(7); // 7 days
-SimpleLED BuiltinLED(LED_BUILTIN, LED_INVERTED);
 WiFiStateMachine WiFiSM(BuiltinLED, TimeServer, WebServer, EventLog);
 Navigation Nav;
 
@@ -187,23 +187,6 @@ String otgwResponse;
 
 // Forward defines
 void handleHttpConfigFormRequest();
-/*
-void handleHttpRootRequest();
-void handleHttpEventLogRequest();
-void handleHttpOpenThermLogRequest();
-void handleHttpOpenThermRequest();
-void handleHttpOpenThermLogSyncRequest();
-void handleHttpCommandFormRequest();
-void handleHttpConfigFormRequest();
-void handleHttpConfigFormPost();
-void handleHttpPumpRequest();
-void handleHttpOpenThermTrafficRequest();
-void handleHttpOTGWMessageLogRequest();
-void onTimeServerInit();
-void onTimeServerSynced();
-void onWiFiInitialized();
-void onWiFiUpdating();
-*/
 
 
 void initBoilerLevels()
@@ -517,6 +500,7 @@ void test(String message)
             WiFiSM.logEvent(F("Test event"));
             yield();
         }
+        Tracer::traceFreeHeap();
     }
     else if (message.startsWith("testO"))
     {
@@ -1499,15 +1483,17 @@ void onWiFiInitialized()
 void setup() 
 {
     OTGW_SERIAL_INIT;
-    // TODO: DEBUG_ESP_PORT init
-    Serial.println("Boot"); // Flush garbage caused by ESP boot output.
 
-    #ifdef DEBUG_ESP_PORT
+#ifdef DEBUG_ESP_PORT
+    DEBUG_ESP_PORT.setDebugOutput(true);
+    DEBUG_ESP_PORT.println("");
     Tracer::traceTo(DEBUG_ESP_PORT);
     Tracer::traceFreeHeap();
-    #endif
+#endif
 
     BuiltinLED.begin();
+    EventLog.begin(true);
+    OTGWMessageLog.begin();
 
     PersistentData.begin();
     TimeServer.begin(PersistentData.ntpServer);
