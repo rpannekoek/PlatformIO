@@ -8,9 +8,9 @@ struct MenuItem
 {
     PGM_P icon;
     PGM_P label;
-    PGM_P urlPath;
+    PGM_P urlPath = nullptr;
     std::function<void(void)> handler;
-    std::function<void(void)> postHandler;
+    std::function<void(void)> postHandler = nullptr;
 };
 
 struct Navigation

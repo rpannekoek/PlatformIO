@@ -14,7 +14,7 @@ class HeatMonClient : public RESTClient
         bool valve;
 
         // Constructor
-        HeatMonClient(uint16_t timeout = 10);
+        HeatMonClient(uint16_t timeout = 10) : RESTClient(timeout) {}
 
         bool begin(const char* host);
 
@@ -24,14 +24,10 @@ class HeatMonClient : public RESTClient
             pIn = 0;
         }
 
-        inline bool isHeatpumpOn()
-        {
-            return pIn > 0.5;
-        }
+        bool isHeatpumpOn() { return pIn > 0.5; }
 
     protected:
-        virtual bool parseResponse(const JsonDocument& response);
+        virtual bool parseResponse(const JsonDocument& response) override;
 };
-
 
 #endif

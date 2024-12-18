@@ -1,12 +1,6 @@
 #include "HeatMonClient.h"
 #include <Tracer.h>
 
-// Constructor
-HeatMonClient::HeatMonClient(uint16_t timeout)
-    : RESTClient(timeout, new DynamicJsonDocument(256))
-{
-}
-
 
 bool HeatMonClient::begin(const char* host)
 {

@@ -12,7 +12,6 @@
 #include <HtmlWriter.h>
 #include <LED.h>
 #include <Log.h>
-#include <AsyncHTTPRequest_Generic.h>
 #include <Wire.h>
 #include "PersistentData.h"
 #include "OpenThermLogEntry.h"
@@ -20,6 +19,10 @@
 #include "HeatMonClient.h"
 #include "WeatherAPI.h"
 #include "OTGW.h"
+
+#ifdef ESP8266
+#include <AsyncHTTPRequest_Generic.h>
+#endif
 
 constexpr int SET_BOILER_RETRY_INTERVAL = 6;
 constexpr int OTGW_WATCHDOG_INTERVAL = 10;
@@ -48,11 +51,10 @@ constexpr float MAX_FLOW_RATE = 12.0; // l/min
 #endif
 
 #ifdef ESP8266
-    constexpr uint8_t OTGW_RESET_PIN = 14;
+    constexpr uint8_t OTGW_RESET_PIN = 14; // on NodeMCU V1.0
     SimpleLED BuiltinLED(LED_BUILTIN, true);
 #else
-    constexpr bool LED_INVERTED = false;
-    constexpr uint8_t OTGW_RESET_PIN = 7;
+    constexpr uint8_t OTGW_RESET_PIN = SCK; // on D1-mini form factor
     RGBLED BuiltinLED(LED_BUILTIN);
 #endif
 
@@ -96,7 +98,7 @@ const char* ContentTypeJson = "application/json";
 const char* ContentTypeText = "text/plain";
 const char* ButtonClass = "button";
 
-const char* BoilerLevelNames[5] = {"Off", "Pump-only", "Low", "High", "Thermostat"};
+const char* BoilerLevelNames[] = {"Off", "Pump-only", "Low", "High", "Thermostat"};
 
 enum BoilerLevel // Unscoped enum so it can be used as array index without casting
 {
@@ -107,7 +109,7 @@ enum BoilerLevel // Unscoped enum so it can be used as array index without casti
     Thermostat = 4
 };
 
-int boilerTSet[5] = {0, 15, 40, 60,  0}; // See initBoilerLevels()
+int boilerTSet[] = {0, 15, 40, 60, 0}; // See initBoilerLevels()
 
 const char* LogHeaders[] PROGMEM =
 {
@@ -763,6 +765,7 @@ void handleSerialData()
                 test(otgwMessage.message);
                 break;
             }
+            [[fallthrough]];
 
         case OpenThermGatewayDirection::Error:
             WiFiSM.logEvent(F("OTGW: '%s'"), otgwMessage.message.c_str());
@@ -1593,7 +1596,7 @@ void setup()
 
     Tracer::traceFreeHeap();
 
-    BuiltinLED.setOn(false);
+    BuiltinLED.setOff();
 }
 
 
@@ -1617,7 +1620,7 @@ void loop()
         BuiltinLED.setOn(true);
         handleSerialData();
         otgwTimeout = currentTime + OTGW_TIMEOUT;
-        BuiltinLED.setOn(false);
+        BuiltinLED.setOff();
         return;
     }
 

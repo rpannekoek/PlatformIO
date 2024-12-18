@@ -1,3 +1,7 @@
+SH:60
+SR:
+OT:
+
 == From Thermostat ==
 T80000100 - CH on
 T00000000 - CH off
