@@ -64,8 +64,8 @@ constexpr float MAX_FLOW_RATE = 12.0; // l/min
     #define OTGW_SERIAL Serial
     #define OTGW_SERIAL_INIT Serial.begin(9600);
 #else
-    #define OTGW_SERIAL Serial0
-    #define OTGW_SERIAL_INIT Serial0.begin(9600, SERIAL_8N1, RX, TX)
+    #define OTGW_SERIAL Serial1
+    #define OTGW_SERIAL_INIT Serial1.begin(9600, SERIAL_8N1, RX, TX); Serial1.setDebugOutput(false);
 #endif
 
 
@@ -1627,7 +1627,7 @@ void loop()
         watchdogFeedTime = currentTime + OTGW_WATCHDOG_INTERVAL;
     }
 
-    if (Serial.available())
+    if (OTGW_SERIAL.available())
     {
         BuiltinLED.setColor(LED_CYAN);
         handleSerialData();
@@ -1661,7 +1661,7 @@ void loop()
         // Send CS command regularly, otherwise OTGW will revert the override.
         otgwSetpointOverrideTime = currentTime + OTGW_SETPOINT_OVERRIDE_TIMEOUT;
         if (!OTGW.sendCommand("CS", String(boilerTSet[currentBoilerLevel])))
-            TRACE(F("OTGW: CS command failed\n"));
+            WiFiSM.logEvent(F("OTGW: CS command failed\n"));
     }
 
     if ((otgwInitializeTime != 0) && (currentTime >= otgwInitializeTime))
