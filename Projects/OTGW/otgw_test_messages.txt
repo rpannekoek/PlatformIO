@@ -1,7 +1,20 @@
+== OTGW commands/responses ==
 SH:60
 SR:
 OT:
-
+CS:
+CH:
+PR=L
+PR=G
+PR=Q
+GA=3
+GB=4
+LA=F
+LB=T
+LC=B
+LD=E
+LE=H
+LF=P
 == From Thermostat ==
 T80000100 - CH on
 T00000000 - CH off

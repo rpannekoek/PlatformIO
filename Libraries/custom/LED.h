@@ -3,6 +3,14 @@
 
 #include <stdint.h>
 
+#define LED_RED 255, 0, 0
+#define LED_GREEN 0, 255, 0
+#define LED_BLUE 0, 0, 255
+#define LED_YELLOW 128, 128, 0
+#define LED_MAGENTA 128, 0, 128
+#define LED_CYAN 0, 128, 128
+#define LED_WHITE 128, 128, 128
+
 class LED
 {
     public:

@@ -44,9 +44,11 @@ constexpr float MAX_FLOW_RATE = 12.0; // l/min
 
 #ifdef DEBUG_ESP_PORT
     constexpr int OTGW_TIMEOUT = 5 * SECONDS_PER_MINUTE;
+    constexpr int OTGW_SETPOINT_OVERRIDE_TIMEOUT = 2 * SECONDS_PER_MINUTE;
     constexpr int OTGW_RESPONSE_TIMEOUT_MS = 5000;
 #else
     constexpr int OTGW_TIMEOUT = 1 * SECONDS_PER_MINUTE;
+    constexpr int OTGW_SETPOINT_OVERRIDE_TIMEOUT = 50; // seconds
     constexpr int OTGW_RESPONSE_TIMEOUT_MS = 2000;
 #endif
 
@@ -155,6 +157,7 @@ time_t currentTime = 0;
 time_t updateLogTime = 0;
 time_t otgwInitializeTime = OTGW_STARTUP_TIME;
 time_t otgwTimeout = OTGW_TIMEOUT;
+time_t otgwSetpointOverrideTime = 0;
 time_t heatmonPollTime = 0;
 time_t lastHeatmonUpdateTime = 0;
 time_t weatherServicePollTime = 0;
@@ -264,10 +267,16 @@ bool setBoilerLevel(BoilerLevel level, time_t duration)
 
     bool success;
     if (level == BoilerLevel::Off)
+    {
         success = OTGW.sendCommand("CH", "0");
+        otgwSetpointOverrideTime = 0;
+    }
     else
     {
         success = OTGW.sendCommand("CS", String(boilerTSet[level]));
+        otgwSetpointOverrideTime = (level == BoilerLevel::Thermostat) 
+            ? 0
+            : currentTime + OTGW_SETPOINT_OVERRIDE_TIMEOUT;
 
         if (success && (currentBoilerLevel == BoilerLevel::Off))
             success = OTGW.sendCommand("CH", "1");
@@ -450,6 +459,7 @@ bool trySyncOpenThermLog(Print* printTo)
 {
     Tracer tracer(F("trySyncOpenThermLog"));
 
+    BuiltinLED.setColor(LED_MAGENTA);
     if (!FTPClient.begin(
         PersistentData.ftpServer,
         PersistentData.ftpUser,
@@ -457,6 +467,7 @@ bool trySyncOpenThermLog(Print* printTo)
         FTP_DEFAULT_CONTROL_PORT,
         printTo))
     {
+        BuiltinLED.setOff();
         return false;
     }
 
@@ -485,6 +496,7 @@ bool trySyncOpenThermLog(Print* printTo)
     }
 
     FTPClient.end();
+    BuiltinLED.setOff();
 
     return success;
 }
@@ -1617,11 +1629,24 @@ void loop()
 
     if (Serial.available())
     {
-        BuiltinLED.setOn(true);
+        BuiltinLED.setColor(LED_CYAN);
         handleSerialData();
         otgwTimeout = currentTime + OTGW_TIMEOUT;
         BuiltinLED.setOff();
         return;
+    }
+
+    if (BuiltinLED.isOn())
+    {
+        if (!HeatMon.isRequestPending() && !WeatherService.isRequestPending())
+            BuiltinLED.setOff();
+    }
+    else
+    {
+        if (HeatMon.isRequestPending())
+            BuiltinLED.setColor(LED_YELLOW);
+        else if (WeatherService.isRequestPending())
+            BuiltinLED.setColor(LED_GREEN);
     }
 
     if (currentTime >= otgwTimeout)
@@ -1629,6 +1654,14 @@ void loop()
         WiFiSM.logEvent(F("OTGW Timeout"));
         resetOpenThermGateway();
         return;
+    }
+
+    if ((otgwSetpointOverrideTime != 0) && (currentTime >= otgwSetpointOverrideTime))
+    {
+        // Send CS command regularly, otherwise OTGW will revert the override.
+        otgwSetpointOverrideTime = currentTime + OTGW_SETPOINT_OVERRIDE_TIMEOUT;
+        if (!OTGW.sendCommand("CS", String(boilerTSet[currentBoilerLevel])))
+            TRACE(F("OTGW: CS command failed\n"));
     }
 
     if ((otgwInitializeTime != 0) && (currentTime >= otgwInitializeTime))
