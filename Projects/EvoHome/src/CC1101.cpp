@@ -94,9 +94,6 @@ bool CC1101::begin()
     TRACE("CC1101 config registers:\n");
     Tracer::hexDump(configRegisters, sizeof(configRegisters));
 
-    uint8_t rxBytes = readRegister(CC1101Register::RXBYTES);
-    TRACE("CC1101 RXBYTES: 0x%02X\n", rxBytes);
-
     return true;
 }
 
@@ -105,8 +102,7 @@ bool CC1101::reset()
 {
     Tracer tracer("CC1101::reset");
 
-    state_t state = strobe(CC1101Register::SRES, true); 
-    if (state < 0) return false;
+    strobe(CC1101Register::SRES); 
 
     _mode = CC1101Mode::Idle;
 
@@ -132,41 +128,13 @@ uint8_t CC1101::getAddress(CC1101Register reg, bool read, bool burst)
 }
 
 
-bool CC1101::awaitMisoLow()
+state_t CC1101::strobe(CC1101Register reg)
 {
-    for (int retries = 0; retries < 100; retries++)
-    {
-        if (digitalRead(_misoPin) == LOW) return true;
-        delayMicroseconds(1);
-    }
-
-    TRACE("CC1101: Timeout waiting for MISO to go low\n");
-    deselect();
-    return false;
-}
-
-
-bool CC1101::select(bool awaitMiso)
-{
-    digitalWrite(_csnPin, LOW);
-    return awaitMiso ? awaitMisoLow() : true;
-}
-
-
-void CC1101::deselect()
-{
-    digitalWrite(_csnPin, HIGH);
-}
-
-
-state_t CC1101::strobe(CC1101Register reg, bool awaitMiso)
-{
-    if (!select()) return -1;
+    select();
 
     uint8_t addr = getAddress(reg, false, false);
     uint8_t status = _spi.transfer(addr);
 
-    if (awaitMiso && !awaitMisoLow()) return -1;
     deselect();
 
     //TRACE("CC1101 strobe 0x%02X. Status: 0x%02X\n", addr, status);
@@ -180,7 +148,7 @@ bool CC1101::writeRegister(CC1101Register reg, uint8_t data)
     uint8_t addr = getAddress(reg, false, false);
     //TRACE("CC1101 Write 0x%02X: 0x%02X\n", addr, data);
 
-    if (!select()) return false;
+    select();
 
     _spi.transfer(addr);
     _spi.transfer(data);
@@ -195,7 +163,7 @@ bool CC1101::writeBurst(CC1101Register reg, const uint8_t* dataPtr, uint8_t size
     uint8_t addr = getAddress(reg, false, true);
     //TRACE("CC1101 Write Burst 0x%02X: %d bytes\n", addr, size);
 
-    if (!select()) return false;
+    select();
 
     _spi.transfer(addr);
     for (int i = 0; i < size; i++)
@@ -238,7 +206,7 @@ uint8_t CC1101::readRegister(CC1101Register reg)
 {
     uint8_t addr = getAddress(reg, true, false);
 
-    if (!select()) return 0;
+    select();
 
     _spi.transfer(addr);
     uint8_t result = _spi.transfer(0);
@@ -254,7 +222,7 @@ bool CC1101::readBurst(CC1101Register reg, uint8_t* dataPtr, uint8_t size)
     uint8_t addr = getAddress(reg, true, true);
     //TRACE("CC1101 Read Burst 0x%02X: %d bytes\n", addr, size);
 
-    if (!select()) return false;
+    select();
 
     _spi.transfer(addr);
     for (int i = 0; i < size; i++)

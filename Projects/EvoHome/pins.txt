@@ -1,21 +1,21 @@
-        LOLIN D2 Mini
+LOLIN S2 Mini
 
-        EN          IO39 - CSN 
-        IO3         IO37 - SCK
-        IO5         IO35 - MISO
-        IO7         IO33 - MOSI
-        IO9         IO18 - GDO2
-        IO11        IO16
-        IO12         GND
-        3V3           5V
+EN          IO39 - MOSI
+IO3         IO37 - SCK
+IO5         IO35 - MISO
+IO7         IO33 - GDO2
+IO9         IO18 - GDO0
+IO11        IO16 - CSN
+IO12         GND
+3V3           5V
 
-        CC1101 Module
+CC1101 Module
 
-        3V3
-        GND
-        MOSI
-        SCK
-        MISO
-        GDO2
-        GDO0
-        CSN
+3V3
+GND
+MOSI
+SCK
+MISO
+GDO2
+GDO0
+CSN

@@ -135,7 +135,7 @@ class CC1101
         bool attachSerial(HardwareSerial& serial);
         bool begin();
         bool reset();
-        state_t strobe(CC1101Register reg, bool awaitMiso = false);
+        state_t strobe(CC1101Register reg);
         bool writeRegister(CC1101Register reg, uint8_t data);
         bool writeBurst(CC1101Register reg, const uint8_t* dataPtr, uint8_t size);
         int writeFIFO(const uint8_t* dataPtr, uint8_t size);
@@ -159,9 +159,8 @@ class CC1101
         static const uint8_t _initConfig[];
 
         uint8_t getAddress(CC1101Register reg, bool read, bool burst);
-        bool awaitMisoLow();
-        bool select(bool awaitMiso = true);
-        void deselect();
+        inline void select() { digitalWrite(_csnPin, LOW); delayMicroseconds(100); }
+        inline void deselect() { digitalWrite(_csnPin, HIGH); }
 };
 
 #endif
