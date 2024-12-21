@@ -53,35 +53,12 @@ class WiFiStateMachine : public ILogger
         time_t getCurrentTime();
         bool shouldPerformAction(String name);
 
-        time_t inline getInitTime()
-        {
-            return _initTime;
-        }
-
-        uint32_t inline getUptime()
-        {
-            return getCurrentTime() - _initTime;
-        }
-
-        WiFiInitState inline getState()
-        {
-            return _state;
-        }
-
-        bool inline isInAccessPointMode()
-        {
-            return _isInAccessPointMode;
-        }
-
-        String inline getIPAddress()
-        {
-            return _ipAddress.toString();
-        }
-
-        bool inline isConnected()
-        {
-            return _state >= WiFiInitState::Connected;
-        }
+        time_t getInitTime() { return _initTime; }
+        uint32_t getUptime() { return getCurrentTime() - _initTime; }
+        WiFiInitState getState() { return _state; }
+        bool isInAccessPointMode() { return _isInAccessPointMode; }
+        String getIPAddress() { return _ipAddress.toString(); }
+        bool isConnected() { return _state >= WiFiInitState::Connected; }
 
         void scanAccessPoints(uint32_t intervalSeconds = 1800, uint32_t switchDelaySeconds = 0, int8_t rssiThreshold = 6)
         {
@@ -92,7 +69,8 @@ class WiFiStateMachine : public ILogger
 
     private:
         WiFiInitState _state = WiFiInitState::Booting;
-        static bool _staDisconnected;        uint32_t _reconnectInterval = 0;
+        static bool _staDisconnected;
+        uint32_t _reconnectInterval = 0;
         uint32_t _stateChangeTime = 0;
         time_t _scanAccessPointsTime = 0;
         uint32_t _scanAccessPointsInterval = 0;

@@ -5,6 +5,9 @@
 #include <WString.h>
 #include <Stream.h>
 
+constexpr int OTGW_WATCHDOG_INTERVAL = 10;
+constexpr int OTGW_STARTUP_TIME = 5;
+constexpr uint16_t DATA_VALUE_NONE = 0xFFFF;
 
 enum struct OpenThermMsgType
 {
@@ -90,18 +93,21 @@ class OpenThermGateway
         static const char* getMasterStatus(uint16_t dataValue);
         static const char* getSlaveStatus(uint16_t dataValue);
         static const char* getFaultFlags(uint16_t dataValue);
-        static float getDecimal(uint16_t dataValue);
 
-        inline const char* getResponse()
-        {
-            return _otgwMessage;
-        }
+        static float getDecimal(uint16_t dataValue);
+        static int8_t getInteger(uint16_t dataValue);
+
+        const char* getResponse() { return _otgwMessage; }
+        const char* getLastError() { return _lastError.c_str(); }
 
     private:
         Stream& _serial;
         uint8_t _resetPin;
         uint32_t _responseTimeoutMs;
         char _otgwMessage[64];
+        bool _watchdogInitialized = false;
+        String _lastError;
+
 
         bool readLine();
 };

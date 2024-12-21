@@ -45,11 +45,23 @@ bool OpenThermGateway::initWatchdog(uint8_t timeoutSeconds)
     Wire.beginTransmission(WATCHDOG_I2C_ADDRESS);
     Wire.write(6); // SettingsStruct.TimeOut
     Wire.write(timeoutSeconds);
-    if (Wire.endTransmission() != 0) return false;
+    uint8_t res = Wire.endTransmission();
+    if (res != 0) 
+    {
+        _lastError = F("endTransmission=");
+        _lastError += res;
+        return false;
+    }
+
+    _watchdogInitialized = true;
 
     // Read back SettingsStruct.TimeOut to confirm it's set properly.
-    int timeOutReg = readWatchdogData(6);
-    return timeOutReg == timeoutSeconds;
+    int timeoutReg = readWatchdogData(6);
+    if (timeoutReg == timeoutSeconds) return true;
+
+    _lastError = F("timeoutReg=");
+    _lastError = timeoutReg;
+    return false;
 }
 
 
@@ -74,6 +86,8 @@ int OpenThermGateway::readWatchdogData(uint8_t addr)
 uint8_t OpenThermGateway::feedWatchdog()
 {
     Tracer tracer(F("OpenThermGateway::feedWatchdog"));
+
+    if (!_watchdogInitialized) return 0;
 
     Wire.beginTransmission(WATCHDOG_I2C_ADDRESS);
     Wire.write(0xA5); // Reset watchdog timer
@@ -278,5 +292,17 @@ const char* OpenThermGateway::getFaultFlags(uint16_t dataValue)
 
 float OpenThermGateway::getDecimal(uint16_t dataValue)
 {
-    return float(static_cast<int16_t>(dataValue)) / 256;
+    if (dataValue == DATA_VALUE_NONE)
+        return 0;
+    else
+        return float(static_cast<int16_t>(dataValue)) / 256;
+}
+
+
+int8_t OpenThermGateway::getInteger(uint16_t dataValue)
+{
+    if (dataValue == DATA_VALUE_NONE)
+        return 0;
+    else
+        return static_cast<int8_t>(round(getDecimal(dataValue)));
 }
