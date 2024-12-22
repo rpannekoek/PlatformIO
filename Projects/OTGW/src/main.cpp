@@ -332,6 +332,8 @@ uint16_t getResponse(OpenThermDataId dataId)
     uint16_t result = otgwResponses[dataId];
     if (result == DATA_VALUE_NONE)
         result = boilerResponses[dataId];
+    if ((result == DATA_VALUE_NONE) && (dataId == OpenThermDataId::TReturn) && HeatMon.isInitialized)
+        result = HeatMon.tOut * 256;
     return result;
 }
 
@@ -711,6 +713,9 @@ void handleBoilerRequest(OpenThermGatewayMessage otFrame)
 void handleThermostatResponse(OpenThermGatewayMessage otFrame)
 {
     Tracer tracer(F("handleThermostatResponse"));
+
+    if (otFrame.msgType == OpenThermMsgType::UnknownDataId)
+        return;
 
     // Modified response from OTGW to thermostat (e.g. TOutside override)
     otgwResponses[otFrame.dataId] = otFrame.dataValue;
