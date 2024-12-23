@@ -1,26 +1,83 @@
-#include "OTGW.h"
 #include <Tracer.h>
 #include <PrintFlags.h>
+#include <TimeUtils.h>
 #include <Arduino.h>
 #include <Wire.h>
+#include "OTGW.h"
 
-#define BUFFER_SIZE 32
-#define WATCHDOG_I2C_ADDRESS 0x26
 
 // For I2C Watchdog protocol/implementation, see:
 // https://github.com/rvdbreemen/ESPEasySlaves/blob/master/TinyI2CWatchdog/TinyI2CWatchdog.ino
+constexpr int WATCHDOG_I2C_ADDRESS = 0x26;
+constexpr uint8_t WATCHDOG_TIMEOUT = 4 * SECONDS_PER_MINUTE;  // almost max possible (255)
 
 static const char* _masterStatusNames[5] = {"CH", "DHW", "Cool", "OTC", "CH2"};
 static const char* _slaveStatusNames[7] = {"Fault", "CH", "DHW", "Flame", "Cool", "CH2", "Diag"};
 static const char* _faultFlagNames[6] = {"Svc", "Lockout", "PWater", "Flame", "PAir", "TWater"};
 
 
-OpenThermGateway::OpenThermGateway(Stream& serial, uint8_t resetPin, uint32_t readTimeout)
-    : _serial(serial), _resetPin(resetPin), _responseTimeoutMs(readTimeout)
+OpenThermGateway::OpenThermGateway(Stream& serial, uint8_t resetPin)
+    :  MessageLog(OTGW_MESSAGE_LOG_LENGTH, 10), _serial(serial)
 {
+    _resetPin = resetPin;
+}
+
+
+bool OpenThermGateway::begin(uint32_t responseTimeoutMs, uint32_t setpointOverrideTimeout)
+{
+    Tracer tracer(F("OpenThermGateway::begin"));
+
+    _responseTimeoutMs = responseTimeoutMs;
+    _setpointOverrideTimeout = setpointOverrideTimeout;
+
     memset(errors, 0, sizeof(errors));
-    resets = 0;
+
     Wire.begin();
+    watchdogResets = initWatchdog(WATCHDOG_TIMEOUT) ? readWatchdogData(14) : -20;
+
+    MessageLog.begin();
+
+    pinMode(_resetPin, OUTPUT);
+    reset();
+    return true;
+}
+
+
+bool OpenThermGateway::run(time_t currentTime)
+{
+    _currentTime = currentTime;
+
+    if ((_feedWatchdogTime != 0) && (currentTime >= _feedWatchdogTime))
+    {
+        _feedWatchdogTime = currentTime + OTGW_WATCHDOG_INTERVAL;
+        uint8_t res = feedWatchdog();
+        if (res != 0) 
+        {
+            _lastError = "feedWatchdog: ";
+            _lastError += res;
+            return false;
+        }
+    }
+
+    if ((_setpointOverrideTime != 0) && (currentTime >= _setpointOverrideTime))
+    {
+        _setpointOverrideTime = currentTime + _setpointOverrideTimeout;
+        if (!sendCommand("CS", _setpointOverride)) return false;
+    }
+
+    if (_serial.available())
+    {
+        if (_ledPtr != nullptr) _ledPtr->setColor(LED_GREEN);
+        OpenThermGatewayMessage otgwMessage = readMessage();
+        MessageLog.add(otgwMessage.message.c_str());
+        if (_messageReceivedHandler != nullptr) 
+            _messageReceivedHandler(otgwMessage);
+        else
+            TRACE(F("No message received handler registered\n"));
+        if (_ledPtr != nullptr) _ledPtr->setOff();
+    }
+
+    return true;
 }
 
 
@@ -28,12 +85,11 @@ void OpenThermGateway::reset()
 {
     Tracer tracer(F("OpenThermGateway::reset"));
 
-    pinMode(_resetPin, OUTPUT);
     digitalWrite(_resetPin, LOW);
     delay(100);
     digitalWrite(_resetPin, HIGH);
-    pinMode(_resetPin, INPUT_PULLUP);
 
+    _setpointOverrideTime = 0;
     resets++;
 }
 
@@ -53,7 +109,7 @@ bool OpenThermGateway::initWatchdog(uint8_t timeoutSeconds)
         return false;
     }
 
-    _watchdogInitialized = true;
+    _feedWatchdogTime = OTGW_WATCHDOG_INTERVAL;
 
     // Read back SettingsStruct.TimeOut to confirm it's set properly.
     int timeoutReg = readWatchdogData(6);
@@ -85,9 +141,9 @@ int OpenThermGateway::readWatchdogData(uint8_t addr)
 
 uint8_t OpenThermGateway::feedWatchdog()
 {
-    Tracer tracer(F("OpenThermGateway::feedWatchdog"));
+    if (_feedWatchdogTime == 0) return 0; // Watchdog not initialized
 
-    if (!_watchdogInitialized) return 0;
+    Tracer tracer(F("OpenThermGateway::feedWatchdog"));
 
     Wire.beginTransmission(WATCHDOG_I2C_ADDRESS);
     Wire.write(0xA5); // Reset watchdog timer
@@ -202,7 +258,7 @@ OpenThermGatewayMessage OpenThermGateway::readMessage()
 }
 
 
-bool OpenThermGateway::sendCommand(String cmd, String value)
+bool OpenThermGateway::sendCommand(const String& cmd, const String& value)
 {
     Tracer tracer(F("OpenThermGateway::sendCommand"), cmd.c_str());
 
@@ -218,11 +274,31 @@ bool OpenThermGateway::sendCommand(String cmd, String value)
         uint32_t timeoutMillis = millis() + _responseTimeoutMs;
         do
         {
+            _lastError.clear();
             if (readLine())
             {
-                if (strncmp(_otgwMessage, cmd.c_str(), 2) == 0)
+                if (strlen(_otgwMessage) == 2)
+                {
+                    // 2 chars response; assume an error response
+                    _lastError = cmd;
+                    _lastError += " => ";
+                    _lastError += _otgwMessage;
+                    break;
+                }
+                else if (strncmp(_otgwMessage, cmd.c_str(), 2) == 0)
                 {
                     TRACE(F("Response: '%s'\n"), _otgwMessage);
+                    if (cmd == "CS")
+                    {
+                        _setpointOverride = value;
+                        if (value == "0")
+                            _setpointOverrideTime = 0;
+                        else
+                        {
+                            _setpointOverrideTime = _currentTime + _setpointOverrideTimeout;
+                            TRACE(F("Send override again at %s\n"), formatTime("%T", _setpointOverrideTime));
+                        }
+                    }
                     return true;
                 }
                 else
@@ -235,11 +311,19 @@ bool OpenThermGateway::sendCommand(String cmd, String value)
 
         // No proper response message is received within the given timeout.
         // Feed the OTGW watchdog and retry sending the command once more.
-        TRACE(F("Response timeout\n"));
+        if (_lastError.length() == 0)
+            TRACE(F("Response timeout\n"));
+        else
+            TRACE(F("Error: %s\n"), _lastError.c_str());
         feedWatchdog();  
     }
 
     // No proper response message is received even after a retry.
+    if (_lastError.length() == 0)
+    {
+        _lastError = cmd;
+        _lastError += " timeout";
+    }
     return false;
 }
 

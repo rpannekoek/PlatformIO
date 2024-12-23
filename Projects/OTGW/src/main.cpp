@@ -27,7 +27,6 @@
 constexpr int SET_BOILER_RETRY_INTERVAL = 6;
 constexpr int HTTP_POLL_INTERVAL = 60;
 constexpr int EVENT_LOG_LENGTH = 50;
-constexpr int OTGW_MESSAGE_LOG_LENGTH = 40;
 constexpr int OT_LOG_LENGTH = 250;
 constexpr int OT_LOG_PAGE_SIZE = 50;
 constexpr int PWM_PERIOD = 10 * SECONDS_PER_MINUTE;
@@ -128,7 +127,7 @@ const char* LogHeaders[] PROGMEM =
     "Flow"
 };
 
-OpenThermGateway OTGW(OTGW_SERIAL, OTGW_RESET_PIN, OTGW_RESPONSE_TIMEOUT_MS);
+OpenThermGateway OTGW(OTGW_SERIAL, OTGW_RESET_PIN);
 ESPWebServer WebServer(80); // Default HTTP port
 WiFiNTP TimeServer;
 WiFiFTPClient FTPClient(2000); // 2s timeout
@@ -137,7 +136,6 @@ WeatherAPI WeatherService;
 StringBuilder HttpResponse(12 * 1024); // 12KB HTTP response buffer
 HtmlWriter Html(HttpResponse, Files[FileId::Logo], Files[FileId::Styles], 40);
 StringLog EventLog(EVENT_LOG_LENGTH, 128);
-StringLog OTGWMessageLog(OTGW_MESSAGE_LOG_LENGTH, 10);
 StaticLog<OpenThermLogEntry> OpenThermLog(OT_LOG_LENGTH);
 StaticLog<StatusLogEntry> StatusLog(7); // 7 days
 WiFiStateMachine WiFiSM(BuiltinLED, TimeServer, WebServer, EventLog);
@@ -149,12 +147,10 @@ uint16_t boilerResponses[256];
 uint16_t otgwRequests[256];
 uint16_t otgwResponses[256];
 
-time_t watchdogFeedTime = 0;
 time_t currentTime = 0;
 time_t updateLogTime = 0;
 time_t otgwInitializeTime = OTGW_STARTUP_TIME;
 time_t otgwTimeout = OTGW_TIMEOUT;
-time_t otgwSetpointOverrideTime = 0;
 time_t heatmonPollTime = 0;
 time_t lastHeatmonUpdateTime = 0;
 time_t weatherServicePollTime = 0;
@@ -224,9 +220,7 @@ bool setOtgwResponse(OpenThermDataId dataId, float value)
 
     bool success = OTGW.setResponse(dataId, value); 
     if (!success)
-    {
-        WiFiSM.logEvent(F("Unable to set OTGW response for #%d"), dataId);
-    }
+        WiFiSM.logEvent(F("OTGW error: %s"), OTGW.getLastError());
 
     return success;
 }
@@ -264,16 +258,10 @@ bool setBoilerLevel(BoilerLevel level, time_t duration)
 
     bool success;
     if (level == BoilerLevel::Off)
-    {
         success = OTGW.sendCommand("CH", "0");
-        otgwSetpointOverrideTime = 0;
-    }
     else
     {
         success = OTGW.sendCommand("CS", String(boilerTSet[level]));
-        otgwSetpointOverrideTime = (level == BoilerLevel::Thermostat) 
-            ? 0
-            : currentTime + OTGW_SETPOINT_OVERRIDE_TIMEOUT;
 
         if (success && (currentBoilerLevel == BoilerLevel::Off))
             success = OTGW.sendCommand("CH", "1");
@@ -514,7 +502,7 @@ void test(String message)
         {
             char testMessage[12];
             snprintf(testMessage, sizeof(testMessage), "T%08X", i);
-            OTGWMessageLog.add(testMessage);
+            OTGW.MessageLog.add(testMessage);
         }
     }
     else if (message.startsWith("testW"))
@@ -732,12 +720,11 @@ void handleThermostatResponse(OpenThermGatewayMessage otFrame)
 }
 
 
-void handleSerialData()
+void onMessageReceived(const OpenThermGatewayMessage& otgwMessage)
 {
-    Tracer tracer(F("handleSerialData"));
+    Tracer tracer(F("onMessageReceived"), otgwMessage.message.c_str());
 
-    OpenThermGatewayMessage otgwMessage = OTGW.readMessage();
-    OTGWMessageLog.add(otgwMessage.message.c_str());
+    otgwTimeout = currentTime + OTGW_TIMEOUT;
 
     switch (otgwMessage.direction)
     {
@@ -1232,14 +1219,14 @@ void handleHttpOTGWMessageLogRequest()
 
     HttpResponse.clear();
 
-    const char* otgwMessage = OTGWMessageLog.getFirstEntry();
+    const char* otgwMessage = OTGW.MessageLog.getFirstEntry();
     while (otgwMessage != nullptr)
     {
         HttpResponse.println(otgwMessage);
-        otgwMessage = OTGWMessageLog.getNextEntry();
+        otgwMessage = OTGW.MessageLog.getNextEntry();
     }
 
-    OTGWMessageLog.clear();
+    OTGW.MessageLog.clear();
 
     WebServer.send(200, ContentTypeText, HttpResponse.c_str());
 }
@@ -1331,10 +1318,7 @@ void handleHttpCommandFormPost()
         if (OTGW.sendCommand(cmd, value))
             otgwResponse = OTGW.getResponse();
         else
-        {
-            otgwResponse = F("No valid response received. ");
-            otgwResponse += OTGW.getResponse();
-        }
+            otgwResponse = OTGW.getLastError();
     }
 
     handleHttpCommandFormRequest();
@@ -1399,6 +1383,7 @@ void onTimeServerSynced()
     updateLogTime = currentTime + 1;
     heatmonPollTime = currentTime + 10;
     weatherServicePollTime = currentTime + 15;
+    OTGW.useLED(BuiltinLED);
 }
 
 
@@ -1507,7 +1492,9 @@ void setup()
 
     BuiltinLED.begin();
     EventLog.begin(true);
-    OTGWMessageLog.begin();
+
+    OTGW.onMessageReceived(onMessageReceived);
+    OTGW.begin(OTGW_RESPONSE_TIMEOUT_MS, OTGW_SETPOINT_OVERRIDE_TIMEOUT);
 
     PersistentData.begin();
     TimeServer.begin(PersistentData.ntpServer);
@@ -1587,16 +1574,6 @@ void setup()
     WiFiSM.scanAccessPoints();
     WiFiSM.begin(PersistentData.wifiSSID, PersistentData.wifiKey, PersistentData.hostName);
 
-    /* No OTGW wachdog present on Nodo V2.11 board (?)
-    if (OTGW.initWatchdog(240)) // 4 minutes timeout (almost max possible)
-    {
-        int targetResetCount = OTGW.readWatchdogData(14);
-        WiFiSM.logEvent(F("Resets by OTGW Watchdog: %d"), targetResetCount);
-    }
-    else
-        WiFiSM.logEvent(F("OTGW Watchdog: %s"), OTGW.getLastError());
-    */
-
     if (PersistentData.heatmonHost[0] != 0)
     {
         HeatMon.begin(PersistentData.heatmonHost);
@@ -1617,38 +1594,15 @@ void loop()
 {
     currentTime = WiFiSM.getCurrentTime();
 
-    // Let WiFi State Machine handle initialization and web requests
-    // This also calls the onXXX methods below
     WiFiSM.run();
-
-    if (currentTime >= watchdogFeedTime)
-    {
-        OTGW.feedWatchdog();
-        watchdogFeedTime = currentTime + OTGW_WATCHDOG_INTERVAL;
-    }
-
-    if (OTGW_SERIAL.available())
-    {
-        if (WiFiSM.isConnected()) BuiltinLED.setColor(LED_GREEN);
-        handleSerialData();
-        otgwTimeout = currentTime + OTGW_TIMEOUT;
-        if (WiFiSM.isConnected()) BuiltinLED.setOff();
-        return;
-    }
+    if (!OTGW.run(currentTime))
+        WiFiSM.logEvent("OTGW error: %s", OTGW.getLastError());
 
     if (currentTime >= otgwTimeout)
     {
         WiFiSM.logEvent(F("OTGW Timeout"));
         resetOpenThermGateway();
         return;
-    }
-
-    if ((otgwSetpointOverrideTime != 0) && (currentTime >= otgwSetpointOverrideTime))
-    {
-        // Send CS command regularly, otherwise OTGW will revert the override.
-        otgwSetpointOverrideTime = currentTime + OTGW_SETPOINT_OVERRIDE_TIMEOUT;
-        if (!OTGW.sendCommand("CS", String(boilerTSet[currentBoilerLevel])))
-            WiFiSM.logEvent(F("OTGW: CS command failed\n"));
     }
 
     if ((otgwInitializeTime != 0) && (currentTime >= otgwInitializeTime))

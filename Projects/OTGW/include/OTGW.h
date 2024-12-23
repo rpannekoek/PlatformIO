@@ -4,9 +4,12 @@
 #include <stdint.h>
 #include <WString.h>
 #include <Stream.h>
+#include <Log.h>
+#include <LED.h>
 
 constexpr int OTGW_WATCHDOG_INTERVAL = 10;
 constexpr int OTGW_STARTUP_TIME = 5;
+constexpr int OTGW_MESSAGE_LOG_LENGTH = 40;
 constexpr uint16_t DATA_VALUE_NONE = 0xFFFF;
 
 enum struct OpenThermMsgType
@@ -78,16 +81,27 @@ class OpenThermGateway
 {
     public:
         uint32_t errors[5];
-        uint32_t resets;
+        uint32_t resets = 0;
+        int watchdogResets = 0;
+        StringLog MessageLog;
 
-        OpenThermGateway(Stream& serial, uint8_t resetPin, uint32_t responseTimeoutMs);
+        OpenThermGateway(Stream& serial, uint8_t resetPin);
 
+        void onMessageReceived(void (*handler)(const OpenThermGatewayMessage& otgwMessage))
+        {
+            _messageReceivedHandler = handler;
+        }
+
+        void useLED(LED& led)
+        {
+            _ledPtr = &led;
+        }
+
+        bool begin(uint32_t responseTimeoutMs, uint32_t setpointOverrideTimeout);
+        bool run(time_t currentTime);
         void reset();
-        bool initWatchdog(uint8_t timeoutSeconds);
-        int readWatchdogData(uint8_t addr);
         uint8_t feedWatchdog();
-        OpenThermGatewayMessage readMessage();
-        bool sendCommand(String cmd, String value);
+        bool sendCommand(const String& cmd, const String& value);
         bool setResponse(OpenThermDataId dataId, float value);
 
         static const char* getMasterStatus(uint16_t dataValue);
@@ -102,14 +116,22 @@ class OpenThermGateway
 
     private:
         Stream& _serial;
+        LED* _ledPtr = nullptr;
         uint8_t _resetPin;
         uint32_t _responseTimeoutMs;
+        uint32_t _setpointOverrideTimeout;
+        time_t _currentTime = 0;
+        time_t _feedWatchdogTime = 0;
+        time_t _setpointOverrideTime = 0;
+        String _setpointOverride;
+        void (*_messageReceivedHandler)(const OpenThermGatewayMessage& otgwMessage) = nullptr;
         char _otgwMessage[64];
-        bool _watchdogInitialized = false;
         String _lastError;
 
-
+        bool initWatchdog(uint8_t timeoutSeconds);
+        int readWatchdogData(uint8_t addr);
         bool readLine();
+        OpenThermGatewayMessage readMessage();
 };
 
 

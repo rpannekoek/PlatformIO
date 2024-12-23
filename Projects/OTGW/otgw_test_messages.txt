@@ -4,17 +4,19 @@ SR:
 OT:
 CS:
 CH:
+OE
 PR=L
 PR=G
 PR=Q
 GA=3
 GB=4
 LA=F
-LB=T
-LC=B
+LB=H
+LC=W
 LD=E
-LE=H
-LF=P
+LE=T
+LF=B
+
 == From Thermostat ==
 T80000100 - CH on
 T00000000 - CH off
