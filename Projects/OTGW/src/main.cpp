@@ -574,10 +574,26 @@ bool handleThermostatLowLoadMode(bool switchedOn)
 }
 
 
-void handleThermostatRequest(OpenThermGatewayMessage otFrame)
+bool checkInvalidStatus(const OpenThermGatewayMessage& otFrame)
+{
+    bool result = (otFrame.dataId == OpenThermDataId::Status) && (otFrame.dataValue & 0xFCF0); 
+    if (result)
+    {
+        const char* source = otFrame.direction == OpenThermGatewayDirection::FromThermostat
+            ? "thermostat"
+            : "boiler";
+        WiFiSM.logEvent(F("Invalid status from %s: 0x%04X"), source, otFrame.dataValue);
+    }
+    return result;
+}
+
+
+void handleThermostatRequest(const OpenThermGatewayMessage& otFrame)
 {
     Tracer tracer(F("handleThermostatRequest"));
     
+    if (checkInvalidStatus(otFrame)) return;
+
     if (otFrame.dataId == OpenThermDataId::Status)
     {
         bool masterCHEnable = otFrame.dataValue & OpenThermStatus::MasterCHEnable;
@@ -656,12 +672,13 @@ void handleThermostatRequest(OpenThermGatewayMessage otFrame)
 }
 
 
-void handleBoilerResponse(OpenThermGatewayMessage otFrame)
+void handleBoilerResponse(const OpenThermGatewayMessage& otFrame)
 {
     Tracer tracer(F("handleBoilerResponse"));
 
-    if (otFrame.msgType == OpenThermMsgType::UnknownDataId)
-        return;
+    if (otFrame.msgType == OpenThermMsgType::UnknownDataId) return;
+
+    if (checkInvalidStatus(otFrame)) return;
 
     if (otFrame.dataId == OpenThermDataId::Status)
     {
@@ -689,7 +706,7 @@ void handleBoilerResponse(OpenThermGatewayMessage otFrame)
 }
 
 
-void handleBoilerRequest(OpenThermGatewayMessage otFrame)
+void handleBoilerRequest(const OpenThermGatewayMessage& otFrame)
 {
     Tracer tracer(F("handleBoilerRequest"));
 
@@ -698,12 +715,11 @@ void handleBoilerRequest(OpenThermGatewayMessage otFrame)
 }
 
 
-void handleThermostatResponse(OpenThermGatewayMessage otFrame)
+void handleThermostatResponse(const OpenThermGatewayMessage& otFrame)
 {
     Tracer tracer(F("handleThermostatResponse"));
 
-    if (otFrame.msgType == OpenThermMsgType::UnknownDataId)
-        return;
+    if (otFrame.msgType == OpenThermMsgType::UnknownDataId) return;
 
     // Modified response from OTGW to thermostat (e.g. TOutside override)
     otgwResponses[otFrame.dataId] = otFrame.dataValue;
