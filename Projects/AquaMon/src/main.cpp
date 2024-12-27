@@ -915,7 +915,7 @@ void setup()
     Tracer::traceFreeHeap();
     #endif
 
-    BuiltinLED.begin());
+    BuiltinLED.begin();
 
     PersistentData.begin();
     TimeServer.NTPServer = PersistentData.ntpServer;

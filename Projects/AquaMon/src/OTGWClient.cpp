@@ -24,7 +24,7 @@ int OTGWClient::setPump(bool on, const String& reason)
     Tracer tracer(F("OTGWClient::setPump"));
 
     _urlSuffix = F("/pump?");
-    _urlSuffix += on ? F("on") : F("off");
+    _urlSuffix += on ? F("on=1") : F("off=1");
     if (reason.length() != 0)
     {
         String urlEncodedReason = reason;

@@ -139,15 +139,8 @@ class Topic
         Topic(TopicId topicId, String& value, TopicDesc& descriptor)
             : _topicId(topicId), _value(value), _descriptor(descriptor)  {}
 
-        TopicId inline getTopicId()
-        {
-            return _topicId;
-        }
-
-        String inline getValue()
-        {
-            return _value;
-        }
+        TopicId getTopicId() { return _topicId; }
+        String getValue() { return _value;}
 
         String getId();
         String getName();
@@ -166,38 +159,14 @@ class Aquarea
         // Constructor
         Aquarea();
 
-        void setZone1Offset(float offset)
-        {
-            _zone1Offset = offset;
-        }
-
-        String inline getLastError()
-        {
-            return _lastError;
-        }
-
-        uint32_t inline getValidPackets()
-        {
-            return _validPackets;
-        }
-
-        uint32_t inline getInvalidPackets()
-        {
-            return _invalidPackets;
-        }
-
-        uint32_t inline getRepairedPackets()
-        {
-            return _repairedPackets;
-        }
-
-        float inline getPacketErrorRatio()
-        {
-            return float(_invalidPackets) / (_validPackets + _invalidPackets);
-        }
+        void setZone1Offset(float offset) { _zone1Offset = offset; }
+        String getLastError() { return _lastError; }
+        uint32_t getValidPackets() { return _validPackets; }
+        uint32_t getInvalidPackets() { return _invalidPackets; }
+        uint32_t getRepairedPackets() { return _repairedPackets; }
+        float getPacketErrorRatio() { return float(_invalidPackets) / (_validPackets + _invalidPackets);}
 
         static std::vector<TopicId> getAllTopicIds();
-
         Topic getTopic(TopicId id);
 
         bool begin();

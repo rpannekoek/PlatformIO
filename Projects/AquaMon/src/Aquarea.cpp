@@ -101,7 +101,7 @@ String getPumpFlow(uint8_t* dataPtr)
 
 String getModel(uint8_t* dataPtr)
 {
-    for (int i = 0 ; i < sizeof(_knownModels) / sizeof(_knownModels[0]) ; i++)
+    for (size_t i = 0 ; i < sizeof(_knownModels) / sizeof(_knownModels[0]) ; i++)
     {
         if (memcmp_P(dataPtr, _knownModels[i], 10) == 0)
         {
@@ -609,7 +609,7 @@ bool Aquarea::readPacket()
     // Some kind of response is received; allow next command to be sent.
     _commandSentMillis = 0; 
 
-    size_t bytesRead;
+    int bytesRead;
     if (_debugOutputOnSerial && (header.magic == 't'))
     {
         // Test packet for debug purposes
@@ -776,7 +776,7 @@ size_t Aquarea::readHexBytes(uint8_t* bufferPtr, size_t count)
     char hexDigits[3];
     hexDigits[2] = 0;
 
-    for (int i = 0; i < count; i++)
+    for (size_t i = 0; i < count; i++)
     {
         if (Serial.readBytes((uint8_t*)hexDigits, 2) != 2)
         {
