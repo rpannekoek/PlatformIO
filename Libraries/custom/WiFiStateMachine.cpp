@@ -85,7 +85,6 @@ void WiFiStateMachine::begin(String ssid, String password, String hostName, uint
 #if (ESP_ARDUINO_VERSION_MAJOR == 2)
     esp_task_wdt_init(TASK_WDT_TIMEOUT, true);
 #else
-    /* Task WDT is already initialized
     esp_task_wdt_config_t wdtConfig = 
     {
         .timeout_ms = TASK_WDT_TIMEOUT * 1000,
@@ -93,7 +92,6 @@ void WiFiStateMachine::begin(String ssid, String password, String hostName, uint
         .trigger_panic = true
     };
     esp_task_wdt_reconfigure(&wdtConfig);
-    */
 #endif
     enableLoopWDT();
 #endif

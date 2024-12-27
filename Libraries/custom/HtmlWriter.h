@@ -8,7 +8,7 @@ class HtmlWriter
 {
     public:
         // Constructor
-        HtmlWriter(StringBuilder& output, PGM_P icon, PGM_P css, size_t maxBarLength);
+        HtmlWriter(StringBuilder& output, PGM_P icon, PGM_P css, size_t maxBarLength = 50);
 
         void setTitlePrefix(const String& prefix);
 
