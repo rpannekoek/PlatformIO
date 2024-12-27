@@ -84,7 +84,8 @@ void onPacketReceived(const RAMSES2Packet* packetPtr)
     if ((currentTime / SECONDS_PER_DAY) > (lastPacketReceivedTime / SECONDS_PER_DAY))
     {
         PacketStats.resetRSSI();
-        WiFiSM.logEvent("Reset RSSI stats");
+        EvoHome.resetZoneStatistics();
+        WiFiSM.logEvent("Reset stats");
     }
     lastPacketReceivedTime = currentTime;
 
@@ -358,6 +359,27 @@ void handleHttpZoneDataLogRequest()
 
     WebServer.sendContent(HttpResponse.c_str(), HttpResponse.length());
     WebServer.sendContent("");
+}
+
+
+void handleHttpPacketStatsRequest()
+{
+    Tracer tracer("handleHttpPacketStatsRequest");
+
+    Html.writeHeader("Packet statistics", Nav);
+
+    if (WiFiSM.shouldPerformAction("clear"))
+    {
+        PacketStats.clear();
+        Html.writeParagraph("Packet statistics cleared.");
+    }
+
+    PacketStats.writeHtmlTable(Html);
+
+    Html.writeActionLink("clear", "Clear statistics", currentTime, ButtonClass);
+    Html.writeFooter();
+
+    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 
@@ -686,8 +708,8 @@ void handleHttpRootRequest()
     EvoHome.writeDeviceInfo(Html);
     Html.writeSectionEnd();
 
-    Html.writeSectionStart("Packet statistics");
-    PacketStats.writeHtmlTable(Html);
+    Html.writeSectionStart("Zone statistics");
+    EvoHome.writeZoneStatistics(Html);
     Html.writeSectionEnd();
 
     Html.writeDivEnd();
@@ -874,6 +896,13 @@ void setup()
         },
         MenuItem
         {
+            .icon = Files[LogFileIcon],
+            .label = PSTR("Event log"),
+            .urlPath =PSTR("events"),
+            .handler = handleHttpEventLogRequest
+        },
+        MenuItem
+        {
             .icon = Files[GraphIcon],
             .label = PSTR("Zone data log"),
             .urlPath =PSTR("zonelog"),
@@ -881,10 +910,24 @@ void setup()
         },
         MenuItem
         {
+            .icon = Files[UploadIcon],
+            .label = PSTR("FTP Sync"),
+            .urlPath = PSTR("sync"),
+            .handler= handleHttpSyncFTPRequest
+        },
+        MenuItem
+        {
             .icon = Files[BinaryIcon],
             .label = PSTR("Packet log"),
             .urlPath =PSTR("packets"),
             .handler = handleHttpPacketLogRequest
+        },
+        MenuItem
+        {
+            .icon = Files[BinaryIcon],
+            .label = PSTR("Packet stats"),
+            .urlPath =PSTR("packetstats"),
+            .handler = handleHttpPacketStatsRequest
         },
         MenuItem
         {
@@ -900,20 +943,6 @@ void setup()
             .urlPath =PSTR("send"),
             .handler = handleHttpSendPacketRequest,
             .postHandler = handleHttpSendPacketPost
-        },
-        MenuItem
-        {
-            .icon = Files[LogFileIcon],
-            .label = PSTR("Event log"),
-            .urlPath =PSTR("events"),
-            .handler = handleHttpEventLogRequest
-        },
-        MenuItem
-        {
-            .icon = Files[UploadIcon],
-            .label = PSTR("FTP Sync"),
-            .urlPath = PSTR("sync"),
-            .handler= handleHttpSyncFTPRequest
         },
         MenuItem
         {

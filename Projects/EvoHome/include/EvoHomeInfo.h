@@ -6,6 +6,7 @@
 constexpr size_t EVOHOME_MAX_ZONES = 8;
 constexpr size_t EVOHOME_LOG_SIZE = 200;
 constexpr time_t OVERRIDE_TIMEOUT = SECONDS_PER_HOUR;
+constexpr float ON_THRESHOLD = 17.5;
 
 struct ZoneData
 {
@@ -13,6 +14,10 @@ struct ZoneData
     float override = -1;
     float temperature = -1;
     float heatDemand = -1;
+
+    float effectiveSetpoint() const { return (override >= 0) ? override : setpoint; }
+    bool isOn() const { return effectiveSetpoint() >= ON_THRESHOLD; }
+    float deviation() const { return abs(temperature - effectiveSetpoint()); }
 
     bool equals(const ZoneData& other) const
     {
@@ -112,6 +117,16 @@ struct ZoneInfo
     std::vector<DeviceInfo*> devices;
     ZoneData current;
     time_t overrideTime = 0;
+    time_t lastSetpointUpdate = 0;
+    time_t lastOn = 0;
+    time_t lastOff = 0;
+    uint32_t duration = 0;
+    uint32_t deviationCount = 0;
+    float deviationSum = 0;
+    float minTemperature = 666;
+    float maxTemperature = 0;
+
+    float getAvgDeviation() { return (deviationCount == 0) ? 0.0F : deviationSum / deviationCount; }
 
     ZoneInfo(uint8_t domaindId, const String& name)
     {
@@ -125,6 +140,58 @@ struct ZoneInfo
             if (device->address == deviceInfoPtr->address) return; // Device already attached
         devices.push_back(deviceInfoPtr);
         deviceInfoPtr->domainId = domainId;
+    }
+
+    void newSetpoint(float setpoint, time_t time)
+    {
+        if (setpoint >= ON_THRESHOLD)
+        {
+            if (!current.isOn())
+                lastOn = time;
+            else
+                duration += time - lastSetpointUpdate;
+        }
+        else if (current.setpoint >= ON_THRESHOLD)
+            lastOff = time;
+        lastSetpointUpdate = time;
+
+        current.setpoint = setpoint;
+        if ((current.override >= 0) && (time >= overrideTime + OVERRIDE_TIMEOUT))
+            current.override = -1;
+    }
+
+    void newOverride(float setpoint, time_t time)
+    {
+        if (setpoint >= ON_THRESHOLD)
+        {
+            if (!current.isOn())
+                lastOn = time;
+            else
+                duration += time - lastSetpointUpdate;
+        }
+        else if (current.isOn())
+            lastOff = time;
+        lastSetpointUpdate = time;
+
+        if (abs(setpoint - current.setpoint) >= 0.1)
+        {
+            current.override = setpoint;
+            overrideTime = time;
+        }
+        else
+            current.override = -1;
+    }
+
+    void newTemperature(float temperature)
+    {
+        current.temperature = temperature;
+        if (current.isOn())
+        {
+            deviationSum += current.deviation(); 
+            deviationCount++;
+        }
+        minTemperature = std::min(minTemperature, temperature);
+        maxTemperature = std::max(maxTemperature, temperature);
     }
 
     void writeCurrentValues(HtmlWriter& html)
@@ -159,6 +226,30 @@ struct ZoneInfo
                 html.writeCell(batteryLevel, F("%0.0f %%"));
             html.writeRowEnd();
         }
+    }
+
+    void writeStatistics(HtmlWriter& html)
+    {
+        html.writeRowStart();
+        html.writeCell(name);
+        html.writeCell(formatTime("%H:%M", lastOn));
+        html.writeCell(formatTime("%H:%M", lastOff));
+        html.writeCell(formatTimeSpan(duration, true));
+        html.writeCell("%0.1f °C", getAvgDeviation());
+        html.writeCell("%0.1f °C", minTemperature);
+        html.writeCell("%0.1f °C", maxTemperature);
+        html.writeRowEnd();
+    }
+
+    void resetStatistics()
+    {
+        // Don't reset lastOff
+        lastOn = 0;
+        duration = 0;
+        deviationCount = 0;
+        deviationSum = 0;
+        minTemperature = 666;
+        maxTemperature = 0;
     }
 };
 
@@ -255,6 +346,32 @@ class EvoHomeInfo
             html.writeTableEnd();
         }
 
+        void writeZoneStatistics(HtmlWriter& html)
+        {
+            html.writeTableStart();
+            html.writeRowStart();
+            html.writeHeaderCell("Zone");
+            html.writeHeaderCell("Last on");
+            html.writeHeaderCell("Last off");
+            html.writeHeaderCell("Duration");
+            html.writeHeaderCell("ΔT");
+            html.writeHeaderCell("T<sub>min</sub>");
+            html.writeHeaderCell("T<sub>max</sub>");
+            html.writeRowEnd();
+            for (auto const& [zoneId, zoneInfoPtr] : _zoneInfoById)
+            {
+                if (zoneInfoPtr->lastSetpointUpdate != 0)
+                    zoneInfoPtr->writeStatistics(html);
+            }
+            html.writeTableEnd();
+        }
+
+        void resetZoneStatistics()
+        {
+            for (auto const& [zoneId, zoneInfoPtr] : _zoneInfoById)
+                zoneInfoPtr->resetStatistics();
+        }
+
         bool writeZoneDataLogCsv(Print& output)
         {
             if (zoneDataLogEntriesToSync == 0) return false;
@@ -321,14 +438,9 @@ class EvoHomeInfo
                 if (opcode == RAMSES2Opcode::ZoneSetpoint)
                 {
                     zoneInfoPtr = getZoneInfo(payloadPtr->getDomainId(0));
+                    zoneInfoPtr->newOverride(payloadPtr->getTemperature(0), time);
                     ZoneData* zoneDataPtr = getZoneData(zoneInfoPtr->domainId);
-                    float setpoint = payloadPtr->getTemperature(0);
-                    if (abs(setpoint - zoneInfoPtr->current.setpoint) >= 0.1)
-                        zoneInfoPtr->overrideTime = time;
-                    else
-                        setpoint = -1;
-                    zoneInfoPtr->current.override = setpoint;
-                    if (zoneDataPtr != nullptr) zoneDataPtr->override = setpoint;
+                    if (zoneDataPtr != nullptr) zoneDataPtr->override = zoneInfoPtr->current.override;
                 }
                 return zoneInfoPtr;
             }
@@ -341,18 +453,16 @@ class EvoHomeInfo
                 float temperature = payloadPtr->getTemperature(i);
                 if (opcode == RAMSES2Opcode::ZoneSetpoint)
                 {
-                    zoneInfoPtr->current.setpoint = temperature;
-                    if (zoneDataPtr != nullptr) zoneDataPtr->setpoint = temperature;
-                    if ((zoneInfoPtr->current.override >= 0)
-                        && (time >= zoneInfoPtr->overrideTime + OVERRIDE_TIMEOUT))
+                    zoneInfoPtr->newSetpoint(temperature, time);
+                    if (zoneDataPtr != nullptr)
                     {
-                        zoneInfoPtr->current.override = -1;
-                        if (zoneDataPtr != nullptr) zoneDataPtr->override = -1;
-                    }
+                        zoneDataPtr->setpoint = temperature;
+                        zoneDataPtr->override = zoneInfoPtr->current.override;
+                    } 
                 }
                 else
                 {
-                    zoneInfoPtr->current.temperature = temperature;
+                    zoneInfoPtr->newTemperature(temperature);
                     if (zoneDataPtr != nullptr) zoneDataPtr->temperature = temperature;
                 }
             }

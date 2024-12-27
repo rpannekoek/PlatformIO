@@ -126,6 +126,12 @@ class PacketStatsClass
                 statsPtr->resetRSSI();
         }
 
+        void clear()
+        {
+            opcodes.clear();
+            statsByAddress.clear();
+        }
+
     private:
         std::vector<RAMSES2Opcode> opcodes;
         std::map<RAMSES2Address, AddressStats*> statsByAddress;
