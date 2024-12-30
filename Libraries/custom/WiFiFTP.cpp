@@ -3,11 +3,15 @@
 #include <ESPWifi.h>
 
 
-WiFiFTPClient::WiFiFTPClient(int timeout)
+WiFiFTPClient::WiFiFTPClient(int timeoutMs)
 {
-    _timeout = timeout;
-    _controlClient.setTimeout(timeout);
-    _dataClient.setTimeout(timeout);
+    _timeoutMs = timeoutMs;
+#if (ESP_ARDUINO_VERSION_MAJOR > 2)
+    _controlClient.setConnectionTimeout(timeoutMs);
+    _dataClient.setConnectionTimeout(timeoutMs);
+#endif
+    _controlClient.setTimeout(timeoutMs);
+    _dataClient.setTimeout(timeoutMs);
 
     _responseBuffer[0] = 0;
     _lastError[0] = 0;
@@ -19,6 +23,8 @@ bool WiFiFTPClient::begin(const char* host, const char* userName, const char* pa
     Tracer Tracer(F("WiFiFTPClient::begin"), host);
 
     _printPtr = printTo;
+    _startMillis = millis();
+    _durationMs = 0;
 
     if (!_controlClient.connect(host, port))
     {
@@ -55,6 +61,9 @@ void WiFiFTPClient::end()
         _controlClient.stop();
     }
 
+    _durationMs = millis() - _startMillis;
+    TRACE(F("Duration: %u ms\n"), _durationMs);
+
     _printPtr = nullptr;
 }
 
@@ -68,6 +77,8 @@ void WiFiFTPClient::setLastError(String format, ...)
     va_end(args);
 
     TRACE("ERROR: %s\n", _lastError);
+
+    if (_asyncState != AsyncFTPState::Idle) setAsyncState(AsyncFTPState::Error);
 }
 
 
@@ -77,9 +88,9 @@ void WiFiFTPClient::setUnexpectedResponse(const char* response)
         response = _responseBuffer;
 
     if (response[0] == 0)
-        setLastError(F("No response for '%s'"), _lastCommand.c_str());
+        setLastError(F("Timeout for %s"), _lastCommand.c_str());
     else
-        setLastError(F("Unexpected for '%s': %s"), _lastCommand.c_str(), response);
+        setLastError(F("%s => %s"), _lastCommand.c_str(), response);
 }
 
 
@@ -88,7 +99,7 @@ bool WiFiFTPClient::initialize(const char* userName, const char* password)
     Tracer Tracer(F("WiFiFTPClient::initialize"), userName);
 
     // Retrieve server welcome message
-    _lastCommand = F("[Connect]");
+    _lastCommand = F("connect");
     int responseCode = readServerResponse();
     bool success = (responseCode >= 200) && (responseCode < 300);
     if (!success)
@@ -124,7 +135,13 @@ bool WiFiFTPClient::passive()
         setUnexpectedResponse();
         return false;
     }
-    
+
+    return parsePassiveResult();   
+}
+
+
+bool WiFiFTPClient::parsePassiveResult()
+{
     // Parse server data port
     int params[6];
     strtok(_responseBuffer, "(");
@@ -180,7 +197,7 @@ int WiFiFTPClient::readServerResponse(char* responseBuffer, size_t responseBuffe
     {
         delay(10);
         waitedMs += 10;
-        if (waitedMs >= _timeout)
+        if (waitedMs >= _timeoutMs)
         {
             TRACE(F("Timeout\n"));
             responseBuffer[0] = 0;
@@ -190,7 +207,7 @@ int WiFiFTPClient::readServerResponse(char* responseBuffer, size_t responseBuffe
 
     size_t bytesRead = _controlClient.readBytesUntil('\n', responseBuffer, responseBufferSize - 1);
     responseBuffer[bytesRead] = 0;
-    TRACE(F("Response: '%s'\n"), responseBuffer);
+    TRACE(F("Response: %s\n"), responseBuffer);
 
     if (_printPtr != nullptr)
         _printPtr->print(responseBuffer);
@@ -220,16 +237,18 @@ WiFiClient& WiFiFTPClient::getDataClient()
 }
 
 
-WiFiClient& WiFiFTPClient::store(const char* filename)
+WiFiClient& WiFiFTPClient::store(String filename)
 {
-    Tracer tracer(F("WiFiFTPClient::store"), filename);
+    Tracer tracer(F("WiFiFTPClient::store"), filename.c_str());
 
-    sendCommand(F("STOR"), filename, false);
+    sendCommand(F("STOR"), filename.c_str(), false);
 
     WiFiClient& dataClient = getDataClient();
     if (dataClient.connected())
     {
-        if (readServerResponse() != 150)
+        if (readServerResponse() == 150)
+            _lastCommand = F("upload");
+        else
         {
             setUnexpectedResponse();
             dataClient.stop();
@@ -240,16 +259,18 @@ WiFiClient& WiFiFTPClient::store(const char* filename)
 }
 
 
-WiFiClient& WiFiFTPClient::append(const char* filename)
+WiFiClient& WiFiFTPClient::append(String filename)
 {
-    Tracer tracer(F("WiFiFTPClient::append"), filename);
+    Tracer tracer(F("WiFiFTPClient::append"), filename.c_str());
 
-    sendCommand(F("APPE"), filename, false);
+    sendCommand(F("APPE"), filename.c_str(), false);
 
     WiFiClient& dataClient = getDataClient();
     if (dataClient.connected())
     {
-        if (readServerResponse() != 150)
+        if (readServerResponse() == 150)
+            _lastCommand = F("upload");
+        else
         {
             setUnexpectedResponse();
             dataClient.stop();
@@ -257,4 +278,179 @@ WiFiClient& WiFiFTPClient::append(const char* filename)
     }
 
     return dataClient;
+}
+
+
+void WiFiFTPClient::setAsyncState(AsyncFTPState state)
+{
+    uint32_t currentMillis = millis();
+    TRACE(F("WiFiFTPClient::setAsyncState(%d) +%u ms\n"), state, currentMillis - _asyncStateChangeMillis);
+    _asyncStateChangeMillis = currentMillis;
+    _asyncState = state;
+}
+
+
+void WiFiFTPClient::beginAsync(const char* host, const char* userName, const char* password, uint16_t port, Print* printTo)
+{
+    Tracer tracer(F("WiFiFTPClient::beginAsync"), host);
+
+    _host = host;
+    _userName = userName;
+    _password = password;
+    _port = port;
+    _printPtr = printTo;
+
+    _lastCommand.clear();
+    _asyncCommands.clear();
+    _startMillis = millis();
+    _durationMs = 0;
+    _asyncState = AsyncFTPState::Idle;
+    _asyncStateChangeMillis = _startMillis;
+}
+
+
+void WiFiFTPClient::appendAsync(String filename, std::function<void(Print&)> dataWriter)
+{
+    Tracer tracer(F("WiFiFTPClient::appendAsync"), filename.c_str());
+
+    AsyncFTPCommand asyncCommand
+    {
+        .arg = filename,
+        .execute = nullptr,
+        .dataWriter = dataWriter
+    };
+    asyncCommand.execute = std::bind(&WiFiFTPClient::append, this, asyncCommand.arg),
+    _asyncCommands.push_back(asyncCommand);
+
+    if (_asyncState == AsyncFTPState::Idle) setAsyncState(AsyncFTPState::Connect);
+}
+
+
+bool WiFiFTPClient::run()
+{
+    Tracer tracer(F("WiFiFTPClient::run"));
+
+    while (!runAsync()) delay(10);
+    
+    bool success = _asyncState == AsyncFTPState::Done;
+    endAsync();
+
+    return success;
+}
+
+
+bool WiFiFTPClient::runAsync()
+{
+    int responseCode;
+
+    switch (_asyncState)
+    {
+        case AsyncFTPState::Idle:
+        case AsyncFTPState::Done:
+        case AsyncFTPState::Error:
+            break; // Nothing to do
+
+        case AsyncFTPState::Connect:
+            if (_controlClient.connect(_host, _port))
+                setAsyncState(AsyncFTPState::Welcome);
+            else
+                setLastError(F("Cannot connect to %s:%d"), _host, _port);
+            break;
+
+        case AsyncFTPState::Welcome:
+            // Retrieve server welcome message
+            responseCode = readServerResponse();
+            if ((responseCode >= 200) && (responseCode < 300))
+            {
+                sendCommand(F("USER"), _userName, false);
+                setAsyncState(AsyncFTPState::User);
+            }
+            else
+                setUnexpectedResponse();
+            break;
+
+        case AsyncFTPState::User:
+            responseCode = readServerResponse();
+            if (responseCode == 230)
+            {
+                // No password required.
+                sendCommand(F("PASV"), nullptr, false);
+                setAsyncState(AsyncFTPState::Passive);
+            }
+            else if (responseCode == 331)
+            {
+                // User name OK, password required.
+                sendCommand(F("PASS"), _password, false);
+                setAsyncState(AsyncFTPState::Password);
+            }
+            else
+                setUnexpectedResponse();
+            break;
+
+        case AsyncFTPState::Password:
+            responseCode = readServerResponse();
+            if (responseCode == 230)
+            {
+                sendCommand(F("PASV"), nullptr, false);
+                setAsyncState(AsyncFTPState::Passive);
+            }
+            else
+                setUnexpectedResponse();
+            break;
+
+        case AsyncFTPState::Passive:
+            responseCode = readServerResponse();
+            if (responseCode == 227)
+            {
+                if (parsePassiveResult())
+                {
+                    if (_asyncCommands.size() == 0)
+                        setAsyncState(AsyncFTPState::End);
+                    else   
+                        setAsyncState(AsyncFTPState::ExecCommand);
+                }
+            }
+            else
+                setUnexpectedResponse();
+            break;
+
+        case AsyncFTPState::ExecCommand:
+        {
+            AsyncFTPCommand& asyncCommand = _asyncCommands.front();
+            WiFiClient& dataClient = asyncCommand.execute();
+            if (dataClient.connected())
+            {
+                asyncCommand.dataWriter(dataClient);
+                dataClient.stop();
+                setAsyncState(AsyncFTPState::FinishCommand);
+            }
+            else
+                setAsyncState(AsyncFTPState::Error);
+            _asyncCommands.pop_front();
+            break;
+        }
+
+        case AsyncFTPState::FinishCommand:
+            responseCode = readServerResponse();
+            if (responseCode == 226)
+            {
+                if (_asyncCommands.size() == 0)
+                    setAsyncState(AsyncFTPState::End);
+                else
+                {
+                    sendCommand(F("PASV"), nullptr, false);
+                    setAsyncState(AsyncFTPState::Passive);
+                }                        
+            }
+            else
+                setUnexpectedResponse();
+            break;
+
+        case AsyncFTPState::End:
+            end();
+            setAsyncState(AsyncFTPState::Done);
+            break;
+    }
+
+    return _asyncState >= AsyncFTPState::Done;
 }

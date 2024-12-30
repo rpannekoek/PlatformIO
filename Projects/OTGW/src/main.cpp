@@ -130,7 +130,7 @@ const char* LogHeaders[] PROGMEM =
 OpenThermGateway OTGW(OTGW_SERIAL, OTGW_RESET_PIN);
 ESPWebServer WebServer(80); // Default HTTP port
 WiFiNTP TimeServer;
-WiFiFTPClient FTPClient(2000); // 2s timeout
+WiFiFTPClient FTPClient(3000); // 3s timeout
 HeatMonClient HeatMon;
 WeatherAPI WeatherService;
 StringBuilder HttpResponse(12 * 1024); // 12KB HTTP response buffer
@@ -172,8 +172,8 @@ OpenThermLogEntry* lastOTLogEntryPtr = nullptr;
 StatusLogEntry* lastStatusLogEntryPtr = nullptr;
 
 uint16_t otLogEntriesToSync = 0;
-time_t otLogSyncTime = 0;
-time_t lastOTLogSyncTime = 0;
+time_t syncFTPTime = 0;
+time_t lastFTPSyncTime = 0;
 
 BoilerLevel currentBoilerLevel = BoilerLevel::Thermostat;
 BoilerLevel changeBoilerLevel;
@@ -378,7 +378,7 @@ void logOpenThermValues(bool forceCreate)
         lastOTLogEntryPtr = OpenThermLog.add(&newOTLogEntry);
         otLogEntriesToSync = std::min(otLogEntriesToSync + 1, OT_LOG_LENGTH);
         if (PersistentData.isFTPEnabled() && otLogEntriesToSync == PersistentData.ftpSyncEntries)
-            otLogSyncTime = currentTime;
+            syncFTPTime = currentTime;
     }
 }
 
@@ -424,51 +424,39 @@ void writeCsvDataLines(OpenThermLogEntry* otLogEntryPtr, OpenThermLogEntry* prev
 }
 
 
-bool trySyncOpenThermLog(Print* printTo)
+bool trySyncFTP(Print* printTo)
 {
-    Tracer tracer(F("trySyncOpenThermLog"));
+    Tracer tracer(F("trySyncFTP"));
 
-    BuiltinLED.setColor(LED_MAGENTA);
-    if (!FTPClient.begin(
+    FTPClient.beginAsync(
         PersistentData.ftpServer,
         PersistentData.ftpUser,
         PersistentData.ftpPassword,
         FTP_DEFAULT_CONTROL_PORT,
-        printTo))
-    {
-        BuiltinLED.setOff();
-        return false;
-    }
+        printTo);
 
-    bool success = false;
-    char filename[64];
-    snprintf(filename, sizeof(filename), "%s.csv", PersistentData.hostName);
-    WiFiClient& dataClient = FTPClient.append(filename);
-    if (dataClient.connected())
+    auto otLogWriter = [printTo](Print& output)
     {
         if (otLogEntriesToSync > 0)
         {
             OpenThermLogEntry* prevLogEntryPtr = OpenThermLog.getEntryFromEnd(otLogEntriesToSync + 1);
             OpenThermLogEntry* otLogEntryPtr = OpenThermLog.getEntryFromEnd(otLogEntriesToSync);
-            writeCsvDataLines(otLogEntryPtr, prevLogEntryPtr, dataClient);
+            writeCsvDataLines(otLogEntryPtr, prevLogEntryPtr, output);
             otLogEntriesToSync = 0;
         }
         else if (printTo != nullptr)
             printTo->println(F("Nothing to sync."));
-        dataClient.stop();
+    };
 
-        if (FTPClient.readServerResponse() == 226)
-        {
-            lastOTLogSyncTime = currentTime;
-            success = true;
-        }
-        else
-            FTPClient.setUnexpectedResponse();
-    }
+    String filename = PersistentData.hostName;
+    filename += ".csv";
+    FTPClient.appendAsync(filename, otLogWriter);
 
-    FTPClient.end();
-    BuiltinLED.setOff();
+   if (printTo == nullptr) return true; // Run async
 
+    // Run synchronously
+    bool success = FTPClient.run();
+    if (success) lastFTPSyncTime = currentTime;
     return success;
 }
 
@@ -949,10 +937,10 @@ void handleHttpRootRequest()
     String ftpSyncTime;
     if (!PersistentData.isFTPEnabled())
         ftpSyncTime = F("Disabled");
-    else if (lastOTLogSyncTime == 0)
+    else if (lastFTPSyncTime == 0)
         ftpSyncTime = F("Not yet");
     else
-        ftpSyncTime = formatTime("%H:%M", lastOTLogSyncTime);
+        ftpSyncTime = formatTime("%H:%M", lastFTPSyncTime);
 
     Html.writeHeader(F("Home"), Nav, HTTP_POLL_INTERVAL);
 
@@ -1191,9 +1179,9 @@ void handleHttpOpenThermLogRequest()
 }
 
 
-void handleHttpOpenThermLogSyncRequest()
+void handleHttpFTPSyncRequest()
 {
-    Tracer tracer(F("handleHttpOpenThermLogSyncRequest"));
+    Tracer tracer(F("handleHttpFTPSyncRequest"));
 
     Html.writeHeader(F("FTP Sync"), Nav);
 
@@ -1203,13 +1191,13 @@ void handleHttpOpenThermLogSyncRequest()
         PersistentData.ftpServer);
 
     Html.writePreStart();
-    bool success = trySyncOpenThermLog(&HttpResponse);
+    bool success = trySyncFTP(&HttpResponse);
     Html.writePreEnd(); 
 
     if (success)
     {
-        Html.writeParagraph(F("Success!"));
-        otLogSyncTime = 0; // Cancel scheduled sync (if any)
+        Html.writeParagraph(F("Success! Duration: %u ms"), FTPClient.getDurationMs());
+        syncFTPTime = 0; // Cancel scheduled sync (if any)
     }
     else
         Html.writeParagraph(F("Failed: %s"), FTPClient.getLastError());
@@ -1414,7 +1402,7 @@ void onWiFiInitialized()
 {
     if (BuiltinLED.isOn())
     {
-        if (!HeatMon.isRequestPending() && !WeatherService.isRequestPending())
+        if (!HeatMon.isRequestPending() && !WeatherService.isRequestPending() && !FTPClient.isAsyncPending())
             BuiltinLED.setOff();
     }
     else
@@ -1423,6 +1411,8 @@ void onWiFiInitialized()
             BuiltinLED.setColor(LED_YELLOW);
         else if (WeatherService.isRequestPending())
             BuiltinLED.setColor(LED_CYAN);
+        else if (FTPClient.isAsyncPending())
+            BuiltinLED.setColor(LED_MAGENTA);
     }
 
     if (currentTime >= updateLogTime)
@@ -1478,17 +1468,28 @@ void onWiFiInitialized()
         }
     }
 
-    if ((otLogSyncTime != 0) && (currentTime >= otLogSyncTime))
+    if (!WiFiSM.isConnected()) return;
+
+    if ((syncFTPTime != 0) && (currentTime >= syncFTPTime))
     {
-        if (trySyncOpenThermLog(nullptr))
+        trySyncFTP(nullptr); // Start async FTP
+        syncFTPTime = 0;
+    }
+    else
+    {
+        if (FTPClient.runAsync())
         {
-            WiFiSM.logEvent(F("FTP sync"));
-            otLogSyncTime = 0;
-        }
-        else
-        {
-            WiFiSM.logEvent(F("FTP sync failed: %s"), FTPClient.getLastError());
-            otLogSyncTime = currentTime + FTP_RETRY_INTERVAL;
+            if (FTPClient.isAsyncSuccess())
+            {
+                WiFiSM.logEvent("FTP sync");
+                lastFTPSyncTime = currentTime;
+            }
+            else
+            {
+                WiFiSM.logEvent("FTP sync failed: %s", FTPClient.getLastError());
+                syncFTPTime = currentTime + FTP_RETRY_INTERVAL;
+            }
+            FTPClient.endAsync();
         }
     }
 }
@@ -1557,7 +1558,7 @@ void setup()
             .icon = Files[FileId::Upload],
             .label = PSTR("FTP Sync"),
             .urlPath = PSTR("sync"),
-            .handler = handleHttpOpenThermLogSyncRequest            
+            .handler = handleHttpFTPSyncRequest            
         },
         MenuItem
         {

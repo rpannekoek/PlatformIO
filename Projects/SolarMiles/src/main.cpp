@@ -20,9 +20,6 @@
 #include "PowerLog.h"
 #include "SmartHome.h"
 
-#define YELLOW 192,192,0
-#define CYAN 0,128,128
-
 enum FileId
 {
     Logo,
@@ -506,104 +503,69 @@ bool trySyncFTP(Print* printTo)
 {
     Tracer tracer("trySyncFTP");
 
-    if (!FTPClient.begin(
+    FTPClient.beginAsync(
         PersistentData.ftpServer,
         PersistentData.ftpUser,
         PersistentData.ftpPassword,
         FTP_DEFAULT_CONTROL_PORT,
-        printTo))
-    {
-        FTPClient.end();
-        return false;
-    }
+        printTo);
 
-    char filename[64];
-    snprintf(filename, sizeof(filename), "%s_Power.csv", PersistentData.hostName);
-    bool success = false;
-    WiFiClient& dataClient = FTPClient.append(filename);
-    if (dataClient.connected())
+    auto powerLogWriter = [printTo](Print& output)
     {
         if (powerLogEntriesToSync != 0)
         {
-            writePowerLogEntriesCsv(dataClient);
+            writePowerLogEntriesCsv(output);
             powerLogEntriesToSync = 0;
         }
         else if (printTo != nullptr)
             printTo->println("Nothing to sync.");
-        dataClient.stop();
+    };
 
-        if (FTPClient.readServerResponse() == 226)
-        {
-            lastFTPSyncTime = currentTime;
-            success = true;
-        }
-        else
-            FTPClient.setUnexpectedResponse();
-    }
+    String filename = PersistentData.hostName;
+    filename += "_Power.csv";
+    FTPClient.appendAsync(filename, powerLogWriter);
 
-    if (success && ftpSyncEnergy)
+    if (ftpSyncEnergy)
     {
         EnergyLogEntry* energyLogEntryPtr = TotalEnergyLog.getYesterdayLogEntry();
         if (energyLogEntryPtr != nullptr)
         {
-            if (FTPClient.passive())
+            auto energyLogWriter = [energyLogEntryPtr](Print& output)
             {
-                snprintf(filename, sizeof(filename), "%s_TotalEnergy.csv", PersistentData.hostName);
-                WiFiClient& dataClient = FTPClient.append(filename);
-                if (dataClient.connected())
-                {
-                    dataClient.printf(
-                        "\"%s\",%0.1f,%0.0f,%0.2f\r\n",
-                        formatTime("%F", energyLogEntryPtr->time),
-                        float(energyLogEntryPtr->onDuration) / SECONDS_PER_HOUR,
-                        energyLogEntryPtr->maxPower,
-                        energyLogEntryPtr->energy / 1000
-                        );
-                    dataClient.stop();
-                }
-                if (FTPClient.readServerResponse() == 226)
-                {
-                    lastFTPSyncTime = currentTime;
-                    ftpSyncEnergy = false;
-                }
-                else
-                {
-                    FTPClient.setUnexpectedResponse();
-                    success = false;                
-                }
-            }
-            else
-                success = false;
+                output.printf(
+                    "\"%s\",%0.1f,%0.0f,%0.2f\r\n",
+                    formatTime("%F", energyLogEntryPtr->time),
+                    float(energyLogEntryPtr->onDuration) / SECONDS_PER_HOUR,
+                    energyLogEntryPtr->maxPower,
+                    energyLogEntryPtr->energy / 1000
+                    );
+                ftpSyncEnergy = false;
+            };
+
+            filename = PersistentData.hostName;
+            filename += "_TotalEnergy.csv";
+            FTPClient.appendAsync(filename, energyLogWriter);
         }
     }
 
-    if (success && SmartHome.logEntriesToSync != 0)
+    if (SmartHome.logEntriesToSync != 0)
     {
-        if (FTPClient.passive())
+        auto smartHomeEnergyLogWriter = [](Print& output)
         {
-            snprintf(filename, sizeof(filename), "%s_SmartHome.csv", PersistentData.hostName);
-            WiFiClient& dataClient = FTPClient.append(filename);
-            if (dataClient.connected())
-            {
-                SmartHome.writeEnergyLogCsv(dataClient);
-                dataClient.stop();
-            }
-            if (FTPClient.readServerResponse() == 226)
-            {
-                lastFTPSyncTime = currentTime;
-                SmartHome.logEntriesToSync = 0;
-            }
-            else
-            {
-                FTPClient.setUnexpectedResponse();
-                success = false;                
-            }
-        }
-        else
-            success = false;
+            SmartHome.writeEnergyLogCsv(output);
+            SmartHome.logEntriesToSync = 0;
+        };
+
+        filename = PersistentData.hostName;
+        filename += "_SmartHome.csv";
+        FTPClient.appendAsync(filename, smartHomeEnergyLogWriter);
     }
 
-    FTPClient.end();
+   if (printTo == nullptr) return true; // Run async
+
+    // Run synchronously
+    bool success = FTPClient.run();
+    if (success) lastFTPSyncTime = currentTime;
     return success;
 }
 
@@ -641,7 +603,7 @@ void onWiFiInitialized()
 
     if (currentTime >= pollInvertersTime)
     {
-        BuiltinLED.setColor(YELLOW);
+        BuiltinLED.setColor(LED_YELLOW);
         if (pollInverters())
             pollInterval = POLL_INTERVAL_DAY;
         else if (pollInterval < POLL_INTERVAL_NIGHT)
@@ -655,25 +617,39 @@ void onWiFiInitialized()
         delay(100); // Ensure LED blink is visible
         BuiltinLED.setOff();
     }
-    else if (SmartHome.isAwaiting() && !BuiltinLED.isOn())
-        BuiltinLED.setColor(CYAN);
-    else if (!SmartHome.isAwaiting() && BuiltinLED.isOn())
-        BuiltinLED.setOff();
+
+    if (BuiltinLED.isOn())
+    {
+        if (!SmartHome.isAwaiting() && !FTPClient.isAsyncPending())
+            BuiltinLED.setOff();
+    }
+    else if (SmartHome.isAwaiting())
+        BuiltinLED.setColor(LED_CYAN);
+    else if (FTPClient.isAsyncPending())
+        BuiltinLED.setColor(LED_MAGENTA);
 
     if (SmartHome.logEntriesToSync != 0 && syncFTPTime == 0)
         syncFTPTime = currentTime + FTP_RETRY_INTERVAL; // Prevent FTP sync shortly after eachother
 
-    if ((syncFTPTime != 0) && (currentTime >= syncFTPTime) && WiFiSM.isConnected())
+    if (!WiFiSM.isConnected()) return;
+
+    if ((syncFTPTime != 0) && (currentTime >= syncFTPTime))
     {
-        if (trySyncFTP(nullptr))
+        trySyncFTP(nullptr); // Start async FTP
+        syncFTPTime = 0;
+    }
+    else
+    {
+        if (FTPClient.runAsync())
         {
-            WiFiSM.logEvent("FTP sync");
-            syncFTPTime = 0;
-        }
-        else
-        {
-            WiFiSM.logEvent("FTP sync failed: %s", FTPClient.getLastError());
-            syncFTPTime += FTP_RETRY_INTERVAL;
+            if (FTPClient.isAsyncSuccess())
+                WiFiSM.logEvent("FTP sync");
+            else
+            {
+                WiFiSM.logEvent("FTP sync failed: %s", FTPClient.getLastError());
+                syncFTPTime = currentTime + FTP_RETRY_INTERVAL;
+            }
+            FTPClient.endAsync();
         }
     }
 }
@@ -1055,7 +1031,7 @@ void handleHttpSyncFTPRequest()
 
     if (success)
     {
-        Html.writeParagraph("Success!");
+        Html.writeParagraph("Success! Duration: %u ms", FTPClient.getDurationMs());
         syncFTPTime = 0; // Cancel scheduled sync (if any)
     }
     else

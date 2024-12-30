@@ -108,77 +108,50 @@ void onPacketReceived(const RAMSES2Packet* packetPtr)
 }
 
 
-void printPacketLog(Print& output, const char* timeFormat = nullptr, const RAMSES2Packet* firstPacketPtr = nullptr)
-{
-    const RAMSES2Packet* packetPtr = firstPacketPtr;
-    if (packetPtr == nullptr)
-        packetPtr = PacketLog.getFirstEntry();
-
-    while (packetPtr != nullptr)
-    {
-        packetPtr->print(output, timeFormat);
-        packetPtr = PacketLog.getNextEntry();
-    }
-}
-
-
 bool trySyncFTP(Print* printTo)
 {
     Tracer tracer("trySyncFTP");
 
-    if (!FTPClient.begin(
+    FTPClient.beginAsync(
         PersistentData.ftpServer,
         PersistentData.ftpUser,
         PersistentData.ftpPassword,
         FTP_DEFAULT_CONTROL_PORT,
-        printTo))
-    {
-        FTPClient.end();
-        return false;
-    }
+        printTo);
 
-    char filename[64];
-    snprintf(filename, sizeof(filename), "%s.csv", PersistentData.hostName);
-    bool success = false;
-    WiFiClient& dataClient = FTPClient.append(filename);
-    if (dataClient.connected())
+    auto zoneDataLogWriter = [printTo](Print& output)
     {
-        if (!EvoHome.writeZoneDataLogCsv(dataClient) && (printTo != nullptr))
+        if (!EvoHome.writeZoneDataLogCsv(output) && (printTo != nullptr))
             printTo->println("Nothing to sync.");
-        dataClient.stop();
+    };
 
-        if (FTPClient.readServerResponse() == 226)
-        {
-            lastFTPSyncTime = currentTime;
-            success = true;
-        }
-        else
-            FTPClient.setUnexpectedResponse();
-    }
+    String filename = PersistentData.hostName;
+    filename += ".csv";
+    FTPClient.appendAsync(filename, zoneDataLogWriter);
 
-    if (success && PersistentData.ftpSyncPacketLog && (packetLogEntriesToSync != 0))
+    if (PersistentData.ftpSyncPacketLog && (packetLogEntriesToSync != 0))
     {
-        if (FTPClient.passive())
+        auto packetLogWriter = [](Print& output)
         {
-            snprintf(filename, sizeof(filename), "%s_Packets.log", PersistentData.hostName);
-            WiFiClient& dataClient = FTPClient.append(filename);
-            if (dataClient.connected())
+            const RAMSES2Packet* packetPtr = PacketLog.getFirstEntry();
+            while (packetPtr != nullptr)
             {
-                const RAMSES2Packet* firstPacketPtr = PacketLog.getEntryFromEnd(packetLogEntriesToSync);
-                printPacketLog(dataClient, "%F %T", firstPacketPtr);
-                packetLogEntriesToSync = 0;
-                dataClient.stop();
-
-                if (FTPClient.readServerResponse() != 226)
-                {
-                    FTPClient.setUnexpectedResponse();
-                    success = false;
-                }
+                packetPtr->print(output, "%F %T");
+                packetPtr = PacketLog.getNextEntry();
             }
-        }
+            packetLogEntriesToSync = 0;
+        };
+
+        filename = PersistentData.hostName;
+        filename += "_Packets.log";
+        FTPClient.appendAsync(filename, packetLogWriter);
     }
 
-    FTPClient.end();
+   if (printTo == nullptr) return true; // Run async
+
+    // Run synchronously
+    bool success = FTPClient.run();
+    if (success) lastFTPSyncTime = currentTime;
     return success;
 }
 
@@ -196,17 +169,28 @@ void onTimeServerSynced()
 
 void onWiFiInitialized()
 {
-    if ((syncFTPTime != 0) && (currentTime >= syncFTPTime) && WiFiSM.isConnected())
+    if (!WiFiSM.isConnected()) return;
+
+    if ((syncFTPTime != 0) && (currentTime >= syncFTPTime))
     {
-        if (trySyncFTP(nullptr))
+        trySyncFTP(nullptr); // Start async FTP
+        syncFTPTime = 0;
+    }
+    else
+    {
+        if (FTPClient.runAsync())
         {
-            WiFiSM.logEvent("FTP sync");
-            syncFTPTime = 0;
-        }
-        else
-        {
-            WiFiSM.logEvent("FTP sync failed: %s", FTPClient.getLastError());
-            syncFTPTime += FTP_RETRY_INTERVAL;
+            if (FTPClient.isAsyncSuccess())
+            {
+                WiFiSM.logEvent("FTP sync");
+                lastFTPSyncTime = currentTime;
+            }
+            else
+            {
+                WiFiSM.logEvent("FTP sync failed: %s", FTPClient.getLastError());
+                syncFTPTime = currentTime + FTP_RETRY_INTERVAL;
+            }
+            FTPClient.endAsync();
         }
     }
 }
@@ -224,7 +208,7 @@ void handleHttpSyncFTPRequest()
 
     if (success)
     {
-        Html.writeParagraph("Success!");
+        Html.writeParagraph("Success! Duration: %u ms", FTPClient.getDurationMs());
         syncFTPTime = 0; // Cancel scheduled sync (if any)
     }
     else

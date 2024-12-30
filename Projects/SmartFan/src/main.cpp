@@ -112,7 +112,7 @@ bool initializeIAQSensor()
     IAQSensor.setTPH(BME68X_OS_4X, BME68X_OS_4X, BME68X_OS_8X);
 
     TRACE(
-        "BME measure duration: %0.1f us\n",
+        "BME measure duration: %0.1f ms\n",
         float(IAQSensor.getMeasDur(BME68X_FORCED_MODE)) / 1000);
 
     const bme68xHeatrConf& heaterConf = IAQSensor.getHeaterConfiguration();
@@ -129,6 +129,7 @@ bool initializeIAQSensor()
 
 void updateIAQSensorValues()
 {
+    // HumidityBaseline uses integers; store humidity * 10 to have one decimal resolution.
     HumidityBaseline.addValue(roundf(IAQData.humidity * 10));
     float avgHumidity = HumidityBaseline.getAverage() / 10;
 
@@ -204,42 +205,34 @@ bool trySyncFTP(Print* printTo)
 {
     Tracer tracer("trySyncFTP");
 
-    if (!FTPClient.begin(
+    FTPClient.beginAsync(
         PersistentData.ftpServer,
         PersistentData.ftpUser,
         PersistentData.ftpPassword,
         FTP_DEFAULT_CONTROL_PORT,
-        printTo))
-    {
-        FTPClient.end();
-        return false;
-    }
+        printTo);
 
-    char filename[64];
-    snprintf(filename, sizeof(filename), "%s.csv", PersistentData.hostName);
-    bool success = false;
-    WiFiClient& dataClient = FTPClient.append(filename);
-    if (dataClient.connected())
+    auto dataWriter = [printTo](Print& output)
     {
         if (fanLogEntriesToSync != 0)
         {
-            writeFanLogCsv(dataClient, fanLogEntriesToSync);
+            writeFanLogCsv(output, fanLogEntriesToSync);
             fanLogEntriesToSync = 0;
         }
         else if (printTo != nullptr)
             printTo->println("Nothing to sync.");
-        dataClient.stop();
+        return true;
+    };
 
-        if (FTPClient.readServerResponse() == 226)
-        {
-            lastFTPSyncTime = currentTime;
-            success = true;
-        }
-        else
-            FTPClient.setUnexpectedResponse();
-    }
+    String filename = PersistentData.hostName;
+    filename += ".csv";
+    FTPClient.appendAsync(filename, dataWriter);
 
-    FTPClient.end();
+   if (printTo == nullptr) return true; // Run async
+
+    // Run synchronously
+    bool success = FTPClient.run();
+    if (success) lastFTPSyncTime = currentTime;
     return success;
 }
 
@@ -271,18 +264,26 @@ void onWiFiInitialized()
         BuiltinLED.setOff();
     }
 
-    if ((syncFTPTime != 0) && (currentTime >= syncFTPTime) && WiFiSM.isConnected())
+    if (!WiFiSM.isConnected()) return;
+
+    if ((syncFTPTime != 0) && (currentTime >= syncFTPTime))
     {
-        if (trySyncFTP(nullptr))
+        trySyncFTP(nullptr); // Start async FTP
+        syncFTPTime = 0;
+    }
+    else if (FTPClient.runAsync())
+    {
+        if (FTPClient.isAsyncSuccess())
         {
             WiFiSM.logEvent("FTP sync");
-            syncFTPTime = 0;
+            lastFTPSyncTime = currentTime;
         }
         else
         {
             WiFiSM.logEvent("FTP sync failed: %s", FTPClient.getLastError());
             syncFTPTime = currentTime + FTP_RETRY_INTERVAL;
         }
+        FTPClient.endAsync();
     }
 }
 
@@ -299,7 +300,7 @@ void handleHttpSyncFTPRequest()
 
     if (success)
     {
-        Html.writeParagraph("Success!");
+        Html.writeParagraph("Success! Duration: %u ms", FTPClient.getDurationMs());
         syncFTPTime = 0; // Cancel scheduled sync (if any)
     }
     else
@@ -552,6 +553,11 @@ void handleSerialRequest()
         IAQData.temperature = 20.11;
         IAQData.pressure = 101311;
         updateIAQSensorValues();
+    }
+    else if (cmd.startsWith("testFTP"))
+    {
+        // Force async FTP
+        syncFTPTime = currentTime;
     }
 }
 
