@@ -991,7 +991,7 @@ void handleHttpRootRequest()
     Html.writeRow("WiFi RSSI", "%d dBm", static_cast<int>(WiFi.RSSI()));
     Html.writeRow("Free Heap", "%0.1f kB", float(ESP.getFreeHeap()) / 1024);
     Html.writeRow("Uptime", "%0.1f days", float(WiFiSM.getUptime()) / SECONDS_PER_DAY);
-    Html.writeRow("Next poll", "%d s", pollInvertersTime - currentTime);
+    Html.writeRow("Next poll", "%lld s", pollInvertersTime - currentTime);
     Html.writeRow("FTP Sync", ftpSync);
     Html.writeRow("Sync Entries", "%d / %d", powerLogEntriesToSync, PersistentData.ftpSyncEntries);
     Html.writeTableEnd();
