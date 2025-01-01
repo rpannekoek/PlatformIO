@@ -1,7 +1,7 @@
 #ifdef ESP8266
     #include <ESP8266WebServer.h>
-    #define ESPWebServer ESP8266WebServer
+    typedef ESP8266WebServer ESPWebServer;
 #else
     #include <WebServer.h>
-    #define ESPWebServer WebServer
+    typedef WebServer ESPWebServer;
 #endif

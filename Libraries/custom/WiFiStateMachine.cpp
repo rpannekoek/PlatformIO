@@ -609,27 +609,20 @@ String WiFiStateMachine::getResetReason()
 #ifdef ESP8266
     return ESP.getResetReason();
 #else
-    String result;
-    switch (rtc_get_reset_reason(0))
+    switch (esp_reset_reason())
     {
-        case 1  : result = "Power on reset"; break;
-        case 3  : result = "Software reset"; break;
-        case 4  : result = "Legacy watch dog reset"; break;
-        case 5  : result = "Deep Sleep reset"; break;
-        case 6  : result = "Reset by SLC module"; break;
-        case 7  : result = "Timer Group 0 Watch dog reset"; break;
-        case 8  : result = "Timer Group 1 Watch dog reset"; break;
-        case 9  : result = "RTC Watch dog reset"; break;
-        case 10 : result = "Instrusion tested to reset CPU"; break;
-        case 11 : result = "Time Group reset CPU"; break;
-        case 12 : result = "Software reset CPU"; break;
-        case 13 : result = "RTC Watch dog Reset CPU"; break;
-        case 14 : result = "APP CPU reset by PRO CPU"; break;
-        case 15 : result = "Brownout (voltage is not stable)"; break;
-        case 16 : result = "RTC Watch dog reset digital core and rtc module"; break;
-        default : result = "Unknown";
+        case ESP_RST_POWERON: return "power on reset";
+        case ESP_RST_EXT: return "external pin reset";
+        case ESP_RST_SW: return "software reset";
+        case ESP_RST_PANIC: return "exception/panic reset";
+        case ESP_RST_INT_WDT: return "interrupt watchdog reset";
+        case ESP_RST_TASK_WDT: return "task watchdog reset";
+        case ESP_RST_WDT: return "watchdog reset";
+        case ESP_RST_DEEPSLEEP: return "exiting deep sleep";
+        case ESP_RST_BROWNOUT: return "brownout reset";
+        case ESP_RST_SDIO: return "SDIO reset";
+        default: return "unknown reset";
     }
-    return result;
 #endif
 }
 
