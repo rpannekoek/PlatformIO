@@ -198,6 +198,15 @@ void initBoilerLevels()
 }
 
 
+void resetOtgwTraffic()
+{
+    memset(thermostatRequests, 0xFF, sizeof(thermostatRequests));
+    memset(boilerResponses, 0xFF, sizeof(boilerResponses));
+    memset(otgwRequests, 0xFF, sizeof(otgwRequests));
+    memset(otgwResponses, 0xFF, sizeof(otgwResponses));
+}
+
+
 void resetOpenThermGateway()
 {
     Tracer tracer(F("resetOpenThermGateway"));
@@ -320,8 +329,6 @@ uint16_t getResponse(OpenThermDataId dataId)
     uint16_t result = otgwResponses[dataId];
     if (result == DATA_VALUE_NONE)
         result = boilerResponses[dataId];
-    if ((result == DATA_VALUE_NONE) && (dataId == OpenThermDataId::TReturn) && HeatMon.isInitialized)
-        result = HeatMon.tOut * 256;
     return result;
 }
 
@@ -365,12 +372,14 @@ void logOpenThermValues(bool forceCreate)
     newOTLogEntry.boilerRelModulation = boilerResponses[OpenThermDataId::RelModulation];
     newOTLogEntry.tBoiler = boilerResponses[OpenThermDataId::TBoiler];
     newOTLogEntry.tReturn = getResponse(OpenThermDataId::TReturn);
+    if (newOTLogEntry.tReturn == DATA_VALUE_NONE || newOTLogEntry.tReturn == 0)
+        newOTLogEntry.tReturn = HeatMon.tOut * 256;
     newOTLogEntry.tBuffer = getResponse(OpenThermDataId::Tdhw);
     newOTLogEntry.tOutside = getResponse(OpenThermDataId::TOutside);
     newOTLogEntry.pressure = boilerResponses[OpenThermDataId::Pressure];
-    newOTLogEntry.flowRate = boilerResponses[OpenThermDataId::DHWFlowRate] != 0
-        ? boilerResponses[OpenThermDataId::DHWFlowRate]
-        : (HeatMon.flowRate * 256);
+    newOTLogEntry.flowRate = boilerResponses[OpenThermDataId::DHWFlowRate];
+    if (newOTLogEntry.flowRate == 0)
+        newOTLogEntry.flowRate = HeatMon.flowRate * 256;
     newOTLogEntry.pHeatPump = HeatMon.pIn * 256;
 
     if ((lastOTLogEntryPtr == nullptr) || !newOTLogEntry.equals(lastOTLogEntryPtr) || forceCreate)
@@ -1518,10 +1527,7 @@ void setup()
     Html.setTitlePrefix(PersistentData.hostName);
     initBoilerLevels();
 
-    memset(thermostatRequests, 0xFF, sizeof(thermostatRequests));
-    memset(boilerResponses, 0xFF, sizeof(boilerResponses));
-    memset(otgwRequests, 0xFF, sizeof(otgwRequests));
-    memset(otgwResponses, 0xFF, sizeof(otgwResponses));
+    resetOtgwTraffic();
 
     Nav.width = F("12em");
     Nav.menuItems =
