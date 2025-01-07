@@ -60,13 +60,13 @@ RGBLED BuiltinLED(LED_BUILTIN);
 ESPWebServer WebServer(80); // Default HTTP port
 WiFiNTP TimeServer;
 WiFiFTPClient FTPClient(FTP_TIMEOUT_MS);
-StringBuilder HttpResponse(12 * 1024);
+StringBuilder HttpResponse(HTTP_RESPONSE_BUFFER_SIZE);
 HtmlWriter Html(HttpResponse, Files[Logo], Files[Styles], MAX_BAR_LENGTH);
 StringLog EventLog(MAX_EVENT_LOG_SIZE, 128);
 WiFiStateMachine WiFiSM(BuiltinLED, TimeServer, WebServer, EventLog);
 Navigation Nav;
 SPIClass NRFSPI;
-SmartHomeClass SmartHome(WiFiSM);
+SmartHomeClass SmartHome(WiFiSM, SMARTHOME_ENERGY_LOG_SIZE);
 
 StaticLog<PowerLogEntry> PowerLog(POWER_LOG_SIZE);
 PowerLogEntry* lastPowerLogEntryPtr = nullptr;
@@ -589,7 +589,7 @@ void onTimeServerSynced()
         if (PersistentData.smartThingsPAT[0] != 0)
             SmartHome.useSmartThings(PersistentData.smartThingsPAT);
 
-        if (!SmartHome.begin(PersistentData.powerThreshold, PersistentData.idleDelay, 10))
+        if (!SmartHome.begin(PersistentData.powerThreshold, PersistentData.idleDelay, SMARTHOME_POLL_INTERVAL))
             WiFiSM.logEvent("Unable to initialize SmartHome");
     }
 }
@@ -643,7 +643,10 @@ void onWiFiInitialized()
         if (FTPClient.runAsync())
         {
             if (FTPClient.isAsyncSuccess())
+            {
                 WiFiSM.logEvent("FTP sync");
+                lastFTPSyncTime = currentTime;
+            }
             else
             {
                 WiFiSM.logEvent("FTP sync failed: %s", FTPClient.getLastError());

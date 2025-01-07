@@ -124,10 +124,8 @@ class StaticLog
             delete[] _entries;
         }
 
-        uint16_t count()
-        {
-            return _count;
-        }
+        int size() { return _size; }
+        uint16_t count() { return _count; }
 
         void clear()
         {

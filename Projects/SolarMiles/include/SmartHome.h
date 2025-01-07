@@ -5,7 +5,6 @@
 #include <HtmlWriter.h>
 #include "SmartThings.h"
 
-constexpr int SH_ENERGY_LOG_SIZE = 20;
 constexpr uint32_t SH_RETRY_DELAY_MS = 5000;
 
 enum struct SmartDeviceState
@@ -128,8 +127,8 @@ class SmartHomeClass
         StaticLog<SmartDeviceEnergyLogEntry> energyLog;
         int logEntriesToSync = 0;
 
-        SmartHomeClass(ILogger& logger)
-            : energyLog(SH_ENERGY_LOG_SIZE), _logger(logger)
+        SmartHomeClass(ILogger& logger, uint16_t energyLogSize)
+            : energyLog(energyLogSize), _logger(logger)
         {}
 
         SmartHomeState getState() { return _state; }

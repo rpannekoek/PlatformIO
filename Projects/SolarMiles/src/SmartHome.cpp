@@ -177,7 +177,7 @@ void SmartHomeClass::writeHtml(HtmlWriter& html)
     html.writeHeaderCell("Duration");
     html.writeHeaderCell("P<sub>max</sub> (W)");
     html.writeHeaderCell("P<sub>avg</sub> (W)");
-    html.writeHeaderCell("Energy (Wh)");
+    html.writeHeaderCell("E (Wh)");
     html.writeRowEnd();
     SmartDeviceEnergyLogEntry* logEntryPtr = energyLog.getFirstEntry();
     while (logEntryPtr != nullptr)
@@ -402,7 +402,7 @@ bool SmartHomeClass::updateDevice()
         if (smartDevicePtr->energyLogEntry.energyDelta >= 1.0F)
         {
             energyLog.add(&smartDevicePtr->energyLogEntry);
-            logEntriesToSync = std::min(logEntriesToSync + 1, SH_ENERGY_LOG_SIZE);
+            logEntriesToSync = std::min(logEntriesToSync + 1, energyLog.size());
         }
     }
     return true;

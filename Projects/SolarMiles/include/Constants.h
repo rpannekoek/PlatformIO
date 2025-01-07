@@ -6,6 +6,11 @@
 constexpr int DEBUG_BAUDRATE = 115200;
 const char* DEFAULT_DTU_SERIAL = "199990100000";
 
+constexpr size_t HTTP_RESPONSE_BUFFER_SIZE = 12 * 1024;
+
+constexpr uint32_t SMARTHOME_POLL_INTERVAL = 6;
+constexpr uint16_t SMARTHOME_ENERGY_LOG_SIZE = 50;
+
 constexpr size_t MAX_REGISTERED_INVERTERS = 4;
 constexpr size_t MAX_DC_CHANNELS_PER_INVERTER = 4;
 constexpr size_t MAX_INVERTER_NAME_LENGTH = 16;
