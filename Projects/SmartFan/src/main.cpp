@@ -395,7 +395,7 @@ void handleHttpCalibrateFormRequest()
 {
     Tracer tracer("handleHttpCalibrateFormRequest");
 
-    uint8_t level = WebServer.hasArg("level") ? WebServer.arg("level").toInt() : 50;
+    int8_t level = WebServer.hasArg("level") ? WebServer.arg("level").toInt() : 50;
 
     calibrateUntil = currentTime + CALIBRATE_TIME + SECONDS_PER_MINUTE;
     FanControl.setLevel(level, CALIBRATE_TIME);

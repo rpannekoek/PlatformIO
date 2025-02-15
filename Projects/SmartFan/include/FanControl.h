@@ -18,7 +18,7 @@ class FanControlClass
             _adcPin = adcPin;
         }
 
-        uint8_t getLevel() { return _level; }
+        int8_t getLevel() { return _level; }
         time_t keepLevelUntil() { return _keepLevelUntil; }
         float getVoltage() { return getAdcMilliVolts() / _adcScale; }
 
@@ -38,7 +38,7 @@ class FanControlClass
             adcScale = _adcScale;
         }
 
-        bool setLevel(uint8_t percentage, uint32_t duration = 0)
+        bool setLevel(int8_t percentage, uint32_t duration = 0)
         {
             TRACE("FanControlClass::setLevel(%d, %d)\n", percentage, duration);
 
@@ -54,7 +54,9 @@ class FanControlClass
             }
 
             _level = percentage;
-            _dacValue = std::min((0.095F * percentage + 0.5F) * _dacScale, 255.0F);
+            _dacValue = (percentage >= 0)
+                ? std::min((0.095F * percentage + 0.5F) * _dacScale, 255.0F)
+                : 0;
             TRACE("DAC=%d\n", _dacValue);
             return dacWrite(_dacPin, _dacValue);
         }
@@ -76,7 +78,7 @@ class FanControlClass
     private:
         uint8_t _dacPin;
         uint8_t _adcPin;
-        uint8_t _level;
+        int8_t _level;
         uint8_t _dacValue;
         float _dacScale;
         float _adcScale;
