@@ -6,7 +6,7 @@ class OTGWClient : public RESTClient
         String boilerLevel;
 
         // Constructor
-        OTGWClient(uint16_t timeout = 10);
+        OTGWClient(uint16_t timeout = 10) : RESTClient(timeout) {}
 
         bool begin(const char* host);
         int setPump(bool on, const String& reason = "");
@@ -15,5 +15,5 @@ class OTGWClient : public RESTClient
     protected:
         String _urlSuffix;
 
-        virtual bool parseResponse(const JsonDocument& response);
+        virtual bool parseResponse(const JsonDocument& response) override;
 };

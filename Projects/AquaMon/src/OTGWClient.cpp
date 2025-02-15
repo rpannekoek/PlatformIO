@@ -1,12 +1,6 @@
 #include "OTGWClient.h"
 #include <Tracer.h>
 
-// Constructor
-OTGWClient::OTGWClient(uint16_t timeout)
-    : RESTClient(timeout, new DynamicJsonDocument(64))
-{
-}
-
 
 bool OTGWClient::begin(const char* host)
 {
