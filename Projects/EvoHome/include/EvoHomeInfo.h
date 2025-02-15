@@ -17,7 +17,7 @@ struct ZoneData
 
     float effectiveSetpoint() const { return (override >= 0) ? override : setpoint; }
     bool isOn() const { return effectiveSetpoint() >= ON_THRESHOLD; }
-    float deviation() const { return abs(temperature - effectiveSetpoint()); }
+    float deviation() const { return temperature - effectiveSetpoint(); }
 
     bool equals(const ZoneData& other) const
     {
@@ -118,15 +118,13 @@ struct ZoneInfo
     ZoneData current;
     time_t overrideTime = 0;
     time_t lastSetpointUpdate = 0;
+    time_t lastTemperatureUpdate = 0;
     time_t lastOn = 0;
     time_t lastOff = 0;
     uint32_t duration = 0;
-    uint32_t deviationCount = 0;
-    float deviationSum = 0;
+    float deviationHours = 0;
     float minTemperature = 666;
     float maxTemperature = 0;
-
-    float getAvgDeviation() { return (deviationCount == 0) ? 0.0F : deviationSum / deviationCount; }
 
     ZoneInfo(uint8_t domaindId, const String& name)
     {
@@ -147,7 +145,11 @@ struct ZoneInfo
         if (setpoint >= ON_THRESHOLD)
         {
             if (!current.isOn())
+            {
                 lastOn = time;
+                deviationHours = 0;
+                lastTemperatureUpdate = time;
+            }
             else
                 duration += time - lastSetpointUpdate;
         }
@@ -182,13 +184,13 @@ struct ZoneInfo
             current.override = -1;
     }
 
-    void newTemperature(float temperature)
+    void newTemperature(float temperature, time_t time)
     {
         current.temperature = temperature;
         if (current.isOn())
         {
-            deviationSum += current.deviation(); 
-            deviationCount++;
+            deviationHours += current.deviation() * (time - lastTemperatureUpdate) / SECONDS_PER_HOUR;
+            lastTemperatureUpdate = time;
         }
         minTemperature = std::min(minTemperature, temperature);
         maxTemperature = std::max(maxTemperature, temperature);
@@ -235,7 +237,7 @@ struct ZoneInfo
         html.writeCell(formatTime("%H:%M", lastOn));
         html.writeCell(formatTime("%H:%M", lastOff));
         html.writeCell(formatTimeSpan(duration, true));
-        html.writeCell("%0.1f °C", getAvgDeviation());
+        html.writeCell("%0.2f Kh", deviationHours);
         html.writeCell("%0.1f °C", minTemperature);
         html.writeCell("%0.1f °C", maxTemperature);
         html.writeRowEnd();
@@ -246,10 +248,20 @@ struct ZoneInfo
         // Don't reset lastOff
         lastOn = 0;
         duration = 0;
-        deviationCount = 0;
-        deviationSum = 0;
+        deviationHours = 0;
         minTemperature = 666;
         maxTemperature = 0;
+    }
+
+    void writeJson(Print& output)
+    {
+        output.printf("{ \"setpoint\": %0.1f, ", current.setpoint);
+        if (current.override >= 0)
+            output.printf("\"override\": %0.1f, ", current.override);
+        output.printf("\"actual\": %0.1f, ", current.temperature);
+        if (current.heatDemand >= 0)
+            output.printf("\"heatDemand\": %0.0f, ", current.heatDemand);
+        output.printf("\"deviationHours\": %0.2f }", deviationHours);
     }
 };
 
@@ -354,7 +366,7 @@ class EvoHomeInfo
             html.writeHeaderCell("Last on");
             html.writeHeaderCell("Last off");
             html.writeHeaderCell("Duration");
-            html.writeHeaderCell("ΔT");
+            html.writeHeaderCell("Error");
             html.writeHeaderCell("T<sub>min</sub>");
             html.writeHeaderCell("T<sub>max</sub>");
             html.writeRowEnd();
@@ -370,6 +382,22 @@ class EvoHomeInfo
         {
             for (auto const& [zoneId, zoneInfoPtr] : _zoneInfoById)
                 zoneInfoPtr->resetStatistics();
+        }
+
+        void writeZoneInfoJson(Print& output)
+        {
+            output.print("[ ");
+            bool first = true;
+            for (auto const& [zoneId, zoneInfoPtr] : _zoneInfoById)
+            {
+                if (zoneInfoPtr->lastSetpointUpdate != 0)
+                {
+                    if (first) first = false;
+                    else output.println(",");
+                    zoneInfoPtr->writeJson(output);
+                }
+            }
+            output.println(" ]");
         }
 
         bool writeZoneDataLogCsv(Print& output)
@@ -462,7 +490,7 @@ class EvoHomeInfo
                 }
                 else
                 {
-                    zoneInfoPtr->newTemperature(temperature);
+                    zoneInfoPtr->newTemperature(temperature, time);
                     if (zoneDataPtr != nullptr) zoneDataPtr->temperature = temperature;
                 }
             }

@@ -80,7 +80,7 @@ time_t lastFTPSyncTime = 0;
 
 void onPacketReceived(const RAMSES2Packet* packetPtr)
 {
-    // Reset RSSI stats at midnight
+    // Reset stats at midnight
     if ((currentTime / SECONDS_PER_DAY) > (lastPacketReceivedTime / SECONDS_PER_DAY))
     {
         PacketStats.resetRSSI();
@@ -430,6 +430,17 @@ void handleHttpPacketLogJsonRequest()
 
     WebServer.sendContent(HttpResponse.c_str(), HttpResponse.length());
     WebServer.sendContent("");
+}
+
+
+void handleHttpZoneInfoJsonRequest()
+{
+    Tracer tracer("handleHttpZoneInfoJsonRequest");
+
+    HttpResponse.clear();
+    EvoHome.writeZoneInfoJson(HttpResponse);
+
+    WebServer.send(200, ContentTypeJson, HttpResponse.c_str());
 }
 
 
@@ -939,7 +950,8 @@ void setup()
     };
     Nav.registerHttpHandlers(WebServer);
 
-    WebServer.on("/json", handleHttpPacketLogJsonRequest);
+    WebServer.on("/packets/json", handleHttpPacketLogJsonRequest);
+    WebServer.on("/json", handleHttpZoneInfoJsonRequest);
 
     WiFiSM.registerStaticFiles(Files, _LastFile);
     WiFiSM.on(WiFiInitState::TimeServerSynced, onTimeServerSynced);
