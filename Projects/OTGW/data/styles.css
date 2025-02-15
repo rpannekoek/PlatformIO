@@ -223,6 +223,12 @@ td.graph
     color: green;
 }
 
+.roomBar
+{
+	background-color: lightgreen;
+    color: lightgreen;
+}
+
 .pressureBar
 {
 	background-color: white;

@@ -13,6 +13,8 @@ struct __attribute__ ((packed)) OpenThermLogEntry
     uint16_t pressure;
     uint16_t flowRate;
     uint16_t pHeatPump; // kW in OT f8.8 format
+    uint16_t tRoom;
+    float deviationHours;
 
     bool equals(OpenThermLogEntry* otherPtr)
     {
@@ -27,7 +29,9 @@ struct __attribute__ ((packed)) OpenThermLogEntry
             isSimilar(otherPtr->tOutside, tOutside) &&
             isSimilar(otherPtr->pressure, pressure, 4) &&
             isSimilar(otherPtr->flowRate, flowRate) &&
-            isSimilar(otherPtr->pHeatPump, pHeatPump, 4);
+            isSimilar(otherPtr->pHeatPump, pHeatPump, 4) &&
+            isSimilar(otherPtr->tRoom, tRoom) &&
+            abs(otherPtr->deviationHours - deviationHours) < 0.01;
     }
 
     static bool isSimilar(int lhs, int rhs, int maxDiff = 32)

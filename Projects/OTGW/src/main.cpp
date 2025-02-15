@@ -17,6 +17,7 @@
 #include "OpenThermLogEntry.h"
 #include "StatusLogEntry.h"
 #include "HeatMonClient.h"
+#include "EvoHomeClient.h"
 #include "WeatherAPI.h"
 #include "OTGW.h"
 
@@ -34,9 +35,11 @@ constexpr int TSET_OVERRIDE_DURATION = 20 * SECONDS_PER_MINUTE;
 constexpr int WEATHER_SERVICE_POLL_INTERVAL = 15 * SECONDS_PER_MINUTE;
 constexpr int FTP_RETRY_INTERVAL = 15 * SECONDS_PER_MINUTE;
 constexpr int HEATMON_POLL_INTERVAL = 1 * SECONDS_PER_MINUTE;
+constexpr int EVOHOME_POLL_INTERVAL = 5 * SECONDS_PER_MINUTE;
 constexpr float MAX_HEATPUMP_POWER = 4.0; // kW
 constexpr float MAX_PRESSURE = 3.0; // bar
 constexpr float MAX_FLOW_RATE = 12.0; // l/min
+constexpr float TROOM_BAR_RANGE = 4.0;
 
 #ifdef DEBUG_ESP_PORT
     constexpr int OTGW_TIMEOUT = 5 * SECONDS_PER_MINUTE;
@@ -124,7 +127,9 @@ const char* LogHeaders[] PROGMEM =
     "Pheatpump",
     "Pressure",
     "Mod (%)",
-    "Flow"
+    "Flow",
+    "Troom",
+    "Error"
 };
 
 OpenThermGateway OTGW(OTGW_SERIAL, OTGW_RESET_PIN);
@@ -132,6 +137,7 @@ ESPWebServer WebServer(80); // Default HTTP port
 WiFiNTP TimeServer;
 WiFiFTPClient FTPClient(3000); // 3s timeout
 HeatMonClient HeatMon;
+EvoHomeClient EvoHome;
 WeatherAPI WeatherService;
 StringBuilder HttpResponse(12 * 1024); // 12KB HTTP response buffer
 HtmlWriter Html(HttpResponse, Files[FileId::Logo], Files[FileId::Styles], 40);
@@ -153,6 +159,8 @@ time_t otgwInitializeTime = OTGW_STARTUP_TIME;
 time_t otgwTimeout = OTGW_TIMEOUT;
 time_t heatmonPollTime = 0;
 time_t lastHeatmonUpdateTime = 0;
+time_t evoHomePollTime = 0;
+time_t lastEvoHomeUpdateTime = 0;
 time_t weatherServicePollTime = 0;
 time_t lastWeatherUpdateTime = 0;
 time_t flameSwitchedOnTime = 0;
@@ -163,9 +171,8 @@ uint32_t lowLoadPeriod = 0;
 uint32_t lowLoadDutyInterval = 0;
 
 bool pumpOff = false;
-bool updateTOutside = false;
-bool updateHeatmonData = false;
 int lastHeatmonResult = 0;
+int lastEvoHomeResult = 0;
 
 OpenThermLogEntry newOTLogEntry;
 OpenThermLogEntry* lastOTLogEntryPtr = nullptr;
@@ -381,6 +388,12 @@ void logOpenThermValues(bool forceCreate)
     if (newOTLogEntry.flowRate == 0)
         newOTLogEntry.flowRate = HeatMon.flowRate * 256;
     newOTLogEntry.pHeatPump = HeatMon.pIn * 256;
+    if (EvoHome.zones.size() > 0)
+    {
+        ZoneInfo& primaryZone = EvoHome.zones[0];
+        newOTLogEntry.tRoom = primaryZone.actual * 256;
+        newOTLogEntry.deviationHours = primaryZone.deviationHours;
+    }
 
     if ((lastOTLogEntryPtr == nullptr) || !newOTLogEntry.equals(lastOTLogEntryPtr) || forceCreate)
     {
@@ -409,7 +422,10 @@ void writeCsvDataLine(OpenThermLogEntry* otLogEntryPtr, time_t time, Print& dest
     destination.printf(";%0.2f", OpenThermGateway::getDecimal(otLogEntryPtr->pHeatPump));
     destination.printf(";%0.2f", OpenThermGateway::getDecimal(otLogEntryPtr->pressure));
     destination.printf(";%d", OpenThermGateway::getInteger(otLogEntryPtr->boilerRelModulation));
-    destination.printf(";%0.1f\r\n", OpenThermGateway::getDecimal(otLogEntryPtr->flowRate));
+    destination.printf(";%0.1f", OpenThermGateway::getDecimal(otLogEntryPtr->flowRate));
+    destination.printf(";%0.1f", OpenThermGateway::getDecimal(otLogEntryPtr->tRoom));
+    destination.printf(";%0.2f", otLogEntryPtr->deviationHours);
+    destination.println();
 }
 
 
@@ -525,8 +541,7 @@ void test(String message)
 
 bool handleThermostatLowLoadMode(bool switchedOn)
 {
-    bool isThermostatLowLoadMode = thermostatRequests[OpenThermDataId::MaxRelModulation] == 0;
-    if (!isThermostatLowLoadMode) return false;
+    if (thermostatRequests[OpenThermDataId::MaxRelModulation] != 0) return false;
 
     if (switchedOn)
     {
@@ -558,11 +573,27 @@ bool handleThermostatLowLoadMode(bool switchedOn)
         }
 
         BoilerLevel newBoilerLevel = BoilerLevel::Low;;
-        if (!switchedOn && PersistentData.usePumpModulation && !HeatMon.isHeatpumpOn() && currentBoilerLevel != BoilerLevel::Thermostat)
+        if (!switchedOn
+            && PersistentData.usePumpModulation
+            && !HeatMon.isHeatpumpOn()
+            && currentBoilerLevel != BoilerLevel::Thermostat)
         {
             // Thermostat switched CH off, pump modulation is on and heatpump is off.
             // Switch CH/pump off, but keep the TSet override (for a while). 
             newBoilerLevel = BoilerLevel::Off;
+        }
+        else if (EvoHome.zones.size() > 0)
+        {
+            ZoneInfo& primaryZone = EvoHome.zones[0];
+            float delta = primaryZone.actual - primaryZone.setpoint; 
+            if ((-delta >= 0.5) && (-primaryZone.deviationHours > PersistentData.deviationHoursThreshold))
+            {
+                WiFiSM.logEvent(
+                    F("Primary zone %0.1f °C. Error: %0.2f Kh"),
+                    delta,
+                    primaryZone.deviationHours);
+                newBoilerLevel = BoilerLevel::High;
+            }
         }
         setBoilerLevel(newBoilerLevel, TSET_OVERRIDE_DURATION);
     }
@@ -851,6 +882,16 @@ void writeCurrentValues()
         Html.writeRowEnd();
     }
 
+    if (EvoHome.zones.size() > 0)
+    {
+        ZoneInfo& primaryZone = EvoHome.zones[0];
+        Html.writeRowStart();
+        Html.writeHeaderCell(F("T<sub>room</sub>"));
+        Html.writeCell(primaryZone.actual, F("%0.1f °C"));
+        Html.writeGraphCell(1.0F - (primaryZone.setpoint - primaryZone.actual) / TROOM_BAR_RANGE, F("roomBar"), true);
+        Html.writeRowEnd();
+    }
+
     time_t overrideTimeLeft =(changeBoilerLevelTime == 0) ? 0 : changeBoilerLevelTime - currentTime;
     const char* duration = (overrideTimeLeft == 0) ? "" : formatTimeSpan(overrideTimeLeft, false); 
     Html.writeRowStart();
@@ -965,9 +1006,11 @@ void handleHttpRootRequest()
     Html.writeRow(F("FTP Sync"), F("%s"), ftpSyncTime.c_str());
     Html.writeRow(F("Sync entries"), F("%d / %d"), otLogEntriesToSync, PersistentData.ftpSyncEntries);
     if (lastHeatmonUpdateTime != 0)
-        Html.writeRow(F("HeatMon"), F("%s"), formatTime("%H:%M", lastHeatmonUpdateTime));
+        Html.writeRow(F("HeatMon"), F("%s"), formatTime("%T", lastHeatmonUpdateTime));
+    if (lastEvoHomeUpdateTime != 0)
+        Html.writeRow(F("EvoHome"), F("%s"), formatTime("%T", lastEvoHomeUpdateTime));
     if (lastWeatherUpdateTime != 0)
-        Html.writeRow(F("Weather"), F("%s"), formatTime("%H:%M", lastWeatherUpdateTime));
+        Html.writeRow(F("Weather"), F("%s"), formatTime("%T", lastWeatherUpdateTime));
     Html.writeTableEnd();
     Html.writeSectionEnd();
 
@@ -1176,6 +1219,8 @@ void handleHttpOpenThermLogRequest()
         Html.writeCell(OpenThermGateway::getDecimal(otLogEntryPtr->pressure), F("%0.2f"));
         Html.writeCell(OpenThermGateway::getInteger(otLogEntryPtr->boilerRelModulation));
         Html.writeCell(OpenThermGateway::getDecimal(otLogEntryPtr->flowRate));
+        Html.writeCell(OpenThermGateway::getDecimal(otLogEntryPtr->tRoom));
+        Html.writeCell(otLogEntryPtr->deviationHours, F("%0.2f"));
         Html.writeRowEnd();
 
         otLogEntryPtr = OpenThermLog.getNextEntry();
@@ -1396,6 +1441,7 @@ void onTimeServerSynced()
     updateLogTime = currentTime + 1;
     heatmonPollTime = currentTime + 10;
     weatherServicePollTime = currentTime + 15;
+    evoHomePollTime = currentTime + 20;
     OTGW.useLED(BuiltinLED);
 }
 
@@ -1411,13 +1457,18 @@ void onWiFiInitialized()
 {
     if (BuiltinLED.isOn())
     {
-        if (!HeatMon.isRequestPending() && !WeatherService.isRequestPending() && !FTPClient.isAsyncPending())
+        if (!HeatMon.isRequestPending()
+            && !EvoHome.isRequestPending()
+            && !WeatherService.isRequestPending()
+            && !FTPClient.isAsyncPending())
             BuiltinLED.setOff();
     }
     else
     {
         if (HeatMon.isRequestPending())
             BuiltinLED.setColor(LED_YELLOW);
+        else if (EvoHome.isRequestPending())
+            BuiltinLED.setColor(LED_WHITE);
         else if (WeatherService.isRequestPending())
             BuiltinLED.setColor(LED_CYAN);
         else if (FTPClient.isAsyncPending())
@@ -1445,7 +1496,8 @@ void onWiFiInitialized()
         int result = HeatMon.requestData();
         if (result == HTTP_OK)
         {
-            updateHeatmonData = true;
+            setOtgwResponse(OpenThermDataId::TReturn, HeatMon.tOut);
+            setOtgwResponse(OpenThermDataId::Tdhw, HeatMon.tBuffer);
             lastHeatmonUpdateTime = currentTime;
             lastHeatmonResult = result;
             heatmonPollTime = currentTime + HEATMON_POLL_INTERVAL;
@@ -1459,6 +1511,25 @@ void onWiFiInitialized()
         }
     }
 
+    if ((currentTime >= evoHomePollTime) && EvoHome.isInitialized)
+    {
+        // Get data from EvoHome
+        int result = EvoHome.requestData();
+        if (result == HTTP_OK)
+        {
+            lastEvoHomeUpdateTime = currentTime;
+            lastEvoHomeResult = result;
+            evoHomePollTime = currentTime + EVOHOME_POLL_INTERVAL;
+        }
+        else if (result != HTTP_REQUEST_PENDING)
+        {
+            if (result != lastEvoHomeResult)
+                WiFiSM.logEvent(F("EvoHome: %s"), EvoHome.getLastError().c_str());
+            lastEvoHomeResult = result;
+            evoHomePollTime = currentTime + HEATMON_POLL_INTERVAL;
+        }
+    }
+
     if ((currentTime >= weatherServicePollTime) && WeatherService.isInitialized)
     {
         // Get outside temperature from Weather Service
@@ -1466,7 +1537,8 @@ void onWiFiInitialized()
         if (result == HTTP_OK)
         {
             float currentTOutside = OpenThermGateway::getDecimal(getResponse(OpenThermDataId::TOutside));
-            updateTOutside = (WeatherService.temperature != currentTOutside);
+            if (WeatherService.temperature != currentTOutside)
+                setOtgwResponse(OpenThermDataId::TOutside, WeatherService.temperature);
             lastWeatherUpdateTime = currentTime;
             weatherServicePollTime = currentTime + WEATHER_SERVICE_POLL_INTERVAL;
         }
@@ -1599,11 +1671,26 @@ void setup()
 
     if (PersistentData.heatmonHost[0] != 0)
     {
-        HeatMon.begin(PersistentData.heatmonHost);
+        if (HeatMon.begin(PersistentData.heatmonHost))
+            WiFiSM.logEvent(F("HeatMon client initialized"));
+        else
+            WiFiSM.logEvent(F("Unable to initialize HeatMon client"));
     }
+
+    if (PersistentData.evoHomeHost[0] != 0)
+    {
+        if (EvoHome.begin(PersistentData.evoHomeHost))
+            WiFiSM.logEvent(F("EvoHome client initialized"));
+        else
+            WiFiSM.logEvent(F("Unable to initialize EvoHome client"));
+    }
+
     if (PersistentData.weatherApiKey[0] != 0)
     {
-        WeatherService.begin(PersistentData.weatherApiKey, PersistentData.weatherLocation);
+        if (WeatherService.begin(PersistentData.weatherApiKey, PersistentData.weatherLocation))
+            WiFiSM.logEvent(F("Weather service initialized"));
+        else
+            WiFiSM.logEvent(F("Unable to initialize Weather service"));
     }
 
     Tracer::traceFreeHeap();
@@ -1661,21 +1748,6 @@ void loop()
                 BoilerLevelNames[changeBoilerLevel]);
             setBoilerLevel(changeBoilerLevel, TSET_OVERRIDE_DURATION);
         }
-        return;
-    }
-
-    if (updateTOutside)
-    {
-        updateTOutside = false;
-        setOtgwResponse(OpenThermDataId::TOutside, WeatherService.temperature);
-        return;
-    }
-
-    if (updateHeatmonData)
-    {
-        updateHeatmonData = false;
-        setOtgwResponse(OpenThermDataId::TReturn, HeatMon.tOut);
-        setOtgwResponse(OpenThermDataId::Tdhw, HeatMon.tBuffer);
         return;
     }
 }
