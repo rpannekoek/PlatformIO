@@ -167,7 +167,11 @@ struct ZoneInfo
         if (setpoint >= ON_THRESHOLD)
         {
             if (!current.isOn())
+            {
                 lastOn = time;
+                deviationHours = 0;
+                lastTemperatureUpdate = time;
+            }
             else
                 duration += time - lastSetpointUpdate;
         }
