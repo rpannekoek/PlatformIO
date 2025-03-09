@@ -2,9 +2,10 @@
 #include <Tracer.h>
 
 
-bool RESTClient::begin(const String& baseUrl)
+bool RESTClient::begin(const String& baseUrl, const char* certificate)
 {
     _baseUrl = baseUrl;
+    _certificate = certificate;
     _requestMillis = 0;
 
 #ifdef ESP8266
@@ -30,6 +31,32 @@ bool RESTClient::begin(const String& baseUrl)
 }
 
 
+void RESTClient::setBearerToken(const String& bearerToken)
+{
+    Tracer tracer("RESTClient::setBearerToken", bearerToken.c_str());
+
+    _bearerToken = bearerToken;
+
+    if (bearerToken.length() > 0)
+    {
+#ifdef ESP32        
+        _httpClient.setAuthorizationType("Bearer");
+        _httpClient.setAuthorization(bearerToken.c_str());
+#endif
+    }
+}
+
+
+void RESTClient::addHeader(const String& name, const String& value)
+{
+#ifdef ESP8266
+    _asyncHttpRequest.setReqHeader(name.c_str(), value.c_str());
+#else
+    _httpClient.addHeader(name, value);
+#endif
+}
+
+
 int RESTClient::requestData(const String& urlSuffix)
 {
     if (_requestMillis == 0)
@@ -46,7 +73,7 @@ int RESTClient::requestData(const String& urlSuffix)
     TRACE(
         F("HTTP %d response after %u ms. Size: %d\n"),
         httpCode,
-        millis() - _requestMillis,
+        _responseTimeMs,
         _response.length());
     _requestMillis = 0;
 
@@ -79,6 +106,21 @@ int RESTClient::requestData(const String& urlSuffix)
         : RESPONSE_PARSING_FAILED;
 }
 
+
+int RESTClient::awaitData(const String& urlSuffix)
+{
+    Tracer tracer("RESTClient::awaitData");
+
+    while (true)
+    {
+        int result = requestData(urlSuffix);
+        if (result != HTTP_REQUEST_PENDING) 
+            return result;
+        delay(10);
+    }
+}
+
+
 #ifdef ESP8266
 int RESTClient::sendRequest(const String& url)
 {
@@ -107,6 +149,7 @@ bool RESTClient::isResponseAvailable()
 
 int RESTClient::getResponse()
 {
+    _responseTimeMs = millis() - _requestMillis;
     int result = _asyncHttpRequest.responseHTTPcode();
     if (result == HTTP_OK)
         _response = _asyncHttpRequest.responseText();
@@ -119,7 +162,11 @@ int RESTClient::sendRequest(const String& url)
 {
     Tracer tracer(F("RESTClient::sendRequest"), url.c_str());
 
-    if (!_httpClient.begin(url))
+    bool success = (_certificate == nullptr)
+        ? _httpClient.begin(url)
+        : _httpClient.begin(url, _certificate);
+
+    if (!success)
     {
         _lastError = F("Open failed");
         return HTTP_OPEN_FAILED;
@@ -149,6 +196,7 @@ void RESTClient::runHttpRequests()
         if ((_requestMillis != 0) && (_httpResult == 0))
         {
             int httpResult = _httpClient.GET();
+            _responseTimeMs = millis() - _requestMillis; 
             if (httpResult == HTTP_OK)
                 _response = _httpClient.getString();
             else if (httpResult < 0)

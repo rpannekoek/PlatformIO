@@ -19,6 +19,7 @@
 #include "EnergyLog.h"
 #include "PowerLog.h"
 #include "SmartHome.h"
+#include "P1Monitor.h"
 
 enum FileId
 {
@@ -29,6 +30,7 @@ enum FileId
     LogFileIcon,
     SettingsIcon,
     UploadIcon,
+    ElectricityIcon,
     _LastFile
 };
 
@@ -40,7 +42,8 @@ const char* Files[] =
     "Graph.svg",
     "LogFile.svg",
     "Settings.svg",
-    "Upload.svg"
+    "Upload.svg",
+    "Electricity.svg"
 };
 
 const char* Timeframes[] = 
@@ -67,6 +70,7 @@ WiFiStateMachine WiFiSM(BuiltinLED, TimeServer, WebServer, EventLog);
 Navigation Nav;
 SPIClass NRFSPI;
 SmartHomeClass SmartHome(WiFiSM, SMARTHOME_ENERGY_LOG_SIZE);
+P1MonitorClass P1Monitor(WiFiSM, P1_LOG_SIZE);
 
 StaticLog<PowerLogEntry> PowerLog(POWER_LOG_SIZE);
 PowerLogEntry* lastPowerLogEntryPtr = nullptr;
@@ -83,22 +87,6 @@ time_t currentTime = 0;
 time_t pollInvertersTime = 0;
 time_t syncFTPTime = 0;
 time_t lastFTPSyncTime = 0;
-
-// Forward defines
-void onTimeServerSynced();
-void onWiFiInitialized();
-void handleSerialRequest();
-void handleHttpRootRequest();
-void handleHttpSyncFTPRequest();
-void handleHttpPowerLogRequest();
-void handleHttpEventLogRequest();
-void handleHttpConfigFormRequest();
-void handleHttpConfigFormPost();
-void handleHttpInvertersFormRequest();
-void handleHttpInvertersFormPost();
-void handleHttpGridProfileRequest();
-void handleHttpSmartHomeRequest();
-bool trySyncFTP(Print* printTo);
 
 
 bool addInverter(const char* name, uint64_t serial)
@@ -136,135 +124,6 @@ void removeInverter(int index)
     delete InverterLogPtrs[index];
     InverterLogPtrs.erase(InverterLogPtrs.begin() + index);
     PowerLog.clear();
-}
-
-// Boot code
-void setup() 
-{
-    Serial.begin(DEBUG_BAUDRATE);
-    Serial.setDebugOutput(true);
-    Serial.println();
-
-    #ifdef DEBUG_ESP_PORT
-    Tracer::traceTo(DEBUG_ESP_PORT);
-    Tracer::traceFreeHeap();
-    #endif
-
-    BuiltinLED.begin();
-    EventLog.begin();
-
-    PersistentData.begin();
-    TimeServer.begin(PersistentData.ntpServer);
-    Html.setTitlePrefix(PersistentData.hostName);
-    
-    Nav.menuItems =
-    {
-        MenuItem
-        {
-            .icon = Files[HomeIcon],
-            .label = PSTR("Home"),
-            .handler = handleHttpRootRequest            
-        },
-        MenuItem
-        {
-            .icon = Files[GraphIcon],
-            .label = PSTR("Power log"),
-            .urlPath = PSTR("powerlog"),
-            .handler = handleHttpPowerLogRequest            
-        },
-        MenuItem
-        {
-            .icon = Files[LogFileIcon],
-            .label = PSTR("Event log"),
-            .urlPath =PSTR("events"),
-            .handler = handleHttpEventLogRequest
-        },
-        MenuItem
-        {
-            .icon = Files[UploadIcon],
-            .label = PSTR("FTP Sync"),
-            .urlPath = PSTR("sync"),
-            .handler= handleHttpSyncFTPRequest
-        },
-        MenuItem
-        {
-            .icon = Files[HomeIcon],
-            .label = PSTR("Smart Home"),
-            .urlPath =PSTR("smartHome"),
-            .handler = handleHttpSmartHomeRequest
-        },
-        MenuItem
-        {
-            .icon = Files[SettingsIcon],
-            .label = PSTR("Inverters"),
-            .urlPath =PSTR("inverters"),
-            .handler = handleHttpInvertersFormRequest,
-            .postHandler = handleHttpInvertersFormPost
-        },
-        MenuItem
-        {
-            .icon = Files[SettingsIcon],
-            .label = PSTR("Settings"),
-            .urlPath =PSTR("config"),
-            .handler = handleHttpConfigFormRequest,
-            .postHandler = handleHttpConfigFormPost
-        },
-    };
-    Nav.registerHttpHandlers(WebServer);
-
-    WebServer.on("/gridprofile",handleHttpGridProfileRequest);
-
-    WiFiSM.registerStaticFiles(Files, _LastFile);
-    WiFiSM.on(WiFiInitState::TimeServerSynced, onTimeServerSynced);
-    WiFiSM.on(WiFiInitState::Initialized, onWiFiInitialized);
-    WiFiSM.scanAccessPoints();
-    WiFiSM.begin(PersistentData.wifiSSID, PersistentData.wifiKey, PersistentData.hostName);
-
-    Hoymiles.init();
-    Hoymiles.setPollInterval(pollInterval);
-
-#ifdef DISABLE_NRF
-    WiFiSM.logEvent("NRF Radio disabled");
-#else
-    uint64_t dtuSerial = parseSerial(PersistentData.dtuSerial);
-    rf24_pa_dbm_e paLevel = static_cast<rf24_pa_dbm_e>(PersistentData.dtuTxLevel);
-
-    NRFSPI.begin(NRF_SCK, NRF_MISO, NRF_MOSI, NRF_CS_PIN);
-    Hoymiles.initNRF(&NRFSPI, NRF_CE_PIN, NRF_IRQ_PIN);
-    HoymilesRadio_NRF* nrfRadioPtr = Hoymiles.getRadioNrf();
-    if (nrfRadioPtr->isConnected())
-    {
-        nrfRadioPtr->setDtuSerial(dtuSerial);
-        nrfRadioPtr->setPALevel(paLevel);
-    }
-    else
-        WiFiSM.logEvent("ERROR: NRF Radio is not connected.");
-#endif
-
-    for (int i = 0; i < PersistentData.registeredInvertersCount; i++)
-    {
-        addInverter(
-            PersistentData.registeredInverters[i].name,
-            PersistentData.registeredInverters[i].serial);  
-    }
-
-    Tracer::traceFreeHeap();
-
-    BuiltinLED.setOff();    
-}
-
-
-// Called repeatedly
-void loop() 
-{
-    currentTime = WiFiSM.getCurrentTime();
-
-    if (Serial.available())
-        handleSerialRequest();
-
-    // Let WiFi State Machine handle initialization and web requests
-    // This also calls the onXXX methods below
-    WiFiSM.run();
 }
 
 void handleSerialRequest()
@@ -548,6 +407,19 @@ bool trySyncFTP(Print* printTo)
         }
     }
 
+    if (P1Monitor.logEntriesToSync != 0)
+    {
+        auto p1MonitorLogWriter = [](Print& output)
+        {
+            P1Monitor.writeLogCsv(output, P1Monitor.logEntriesToSync);
+            P1Monitor.logEntriesToSync = 0;
+        };
+
+        filename = PersistentData.hostName;
+        filename += "_P1.csv";
+        FTPClient.appendAsync(filename, p1MonitorLogWriter);
+    }
+
     if (SmartHome.logEntriesToSync != 0)
     {
         auto smartHomeEnergyLogWriter = [](Print& output)
@@ -591,6 +463,12 @@ void onTimeServerSynced()
 
         if (!SmartHome.begin(PersistentData.powerThreshold, PersistentData.idleDelay, SMARTHOME_POLL_INTERVAL))
             WiFiSM.logEvent("Unable to initialize SmartHome");
+
+        if (PersistentData.p1MonitorHost[0] != 0)
+        {
+            if (!P1Monitor.begin(PersistentData.p1MonitorHost, P1_POLL_INTERVAL, 10, 1))
+                WiFiSM.logEvent("Unable to initialize P1 Monitor");
+        }
     }
 }
 
@@ -618,11 +496,15 @@ void onWiFiInitialized()
         BuiltinLED.setOff();
     }
 
+    P1Monitor.run(currentTime);
+
     if (BuiltinLED.isOn())
     {
-        if (!SmartHome.isAwaiting() && !FTPClient.isAsyncPending())
+        if (!SmartHome.isAwaiting() && !FTPClient.isAsyncPending() && !P1Monitor.isRequestPending())
             BuiltinLED.setOff();
     }
+    else if (P1Monitor.isRequestPending())
+        BuiltinLED.setColor(LED_GREEN);
     else if (SmartHome.isAwaiting())
         BuiltinLED.setColor(LED_CYAN);
     else if (FTPClient.isAsyncPending())
@@ -630,6 +512,11 @@ void onWiFiInitialized()
 
     if (SmartHome.logEntriesToSync != 0 && syncFTPTime == 0)
         syncFTPTime = currentTime + FTP_RETRY_INTERVAL; // Prevent FTP sync shortly after eachother
+
+    if (P1Monitor.logEntriesToSync == PersistentData.ftpSyncEntries
+        && PersistentData.isFTPEnabled()
+        && !FTPClient.isAsyncPending())
+        syncFTPTime = currentTime;
 
     if (!WiFiSM.isConnected()) return;
 
@@ -967,61 +854,6 @@ void writeEnergyLogs(int inverter, ChannelType_t channel,  EnergyLogType logType
 }
 
 
-void handleHttpRootRequest()
-{
-    Tracer tracer("handleHttpRootRequest");
-
-    if (WiFiSM.isInAccessPointMode())
-    {
-        handleHttpConfigFormRequest();
-        return;
-    }
-    
-    Html.writeHeader("Home", Nav, pollInterval);
-
-    const char* ftpSync;
-    if (!PersistentData.isFTPEnabled())
-        ftpSync = "Disabled";
-    else if (lastFTPSyncTime == 0)
-        ftpSync = "Not yet";
-    else
-        ftpSync = formatTime("%H:%M", lastFTPSyncTime);
-
-    Html.writeDivStart("flex-container");
-
-    Html.writeSectionStart("Status");
-    Html.writeTableStart();
-    Html.writeRow("WiFi RSSI", "%d dBm", static_cast<int>(WiFi.RSSI()));
-    Html.writeRow("Free Heap", "%0.1f kB", float(ESP.getFreeHeap()) / 1024);
-    Html.writeRow("Uptime", "%0.1f days", float(WiFiSM.getUptime()) / SECONDS_PER_DAY);
-    Html.writeRow("Next poll", "%lld s", pollInvertersTime - currentTime);
-    Html.writeRow("FTP Sync", ftpSync);
-    Html.writeRow("Sync Entries", "%d / %d", powerLogEntriesToSync, PersistentData.ftpSyncEntries);
-    Html.writeTableEnd();
-    Html.writeSectionEnd();
-
-    writeTotals();
-    writeInverterData();
-
-    int inv = WebServer.hasArg(INVERTER_PARAM) ? WebServer.arg(INVERTER_PARAM).toInt() : -1;
-
-    ChannelType_t channel = WebServer.hasArg(CHANNEL_PARAM)
-        ? static_cast<ChannelType_t>(WebServer.arg(CHANNEL_PARAM).toInt())
-        : TYPE_AC;
-
-    EnergyLogType logType = WebServer.hasArg(TIMEFRAME_PARAM)
-        ? static_cast<EnergyLogType>(WebServer.arg(TIMEFRAME_PARAM).toInt())
-        : EnergyLogType::Today;
-
-    writeEnergyLogs(inv, channel, logType);
-
-    Html.writeDivEnd();
-    Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
-}
-
-
 void handleHttpSyncFTPRequest()
 {
     Tracer tracer("handleHttpSyncFTPRequest");
@@ -1055,6 +887,10 @@ void handleHttpSyncFTPRequest()
     HttpResponse.println();
     HttpResponse.println("Date;On time (h);Max Power (W);Energy (kWh)");
     HttpResponse.println("Time;Device;On time (h);Max Power (W);Energy (kWh)");
+    HttpResponse.print("Time;");
+    for (int i = 1; i <= 3; i++)
+        HttpResponse.printf(F("V%d (V);P%d (W);"), i, i);
+    HttpResponse.println("Pgas (W)");
     Html.writePreEnd();
 
     Html.writeFooter();
@@ -1368,6 +1204,32 @@ void handleHttpGridProfileRequest()
 }
 
 
+void handleHttpSmartMeterRequest()
+{
+    Tracer tracer("handleHttpSmartMeterRequest");
+
+    int currentPage = WebServer.hasArg("page") ? WebServer.arg("page").toInt() : 0;
+
+    Html.writeHeader("Smart Meter", Nav);
+    if (P1Monitor.isInitialized())
+    {
+        Html.writeDivStart("flex-container");
+        P1Monitor.writeStatus(Html);
+        P1Monitor.writeCurrentValues(Html, 25 * 230);
+        Html.writeDivStart("flex-break");
+        Html.writeDivEnd();        
+        P1Monitor.writeDayStats(Html);
+        P1Monitor.writeLog(Html, currentPage, P1_LOG_PAGE_SIZE);
+        Html.writeDivEnd();
+    }
+    else
+        Html.writeParagraph("Smart Meter is not initialized.");
+    Html.writeFooter();
+
+    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
+}
+
+
 void handleHttpSmartHomeRequest()
 {
     Tracer tracer("handleHttpSmartHomeRequest");
@@ -1376,4 +1238,196 @@ void handleHttpSmartHomeRequest()
     SmartHome.writeHtml(Html);
 
     WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
+}
+
+
+void handleHttpRootRequest()
+{
+    Tracer tracer("handleHttpRootRequest");
+
+    if (WiFiSM.isInAccessPointMode())
+    {
+        handleHttpConfigFormRequest();
+        return;
+    }
+    
+    Html.writeHeader("Home", Nav, pollInterval);
+
+    const char* ftpSync;
+    if (!PersistentData.isFTPEnabled())
+        ftpSync = "Disabled";
+    else if (lastFTPSyncTime == 0)
+        ftpSync = "Not yet";
+    else
+        ftpSync = formatTime("%H:%M", lastFTPSyncTime);
+
+    Html.writeDivStart("flex-container");
+
+    Html.writeSectionStart("Status");
+    Html.writeTableStart();
+    Html.writeRow("WiFi RSSI", "%d dBm", static_cast<int>(WiFi.RSSI()));
+    Html.writeRow("Free Heap", "%0.1f kB", float(ESP.getFreeHeap()) / 1024);
+    Html.writeRow("Uptime", "%0.1f days", float(WiFiSM.getUptime()) / SECONDS_PER_DAY);
+    Html.writeRow("Next poll", "%lld s", pollInvertersTime - currentTime);
+    Html.writeRow("FTP Sync", ftpSync);
+    Html.writeRow("Sync Entries", "%d / %d", powerLogEntriesToSync, PersistentData.ftpSyncEntries);
+    Html.writeTableEnd();
+    Html.writeSectionEnd();
+
+    writeTotals();
+    writeInverterData();
+
+    int inv = WebServer.hasArg(INVERTER_PARAM) ? WebServer.arg(INVERTER_PARAM).toInt() : -1;
+
+    ChannelType_t channel = WebServer.hasArg(CHANNEL_PARAM)
+        ? static_cast<ChannelType_t>(WebServer.arg(CHANNEL_PARAM).toInt())
+        : TYPE_AC;
+
+    EnergyLogType logType = WebServer.hasArg(TIMEFRAME_PARAM)
+        ? static_cast<EnergyLogType>(WebServer.arg(TIMEFRAME_PARAM).toInt())
+        : EnergyLogType::Today;
+
+    writeEnergyLogs(inv, channel, logType);
+
+    Html.writeDivEnd();
+    Html.writeFooter();
+
+    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
+}
+
+
+// Boot code
+void setup() 
+{
+    Serial.begin(DEBUG_BAUDRATE);
+    Serial.setDebugOutput(true);
+    Serial.println();
+
+    #ifdef DEBUG_ESP_PORT
+    Tracer::traceTo(DEBUG_ESP_PORT);
+    Tracer::traceFreeHeap();
+    #endif
+
+    BuiltinLED.begin();
+    EventLog.begin();
+
+    PersistentData.begin();
+    TimeServer.begin(PersistentData.ntpServer);
+    Html.setTitlePrefix(PersistentData.hostName);
+    
+    Nav.menuItems =
+    {
+        MenuItem
+        {
+            .icon = Files[HomeIcon],
+            .label = PSTR("Home"),
+            .handler = handleHttpRootRequest            
+        },
+        MenuItem
+        {
+            .icon = Files[GraphIcon],
+            .label = PSTR("Power log"),
+            .urlPath = PSTR("powerlog"),
+            .handler = handleHttpPowerLogRequest            
+        },
+        MenuItem
+        {
+            .icon = Files[LogFileIcon],
+            .label = PSTR("Event log"),
+            .urlPath =PSTR("events"),
+            .handler = handleHttpEventLogRequest
+        },
+        MenuItem
+        {
+            .icon = Files[UploadIcon],
+            .label = PSTR("FTP Sync"),
+            .urlPath = PSTR("sync"),
+            .handler= handleHttpSyncFTPRequest
+        },
+        MenuItem
+        {
+            .icon = Files[ElectricityIcon],
+            .label = PSTR("Smart Meter"),
+            .urlPath =PSTR("dsmr"),
+            .handler = handleHttpSmartMeterRequest
+        },
+        MenuItem
+        {
+            .icon = Files[HomeIcon],
+            .label = PSTR("Smart Home"),
+            .urlPath =PSTR("smartHome"),
+            .handler = handleHttpSmartHomeRequest
+        },
+        MenuItem
+        {
+            .icon = Files[SettingsIcon],
+            .label = PSTR("Inverters"),
+            .urlPath =PSTR("inverters"),
+            .handler = handleHttpInvertersFormRequest,
+            .postHandler = handleHttpInvertersFormPost
+        },
+        MenuItem
+        {
+            .icon = Files[SettingsIcon],
+            .label = PSTR("Settings"),
+            .urlPath =PSTR("config"),
+            .handler = handleHttpConfigFormRequest,
+            .postHandler = handleHttpConfigFormPost
+        },
+    };
+    Nav.registerHttpHandlers(WebServer);
+
+    WebServer.on("/gridprofile",handleHttpGridProfileRequest);
+
+    WiFiSM.registerStaticFiles(Files, _LastFile);
+    WiFiSM.on(WiFiInitState::TimeServerSynced, onTimeServerSynced);
+    WiFiSM.on(WiFiInitState::Initialized, onWiFiInitialized);
+    WiFiSM.scanAccessPoints();
+    WiFiSM.begin(PersistentData.wifiSSID, PersistentData.wifiKey, PersistentData.hostName);
+
+    Hoymiles.init();
+    Hoymiles.setPollInterval(pollInterval);
+
+#ifdef DISABLE_NRF
+    WiFiSM.logEvent("NRF Radio disabled");
+#else
+    uint64_t dtuSerial = parseSerial(PersistentData.dtuSerial);
+    rf24_pa_dbm_e paLevel = static_cast<rf24_pa_dbm_e>(PersistentData.dtuTxLevel);
+
+    NRFSPI.begin(NRF_SCK, NRF_MISO, NRF_MOSI, NRF_CS_PIN);
+    Hoymiles.initNRF(&NRFSPI, NRF_CE_PIN, NRF_IRQ_PIN);
+    HoymilesRadio_NRF* nrfRadioPtr = Hoymiles.getRadioNrf();
+    if (nrfRadioPtr->isConnected())
+    {
+        nrfRadioPtr->setDtuSerial(dtuSerial);
+        nrfRadioPtr->setPALevel(paLevel);
+    }
+    else
+        WiFiSM.logEvent("ERROR: NRF Radio is not connected.");
+#endif
+
+    for (int i = 0; i < PersistentData.registeredInvertersCount; i++)
+    {
+        addInverter(
+            PersistentData.registeredInverters[i].name,
+            PersistentData.registeredInverters[i].serial);  
+    }
+
+    Tracer::traceFreeHeap();
+
+    BuiltinLED.setOff();    
+}
+
+
+// Called repeatedly
+void loop() 
+{
+    currentTime = WiFiSM.getCurrentTime();
+
+    if (Serial.available())
+        handleSerialRequest();
+
+    // Let WiFi State Machine handle initialization and web requests
+    // This also calls the onXXX methods below
+    WiFiSM.run();
 }

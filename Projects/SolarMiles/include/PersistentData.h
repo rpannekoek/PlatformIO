@@ -25,6 +25,7 @@ struct Settings : public WiFiSettingsWithFTP
     char smartThingsPAT[48];
     int powerThreshold;
     int idleDelay;
+    char p1MonitorHost[32];
 
     Settings() : WiFiSettingsWithFTP(
         PSTR("SolarMiles"),
@@ -37,6 +38,7 @@ struct Settings : public WiFiSettingsWithFTP
         addStringField(smartThingsPAT, sizeof(smartThingsPAT), "SmartThings PAT");
         addIntegerField(powerThreshold, "Power threshold", 0, 100, 5);
         addTimeSpanField(idleDelay, "Idle delay", 0, 3600, 5 * 60);
+        addStringField(p1MonitorHost, sizeof(p1MonitorHost), "P1 Monitor");
     }
 
     void initialize() override

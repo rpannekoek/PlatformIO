@@ -5,7 +5,7 @@
 
 #define MIN_CONTENT_LENGTH 100
 
-StaticJsonDocument<512> _response;
+JsonDocument _response;
 
 // Constructor
 DsmrMonitorClient::DsmrMonitorClient(uint16_t timeout)
@@ -30,7 +30,7 @@ bool DsmrMonitorClient::begin(const char* host)
     return result;
 }
 
-int DsmrMonitorClient::requestData()
+int DsmrMonitorClient::awaitData()
 {
     Tracer tracer("DsmrMonitorClient::requestData");
 
@@ -82,20 +82,20 @@ bool DsmrMonitorClient::parseJson(String json)
         return false;     
     }
 
-    _electricity.clear();
+    electricity.clear();
     JsonArray e = _response["Electricity"].as<JsonArray>();
     for (JsonVariant p : e)
     {
         PhaseData phaseData;
         phaseData.Name = p["Phase"].as<const char*>();
-        phaseData.U = p["U"];
-        phaseData.I = p["I"];
-        phaseData.Pdelivered = p["Pdelivered"];
-        phaseData.Preturned = p["Preturned"];
-        _electricity.push_back(phaseData);
+        phaseData.Voltage = p["U"];
+        phaseData.Current = p["I"];
+        phaseData.Power = p["Pdelivered"];
+        phaseData.Power -= p["Preturned"].as<float>();
+        electricity.push_back(phaseData);
     }
 
-    TRACE("Deserialized %d electricity phases.\n", _electricity.size());
+    TRACE("Deserialized %d electricity phases.\n", electricity.size());
 
     return true;
 }

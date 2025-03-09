@@ -101,6 +101,12 @@ td a:hover
     flex-flow: row wrap;
 }
 
+.flex-break 
+{
+    flex-basis: 100%;
+    height: 0;
+}
+
 section
 {
     background-color: lightgray;
@@ -297,6 +303,24 @@ td.graph
 {
 	background-color: blue;
     color: blue;
+}
+
+.deliveredBar
+{
+	background-color: blue;
+    color: blue;
+}
+
+.returnedBar
+{
+	background-color: yellow;
+    color: yellow;
+}
+
+.gasBar
+{
+	background-color: orange;
+    color: orange;
 }
 
 .barFill

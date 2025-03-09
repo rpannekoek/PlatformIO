@@ -1,5 +1,5 @@
-#ifndef HEATMON_CLIENT_H
-#define HEATMON_CLIENT_H
+#ifndef DSMRMON_CLIENT_H
+#define DSMRMON_CLIENT_H
 
 #include <WiFiClient.h>
 #include <HTTPClient.h>
@@ -7,10 +7,9 @@
 struct PhaseData
 {
     String Name;
-    float U;
-    float I;
-    float Pdelivered;
-    float Preturned;
+    float Voltage;
+    float Current;
+    float Power;
 
     PhaseData()
     {
@@ -19,10 +18,9 @@ struct PhaseData
     PhaseData(const PhaseData& other)
     {
         Name = other.Name;
-        U = other.U;
-        I = other.I;
-        Pdelivered = other.Pdelivered;
-        Preturned = other.Preturned;
+        Voltage = other.Voltage;
+        Current = other.Current;
+        Power = other.Power;
     }
 };
 
@@ -30,28 +28,20 @@ class DsmrMonitorClient
 {
     public:
         bool isInitialized;
+        std::vector<PhaseData> electricity;
 
         // Constructor
-        DsmrMonitorClient(uint16_t timeout);
+        DsmrMonitorClient(uint16_t timeout = 5000); // 5 seconds
 
         bool begin(const char* host);
-        int requestData();
+        int awaitData();
 
-        String inline getLastError()
-        {
-            return _lastError;
-        }
-
-        std::vector<PhaseData> inline getElectricity()
-        {
-            return _electricity;
-        }
+        String getLastError() { return _lastError; }
 
     private:
         WiFiClient _wifiClient;
         HTTPClient _httpClient;
         String _lastError;
-        std::vector<PhaseData> _electricity;
 
         bool parseJson(String json);
 };

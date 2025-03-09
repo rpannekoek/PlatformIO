@@ -11,6 +11,10 @@ constexpr size_t HTTP_RESPONSE_BUFFER_SIZE = 12 * 1024;
 constexpr uint32_t SMARTHOME_POLL_INTERVAL = 6;
 constexpr uint16_t SMARTHOME_ENERGY_LOG_SIZE = 50;
 
+constexpr uint32_t P1_POLL_INTERVAL = 6;
+constexpr uint16_t P1_LOG_SIZE = 200;
+constexpr uint16_t P1_LOG_PAGE_SIZE = 25;
+
 constexpr size_t MAX_REGISTERED_INVERTERS = 4;
 constexpr size_t MAX_DC_CHANNELS_PER_INVERTER = 4;
 constexpr size_t MAX_INVERTER_NAME_LENGTH = 16;

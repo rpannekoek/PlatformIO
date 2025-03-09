@@ -23,16 +23,22 @@ class RESTClient
         // Constructor
         RESTClient(uint16_t timeout) { _timeout = timeout; }
 
+        String getBaseUrl() { return _baseUrl; }
         String getLastError() { return _lastError; }
         bool isRequestPending() { return _requestMillis != 0; }
+        uint32_t getResponseTimeMs() { return _responseTimeMs; }
 
+        void setBearerToken(const String& bearerToken);
         int requestData(const String& urlSuffix = "");
+        int awaitData(const String& urlSuffix = "");
 
     protected:
         JsonDocument _filterDoc;
 
-        bool begin(const String& baseUrl);
+        bool begin(const String& baseUrl, const char* certificate = nullptr);
+        void addHeader(const String& name, const String& value);
         virtual bool parseResponse(const JsonDocument& response) = 0;
+        void setLastError(const String& message) { _lastError = message; }
 
     private:
 #ifdef ESP8266    
@@ -49,10 +55,13 @@ class RESTClient
             instancePtr->runHttpRequests();
         }
 #endif
+        const char* _certificate = nullptr;
         String _baseUrl;
+        String _bearerToken;
         String _lastError;
         uint16_t _timeout;
         volatile uint32_t _requestMillis = 0;
+        uint32_t _responseTimeMs = 0;
         String _response;
 
         int sendRequest(const String& url);

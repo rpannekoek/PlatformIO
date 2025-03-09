@@ -1,3 +1,5 @@
+#define USE_HOMEWIZARD_P1 1
+
 #include <Arduino.h>
 #include <math.h>
 #include <ESPWiFi.h>
@@ -22,10 +24,21 @@
 #include "VoltageSensor.h"
 #include "IEC61851ControlPilot.h"
 #include "Status.h"
-#include "DsmrMonitorClient.h"
 #include "DayStatistics.h"
 #include "ChargeLogEntry.h"
 #include "ChargeStatsEntry.h"
+
+#ifdef USE_HOMEWIZARD_P1
+#include <HomeWizardP1Client.h>
+#if USE_HOMEWIZARD_P1 == 1
+HomeWizardP1V1Client SmartMeter;
+#else
+HomeWizardP1V2Client SmartMeter;
+#endif
+#else
+#include "DsmrMonitorClient.h"
+DsmrMonitorClient SmartMeter;
+#endif
 
 constexpr int FTP_RETRY_INTERVAL = 15 * SECONDS_PER_MINUTE;
 constexpr int HTTP_POLL_INTERVAL = 60;
@@ -103,7 +116,6 @@ const char* ButtonClass = "button";
 ESPWebServer WebServer(80); // Default HTTP port
 WiFiNTP TimeServer;
 WiFiFTPClient FTPClient(2000); // 2s timeout
-DsmrMonitorClient SmartMeter(5000); // 5s timeout
 BLE Bluetooth;
 StringBuilder HttpResponse(8192); // 8KB HTTP response buffer
 HtmlWriter Html(HttpResponse, Files[Logo], Files[Styles], 60);
@@ -387,7 +399,13 @@ void setup()
 
     if (PersistentData.dsmrMonitor[0] != 0)
     {
-        if (!SmartMeter.begin(PersistentData.dsmrMonitor))
+        if (SmartMeter.begin(PersistentData.dsmrMonitor))
+        {
+#if USE_HOMEWIZARD_P1 == 2
+            SmartMeter.setBearerToken(PersistentData.p1BearerToken);
+#endif
+        }
+        else
             setFailure("Failed initializing Smart Meter");
     }
 
@@ -489,24 +507,28 @@ float getDeratedCurrentLimit()
 }
 
 
-float determineCurrentLimit()
+float determineCurrentLimit(bool awaitSmartMeter)
 {
     float deratedCurrentLimit = getDeratedCurrentLimit();
 
     if (!SmartMeter.isInitialized)
         return deratedCurrentLimit;
 
-    if (!WiFiSM.isConnected())
-        return (temperature > PersistentData.tempLimit) ? deratedCurrentLimit : 0;
+    float result = (temperature > PersistentData.tempLimit) ? deratedCurrentLimit : 0; 
 
-    if (SmartMeter.requestData() != HTTP_CODE_OK)
+    if (!WiFiSM.isConnected()) return result;
+
+    if (awaitSmartMeter)
     {
-        WiFiSM.logEvent("Smart Meter: %s", SmartMeter.getLastError().c_str());
-        return (temperature > PersistentData.tempLimit) ? deratedCurrentLimit : 0;
+        if (SmartMeter.awaitData() != HTTP_CODE_OK)
+        {
+            WiFiSM.logEvent("Smart Meter: %s", SmartMeter.getLastError().c_str());
+            return result;
+        }
     }
 
-    PhaseData& phase = SmartMeter.getElectricity()[PersistentData.dsmrPhase - 1]; 
-    float phaseCurrent = phase.Pdelivered / phase.U; 
+    PhaseData& phase = SmartMeter.electricity[PersistentData.dsmrPhase - 1]; 
+    float phaseCurrent = phase.Power / phase.Voltage; 
     if (state == EVSEState::Charging)
         phaseCurrent = std::max(phaseCurrent - outputCurrent, 0.0F);
 
@@ -519,7 +541,10 @@ void chargeControl()
     Tracer tracer(F(__func__));
 
     if (temperature > (PersistentData.tempLimit + 10))
+    {
         setFailure("Temperature too high");
+        return;
+    }
 
     if (!OutputVoltageSensor.detectSignal())
     {
@@ -536,7 +561,7 @@ void chargeControl()
             setFailure("Output current too high");
             return;
         }
-        float cl = determineCurrentLimit();
+        float cl = determineCurrentLimit(true);
         if (cl > 0) currentLimit = ControlPilot.setCurrentLimit(cl);
     }
     else
@@ -663,7 +688,7 @@ void runEVSEStateMachine()
             {
                 if (setRelay(true))
                 {
-                    currentLimit = ControlPilot.setCurrentLimit(determineCurrentLimit());
+                    currentLimit = ControlPilot.setCurrentLimit(determineCurrentLimit(true));
                     setState(EVSEState::AwaitCharging);
                 }
             }
@@ -702,7 +727,7 @@ void runEVSEStateMachine()
                 stopCharging("vehicle");
             else if (currentTime >= chargeControlTime)
             {
-                chargeControlTime += CHARGE_CONTROL_INTERVAL;
+                chargeControlTime = currentTime + CHARGE_CONTROL_INTERVAL;
                 chargeControl();
             }
             break;
@@ -1166,12 +1191,12 @@ void handleHttpBluetoothRequest()
         for (BluetoothDeviceInfo& btDeviceInfo : Bluetooth.getDiscoveredDevices())
         {
             if (btDeviceInfo.uuid == nullptr) continue;
-            const char* uuid = btDeviceInfo.uuid->toString().c_str();
+            String uuid = btDeviceInfo.uuid->toString();
 
             Html.writeRowStart();
             HttpResponse.printf(
                 F("<td><input type=\"checkbox\" name=\"uuid\" value=\"%s\" %s></td>"), 
-                uuid,
+                uuid.c_str(),
                 btDeviceInfo.isRegistered ? "checked" : "");
             Html.writeCell(btDeviceInfo.getAddress());
             Html.writeCell(uuid);
@@ -1365,38 +1390,34 @@ void handleHttpSmartMeterRequest()
 
     if (SmartMeter.isInitialized)
     {
-        int dsmrResult = SmartMeter.requestData();
+        int dsmrResult = SmartMeter.awaitData();
         if (dsmrResult == HTTP_CODE_OK)
         {
-            std::vector<PhaseData> electricity = SmartMeter.getElectricity();
-
             Html.writeTableStart();
             Html.writeRowStart();
             Html.writeHeaderCell("Phase");
             Html.writeHeaderCell("Voltage");
             Html.writeHeaderCell("Current");
-            Html.writeHeaderCell("P<sub>delivered</sub>");
-            Html.writeHeaderCell("P<sub>returned</sub>");
+            Html.writeHeaderCell("Power");
             Html.writeRowEnd();
-            for (PhaseData& phaseData : electricity)
+            for (PhaseData& phaseData : SmartMeter.electricity)
             {
                 Html.writeRowStart();
                 Html.writeCell(phaseData.Name);
-                Html.writeCell(phaseData.U, F("%0.1f V"));
-                Html.writeCell(phaseData.I, F("%0.0f A"));
-                Html.writeCell(phaseData.Pdelivered, F("%0.0f W"));
-                Html.writeCell(phaseData.Preturned, F("%0.0f W"));
+                Html.writeCell(phaseData.Voltage, F("%0.1f V"));
+                Html.writeCell(phaseData.Current, F("%0.0f A"));
+                Html.writeCell(phaseData.Power, F("%0.0f W"));
                 Html.writeRowEnd();
             }
             Html.writeTableEnd();
 
             TRACE("DSMR phase: %d\n", PersistentData.dsmrPhase);
 
-            PhaseData& monitoredPhaseData = electricity[PersistentData.dsmrPhase - 1];
+            PhaseData& monitoredPhaseData = SmartMeter.electricity[PersistentData.dsmrPhase - 1];
             Html.writeParagraph(
                 "Phase '%s' current: %0.1f A",
                 monitoredPhaseData.Name.c_str(),
-                monitoredPhaseData.Pdelivered / CHARGE_VOLTAGE);
+                monitoredPhaseData.Power / CHARGE_VOLTAGE);
         }
         else
             Html.writeParagraph(
@@ -1419,7 +1440,7 @@ void handleHttpSmartMeterRequest()
 
     Html.writeParagraph(
         "Effective current limit: %0.1f A",
-         determineCurrentLimit());
+         determineCurrentLimit(false));
 
     Html.writeFooter();
 
@@ -1523,6 +1544,24 @@ void handleHttpConfigFormRequest()
     Tracer tracer(F(__func__));
 
     Html.writeHeader("Settings", Nav);
+
+#if USE_HOMEWIZARD_P1 == 2
+    if ((PersistentData.dsmrMonitor[0] != 0) && (PersistentData.p1BearerToken[0] == 0))
+    {
+        if (WiFiSM.shouldPerformAction("p1Token"))
+        {
+            String bearerToken = SmartMeter.getBearerToken(PersistentData.hostName);
+            if (bearerToken.length() > 0)
+                strncpy(PersistentData.p1BearerToken, bearerToken.c_str(), sizeof(PersistentData.p1BearerToken));
+            else
+                Html.writeParagraph(
+                    "Unable to retrieve P1 Token: %s",
+                    SmartMeter.getLastError().c_str());
+        }
+        else
+            Html.writeActionLink("p1Token", "Get P1 Token", currentTime, ButtonClass);
+    }
+#endif
 
     Html.writeFormStart("/config", "grid");
     PersistentData.writeHtmlForm(Html);
