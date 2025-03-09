@@ -16,16 +16,16 @@ CurrentSensor::CurrentSensor(uint8_t pin, size_t bufferSize)
 
 bool CurrentSensor::begin(uint16_t zero, float scale)
 {
-    Tracer tracer(F("CurrentSensor::begin"));
+    Tracer tracer("CurrentSensor::begin");
 
     int8_t adcChannel = digitalPinToAnalogChannel(_pin);
     if (adcChannel < 0 || adcChannel >= ADC1_CHANNEL_MAX)
     {
-        TRACE(F("Pin %d has no associated ADC1 channel.\n"));
+        TRACE("Pin %d has no associated ADC1 channel.\n", _pin);
         return false;
     }
     else
-        TRACE(F("Pin %d => ADC1 channel %d\n"), _pin, adcChannel);
+        TRACE("Pin %d => ADC1 channel %d\n", _pin, adcChannel);
     _adcChannel = static_cast<adc1_channel_t>(adcChannel);
 
     adc1_config_width(ADC_WIDTH_BIT_12);
@@ -42,11 +42,11 @@ bool CurrentSensor::begin(uint16_t zero, float scale)
 
 void CurrentSensor::measure(uint16_t periods)
 {
-    Tracer tracer(F("CurrentSensor::measure"));
+    Tracer tracer("CurrentSensor::measure");
 
     uint16_t maxPeriods = _sampleBufferSize * SAMPLE_INTERVAL_MS / PERIOD_MS;
     periods = std::min(periods, maxPeriods);
-    TRACE(F("Measuring %d periods...\n"), periods);
+    TRACE("Measuring %d periods...\n", periods);
 
     _sampleIndex = 0;
 
@@ -58,11 +58,11 @@ void CurrentSensor::measure(uint16_t periods)
 
 uint16_t CurrentSensor::calibrateZero()
 {
-    Tracer tracer(F("CurrentSensor::calibrateZero"));
+    Tracer tracer("CurrentSensor::calibrateZero");
 
     if (_sampleIndex == 0)
     {
-        TRACE(F("No samples\n"));
+        TRACE("No samples\n");
         return 0;
     }
 
@@ -72,7 +72,7 @@ uint16_t CurrentSensor::calibrateZero()
 
     _zero = total / _sampleIndex; // Average
 
-    TRACE(F("Zero set to %d\n"), _zero);
+    TRACE("Zero set to %d\n", _zero);
 
     return _zero;
 }
@@ -80,18 +80,18 @@ uint16_t CurrentSensor::calibrateZero()
 
 float CurrentSensor::calibrateScale(float actualRMS)
 {
-    Tracer tracer(F("CurrentSensor::calibrateScale"));
+    Tracer tracer("CurrentSensor::calibrateScale");
 
     float measuredRMS = getRMS();
     if ((measuredRMS > 0) && (measuredRMS < 100))
     {
         _scale *= actualRMS / measuredRMS;
-        TRACE(F("Measured %0.3f A, Actual %0.3f A => scale = %0.3f\n"), measuredRMS, actualRMS, _scale);
+        TRACE("Measured %0.3f A, Actual %0.3f A => scale = %0.3f\n", measuredRMS, actualRMS, _scale);
     }
     else
     {
         _scale = 0.016;
-        TRACE(F("Measured RMS out of range. Reset scale.\n"));
+        TRACE("Measured RMS out of range. Reset scale.\n");
     }
  
     return _scale;
@@ -139,7 +139,7 @@ float CurrentSensor::getDC()
 
 void  CurrentSensor::writeSampleCsv(Print& writeTo, bool raw)
 {
-    String csvHeader = raw ? F("DC, AC") : F("I (A)");
+    String csvHeader = raw ? "DC, AC" : "I (A)";
     writeTo.println(csvHeader);
 
     for (uint16_t i = 0; i < _sampleIndex; i++)

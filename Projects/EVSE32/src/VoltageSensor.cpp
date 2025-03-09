@@ -10,7 +10,7 @@ VoltageSensor::VoltageSensor(uint8_t pin)
 
 bool VoltageSensor::begin()
 {
-    Tracer tracer(F("VoltageSensor::begin"));
+    Tracer tracer("VoltageSensor::begin");
 
     pinMode(_pin, INPUT);
 
@@ -20,7 +20,7 @@ bool VoltageSensor::begin()
 
 bool VoltageSensor::detectSignal(uint32_t sensePeriodMs)
 {
-    Tracer tracer(F("VoltageSensor::detectSignal"));
+    Tracer tracer("VoltageSensor::detectSignal");
 
     int pinLevel = digitalRead(_pin);
 
@@ -29,11 +29,11 @@ bool VoltageSensor::detectSignal(uint32_t sensePeriodMs)
         delay(1);
         if (digitalRead(_pin) != pinLevel) 
         {
-            TRACE(F("%s edge detected.\n"), pinLevel ? "Falling" : "Rising");
+            TRACE("%s edge detected.\n"), pinLevel ? "Falling" : "Rising";
             return true;
         }
     }
 
-    TRACE(F("No edges detected in %d ms.\n"), sensePeriodMs);
+    TRACE("No edges detected in %d ms.\n", sensePeriodMs);
     return false;
 }

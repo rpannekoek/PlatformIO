@@ -37,7 +37,6 @@ constexpr int CHARGE_LOG_SIZE = 200;
 constexpr int CHARGE_LOG_PAGE_SIZE = 50;
 constexpr int EVENT_LOG_LENGTH = 50;
 
-#ifdef ARDUINO_LOLIN_S3_MINI
 constexpr uint8_t RELAY_START_PIN = 13;
 constexpr uint8_t RELAY_ON_PIN = 11;
 constexpr uint8_t CURRENT_SENSE_PIN = 4;
@@ -49,24 +48,10 @@ constexpr uint8_t CP_FEEDBACK_PIN = 16;
 constexpr uint8_t TEMP_SENSOR_PIN = 12;
 
 #ifdef DEBUG_ESP_PORT
-constexpr uint8_t STATUS_LED_PIN = RGB_BUILTIN;
+constexpr uint8_t STATUS_LED_PIN = LED_BUILTIN;
 #else
 constexpr uint8_t STATUS_LED_PIN = EXTERNAL_RGBLED_PIN;
 #endif
-
-#else
-constexpr uint8_t RELAY_START_PIN = 12;
-constexpr uint8_t RELAY_ON_PIN = 13;
-constexpr uint8_t CURRENT_SENSE_PIN = 34;
-constexpr uint8_t VOLTAGE_SENSE_PIN = 32;
-constexpr uint8_t EXTERNAL_RGBLED_PIN = 17;
-constexpr uint8_t CP_OUTPUT_PIN = 15;
-constexpr uint8_t CP_INPUT_PIN = 33;
-constexpr uint8_t CP_FEEDBACK_PIN = 16;
-constexpr uint8_t TEMP_SENSOR_PIN = 14;
-constexpr uint8_t STATUS_LED_PIN = EXTERNAL_RGBLED_PIN;
-#endif
-
 
 constexpr float ZERO_CURRENT_THRESHOLD = 0.2;
 constexpr float LOW_CURRENT_THRESHOLD = 0.75;
@@ -276,7 +261,7 @@ bool initTempSensor()
     DeviceAddress& addr = PersistentData.tempSensorAddress;
     if (!TempSensors.isConnected(addr))
     {
-        setFailure("Temperature sensor is not connected");
+        WiFiSM.logEvent("Temperature sensor is not connected");
         memset(PersistentData.tempSensorAddress, 0, sizeof(DeviceAddress));
         PersistentData.writeToEEPROM();
         return false;
@@ -533,6 +518,9 @@ void chargeControl()
 {
     Tracer tracer(F(__func__));
 
+    if (temperature > (PersistentData.tempLimit + 10))
+        setFailure("Temperature too high");
+
     if (!OutputVoltageSensor.detectSignal())
     {
         setFailure("Output voltage lost");
@@ -627,6 +615,8 @@ bool selfTest()
         WiFiSM.logEvent("Output current after relay deactivation: %0.2f A", outputCurrent);
         return false;
     }
+
+    // TODO: Check temp sensor
 
     ControlPilot.setReady();
     if (!ControlPilot.awaitStatus(ControlPilotStatus::Standby))
@@ -969,14 +959,12 @@ void onWiFiInitialized()
             if (state != EVSEState::Failure)
                 setFailure("Temperature sensor disconnected");
         }
-        else if (tMeasured == 85)
+        else if (tMeasured >= 85)
             WiFiSM.logEvent("Invalid temperature sensor reading");
         else
         {
             temperature = tMeasured + PersistentData.tempSensorOffset;
             DayStats.update(currentTime, temperature);
-            if (temperature > (PersistentData.tempLimit + 10) && state != EVSEState::Failure)
-                setFailure("Temperature too high");
         }
         
         isMeasuringTemp = false;

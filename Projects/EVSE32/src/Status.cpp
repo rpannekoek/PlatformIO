@@ -95,11 +95,11 @@ StatusLED::StatusLED(uint8_t pin)
 
 bool StatusLED::setStatus(EVSEState status)
 {
-    Tracer tracer(F("StatusLED::setStatus"), EVSEStateNames[status]);
+    Tracer tracer("StatusLED::setStatus", EVSEStateNames[status]);
 
     _statusColor = _statusColors[status];
     TRACE(
-        F("R=%d G=%d B=%d Breathe=%d\n"),
+        "R=%d G=%d B=%d Breathe=%d\n",
         _statusColor.red, _statusColor.green, _statusColor.blue, _statusColor.breathe);
 
     if (_statusColor.breathe != 0)

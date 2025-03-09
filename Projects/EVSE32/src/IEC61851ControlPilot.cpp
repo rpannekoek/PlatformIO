@@ -35,7 +35,7 @@ IEC61851ControlPilot::IEC61851ControlPilot(uint8_t outputPin, uint8_t inputPin, 
 
 bool IEC61851ControlPilot::begin(float scale)
 {
-    Tracer tracer(F("IEC61851ControlPilot::begin"));
+    Tracer tracer("IEC61851ControlPilot::begin");
 
     _dutyCycle = 0;
     _scale = scale; 
@@ -43,11 +43,11 @@ bool IEC61851ControlPilot::begin(float scale)
     int8_t adcChannel = digitalPinToAnalogChannel(_inputPin);
     if (adcChannel < 0 || adcChannel >= ADC1_CHANNEL_MAX)
     {
-        TRACE(F("Pin %d has no associated ADC1 channel.\n"));
+        TRACE("Pin %d has no associated ADC1 channel.\n");
         return false;
     }
     else
-        TRACE(F("Pin %d => ADC1 channel %d\n"), _inputPin, adcChannel);
+        TRACE("Pin %d => ADC1 channel %d\n", _inputPin, adcChannel);
     _adcChannel = static_cast<adc1_channel_t>(adcChannel);
 
     adc1_config_width(ADC_WIDTH_BIT_12);
@@ -75,7 +75,7 @@ bool IEC61851ControlPilot::begin(float scale)
 
 int IEC61851ControlPilot::calibrate()
 {
-    Tracer tracer(F("IEC61851ControlPilot::calibrate"));
+    Tracer tracer("IEC61851ControlPilot::calibrate");
 
     if (_dutyCycle == 0)
     {
@@ -97,7 +97,7 @@ int IEC61851ControlPilot::calibrate()
     if (standbyLevel >= MIN_CP_STANDBY_LEVEL)
     {
         _scale = (12.0F - ADC_OFFSET) / standbyLevel;
-        TRACE(F("Standby level: %d => scale = %0.4f\n"), standbyLevel, _scale);
+        TRACE("Standby level: %d => scale = %0.4f\n", standbyLevel, _scale);
     }
  
     if (_dutyCycle == 0)
@@ -109,7 +109,7 @@ int IEC61851ControlPilot::calibrate()
 
 void IEC61851ControlPilot::setOff()
 {
-    Tracer tracer(F("IEC61851ControlPilot::setOff"));
+    Tracer tracer("IEC61851ControlPilot::setOff");
 
 #if (ESP_ARDUINO_VERSION_MAJOR == 2)
     ledcDetachPin(_outputPin);
@@ -124,7 +124,7 @@ void IEC61851ControlPilot::setOff()
 
 void IEC61851ControlPilot::setReady()
 {
-    Tracer tracer(F("IEC61851ControlPilot::setReady"));
+    Tracer tracer("IEC61851ControlPilot::setReady");
 
 #if (ESP_ARDUINO_VERSION_MAJOR == 2)
     ledcDetachPin(_outputPin);
@@ -139,7 +139,7 @@ void IEC61851ControlPilot::setReady()
 
 float IEC61851ControlPilot::setCurrentLimit(float ampere)
 {
-    Tracer tracer(F("IEC61851ControlPilot::setCurrentLimit"));
+    Tracer tracer("IEC61851ControlPilot::setCurrentLimit");
 
     ampere = std::min(std::max(ampere, 6.0F), _maxCurrent);
     _dutyCycle =  ampere / 60.0F;
@@ -154,7 +154,7 @@ float IEC61851ControlPilot::setCurrentLimit(float ampere)
     ledcWrite(_pwmChannel, duty);
 
     TRACE(
-        F("Set current limit %0.1f A. Duty cycle %0.0f %% (%d)\n"),
+        "Set current limit %0.1f A. Duty cycle %0.0f %% (%d)\n",
         ampere,
         _dutyCycle * 100,
         duty);
@@ -178,7 +178,7 @@ float IEC61851ControlPilot::getVoltage()
         {
             if (i++ == 150)
             {
-                TRACE(F("Timeout waiting for CP low\n"));
+                TRACE("Timeout waiting for CP low\n");
                 return -1;
             }
             delayMicroseconds(10);
@@ -187,7 +187,7 @@ float IEC61851ControlPilot::getVoltage()
         {
             if (i++ == 300)
             {
-                TRACE(F("Timeout waiting for CP high\n"));
+                TRACE("Timeout waiting for CP high\n");
                 return -1;
             }
             delayMicroseconds(10);
@@ -226,7 +226,7 @@ void IEC61851ControlPilot::determineStatus()
         voltage = getVoltage();
         if (voltage == 0.0F && _dutyCycle > 0 && _dutyCycle < 1 && retries > 0)
         {
-            TRACE(F("Measured 0 V with duty cycle %0.0f. Retrying...\n"), _dutyCycle * 100);
+            TRACE("Measured 0 V with duty cycle %0.0f. Retrying...\n", _dutyCycle * 100);
             voltage = -1;
         }
     }

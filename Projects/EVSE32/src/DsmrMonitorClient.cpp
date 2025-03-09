@@ -19,11 +19,11 @@ DsmrMonitorClient::DsmrMonitorClient(uint16_t timeout)
 
 bool DsmrMonitorClient::begin(const char* host)
 {
-    Tracer tracer(F("DsmrMonitorClient::begin"), host);
+    Tracer tracer("DsmrMonitorClient::begin", host);
 
-    bool result = _httpClient.begin(_wifiClient, host, 80, F("/json"));
+    bool result = _httpClient.begin(_wifiClient, host, 80, "/json");
     if (!result)
-        _lastError = F("Initialization failed");
+        _lastError = "Initialization failed";
 
     isInitialized = true;
 
@@ -32,10 +32,10 @@ bool DsmrMonitorClient::begin(const char* host)
 
 int DsmrMonitorClient::requestData()
 {
-    Tracer tracer(F("DsmrMonitorClient::requestData"));
+    Tracer tracer("DsmrMonitorClient::requestData");
 
     int result = _httpClient.GET();
-    TRACE(F("GET result: %d\n"), result);
+    TRACE("GET result: %d\n", result);
 
     if (result < 0)
     {
@@ -44,13 +44,13 @@ int DsmrMonitorClient::requestData()
     }
     else if (result != HTTP_CODE_OK)
     {
-        _lastError = F("HTTP status code ");
+        _lastError = "HTTP status code ";
         _lastError += result;
         return result;
     }
     else if (_httpClient.getSize() < MIN_CONTENT_LENGTH)
     {
-        _lastError = F("Unexpected Content Length: ");
+        _lastError = "Unexpected Content Length: ";
         _lastError += _httpClient.getSize();
         return 0;
     }
@@ -71,13 +71,13 @@ int DsmrMonitorClient::requestData()
 
 bool DsmrMonitorClient::parseJson(String json)
 {
-    TRACE(F("JSON: '%s'\n"), json.c_str());
-    TRACE(F("\n"));
+    TRACE("JSON: '%s'\n", json.c_str());
+    TRACE("\n");
 
     DeserializationError parseError = deserializeJson(_response, json);
     if (parseError != DeserializationError::Ok)
     {
-        _lastError = F("JSON error: "); 
+        _lastError = "JSON error: "; 
         _lastError += parseError.c_str();
         return false;     
     }
@@ -95,7 +95,7 @@ bool DsmrMonitorClient::parseJson(String json)
         _electricity.push_back(phaseData);
     }
 
-    TRACE(F("Deserialized %d electricity phases.\n"), _electricity.size());
+    TRACE("Deserialized %d electricity phases.\n", _electricity.size());
 
     return true;
 }
