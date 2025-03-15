@@ -66,7 +66,6 @@ constexpr uint8_t STATUS_LED_PIN = LED_BUILTIN;
 constexpr uint8_t STATUS_LED_PIN = EXTERNAL_RGBLED_PIN;
 #endif
 
-constexpr float ZERO_CURRENT_THRESHOLD = 0.2;
 constexpr float LOW_CURRENT_THRESHOLD = 0.75;
 constexpr float CHARGE_VOLTAGE = 230;
 
@@ -614,7 +613,7 @@ bool selfTest()
 
     OutputCurrentSensor.measure();
     float outputCurrent = OutputCurrentSensor.getRMS(); 
-    if (outputCurrent > ZERO_CURRENT_THRESHOLD)
+    if (outputCurrent > PersistentData.noCurrentThreshold)
     {
         WiFiSM.logEvent("Output current before relay activation: %0.2f A", outputCurrent);
         return false;
@@ -624,7 +623,7 @@ bool selfTest()
 
     OutputCurrentSensor.measure();
     outputCurrent = OutputCurrentSensor.getRMS(); 
-    if (outputCurrent > ZERO_CURRENT_THRESHOLD)
+    if (outputCurrent > PersistentData.noCurrentThreshold)
     {
         WiFiSM.logEvent("Output current after relay activation: %0.2f A", outputCurrent);
         setRelay(false);
@@ -635,13 +634,17 @@ bool selfTest()
 
     OutputCurrentSensor.measure();
     outputCurrent = OutputCurrentSensor.getRMS(); 
-    if (outputCurrent > ZERO_CURRENT_THRESHOLD)
+    if (outputCurrent > PersistentData.noCurrentThreshold)
     {
         WiFiSM.logEvent("Output current after relay deactivation: %0.2f A", outputCurrent);
         return false;
     }
 
-    // TODO: Check temp sensor
+    if (!TempSensors.isConnected(PersistentData.tempSensorAddress))
+    {
+        WiFiSM.logEvent("Temperature sensor is not connected");
+        return false;
+    }
 
     ControlPilot.setReady();
     if (!ControlPilot.awaitStatus(ControlPilotStatus::Standby))
@@ -1393,6 +1396,8 @@ void handleHttpSmartMeterRequest()
         int dsmrResult = SmartMeter.awaitData();
         if (dsmrResult == HTTP_CODE_OK)
         {
+            Html.writeParagraph("Received response in %d ms.", SmartMeter.getResponseTimeMs());
+
             Html.writeTableStart();
             Html.writeRowStart();
             Html.writeHeaderCell("Phase");

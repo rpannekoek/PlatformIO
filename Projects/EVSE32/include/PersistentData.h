@@ -17,6 +17,7 @@ struct Settings : WiFiSettingsWithFTP
     uint16_t currentZero;
     uint16_t registeredBeaconCount;
     uuid128_t registeredBeacons[MAX_BT_DEVICES];
+    float noCurrentThreshold;
 #if USE_HOMEWIZARD_P1 == 2    
     char p1BearerToken[36];
 #endif
@@ -40,6 +41,7 @@ struct Settings : WiFiSettingsWithFTP
         addTimeSpanField(authorizeTimeout, "Authorize Timeout", 0, 3600, 15 * 60);
         addIntegerField(tempLimit, "Temperature Limit", 40, 60, 50);
         addFloatField(tempSensorOffset, "Temperature Offset", 1, -5.0, 5.0);
+        addFloatField(noCurrentThreshold, "No current threshold", 2, 0, 1, 0.5);
     }
 
     void initialize() override

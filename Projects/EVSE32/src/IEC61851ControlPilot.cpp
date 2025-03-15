@@ -77,10 +77,8 @@ int IEC61851ControlPilot::calibrate()
 {
     Tracer tracer("IEC61851ControlPilot::calibrate");
 
-    if (_dutyCycle == 0)
-    {
-        digitalWrite(_outputPin, 1); // 12 V
-    }
+    bool isOff = _dutyCycle == 0; 
+    if (isOff) setReady(); // Temporary set 12V output
 
     int standbyLevel;
     int retries = 0;
@@ -100,8 +98,7 @@ int IEC61851ControlPilot::calibrate()
         TRACE("Standby level: %d => scale = %0.4f\n", standbyLevel, _scale);
     }
  
-    if (_dutyCycle == 0)
-        digitalWrite(_outputPin, 0); // 0 V
+    if (isOff) setOff();
 
     return standbyLevel;
 }
@@ -117,6 +114,7 @@ void IEC61851ControlPilot::setOff()
     ledcDetach(_outputPin);
 #endif
 
+    pinMode(_outputPin, OUTPUT);
     digitalWrite(_outputPin, 0); // 0 V
     _dutyCycle = 0;
 }
@@ -132,6 +130,7 @@ void IEC61851ControlPilot::setReady()
     ledcDetach(_outputPin);
 #endif
 
+    pinMode(_outputPin, OUTPUT);
     digitalWrite(_outputPin, 1); // 12 V
     _dutyCycle = 1;
 }
