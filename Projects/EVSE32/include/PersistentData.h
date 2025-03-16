@@ -2,6 +2,7 @@
 #include <PersistentDataBase.h>
 
 constexpr size_t MAX_BT_DEVICES = 4;
+constexpr float DEFAULT_CURRENT_SCALE = (3.3F / 4096) * (1800 / 50);  // CT=1:1800, R=50  
 
 struct Settings : WiFiSettingsWithFTP
 {
@@ -14,7 +15,7 @@ struct Settings : WiFiSettingsWithFTP
     float tempSensorOffset;
     DeviceAddress tempSensorAddress;
     float currentScale;
-    uint16_t currentZero;
+    uint16_t currentZero; // Not used anymore
     uint16_t registeredBeaconCount;
     uuid128_t registeredBeacons[MAX_BT_DEVICES];
     float noCurrentThreshold;
@@ -48,8 +49,7 @@ struct Settings : WiFiSettingsWithFTP
     {
         WiFiSettingsWithFTP::initialize();
         memset(tempSensorAddress, 0, sizeof(DeviceAddress));
-        currentScale = 0.016;
-        currentZero = 2048;
+        currentScale = DEFAULT_CURRENT_SCALE; 
         registeredBeaconCount = 0;
         memset(registeredBeacons, 0, sizeof(registeredBeacons));
     }

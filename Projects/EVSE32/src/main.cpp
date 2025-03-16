@@ -287,6 +287,14 @@ bool initTempSensor()
 }
 
 
+bool measureOutputCurrent()
+{
+    bool success = OutputCurrentSensor.measure();
+    if (!success)
+        WiFiSM.logEvent("Measuring output current failed");
+    return success;
+}
+
 // Boot code
 void setup()
 {
@@ -378,7 +386,7 @@ void setup()
     WiFiSM.scanAccessPoints();
     WiFiSM.begin(PersistentData.wifiSSID, PersistentData.wifiKey, PersistentData.hostName);
 
-    if (!OutputCurrentSensor.begin(PersistentData.currentZero, PersistentData.currentScale))
+    if (!OutputCurrentSensor.begin(PersistentData.currentScale))
         setFailure("Failed initializing current sensor");
 
     if (!OutputVoltageSensor.begin())
@@ -457,8 +465,8 @@ bool stopCharging(const char* cause)
     int timeout = 50;
     do
     {
-        OutputCurrentSensor.measure();
-        outputCurrent = OutputCurrentSensor.getRMS();
+        if (measureOutputCurrent())
+            outputCurrent = OutputCurrentSensor.getRMS();
     }
     while (outputCurrent > LOW_CURRENT_THRESHOLD && --timeout > 0);
     if (timeout == 0)
@@ -551,8 +559,7 @@ void chargeControl()
         return;        
     }
 
-    OutputCurrentSensor.measure(); 
-    if (OutputCurrentSensor.getSampleCount() > 50)
+    if (OutputCurrentSensor.measure() && OutputCurrentSensor.getSampleCount() > 50)
     {
         outputCurrent = OutputCurrentSensor.getRMS();
         if (outputCurrent > currentLimit * 1.25)
@@ -591,7 +598,7 @@ bool selfTest()
     Tracer tracer(F(__func__));
 
     int cpStandbyLevel = ControlPilot.calibrate();
-    WiFiSM.logEvent("Control Pilot standby level: %d", cpStandbyLevel);
+    WiFiSM.logEvent("Control Pilot standby level: %d mV", cpStandbyLevel);
     if (cpStandbyLevel < MIN_CP_STANDBY_LEVEL)
     {
         WiFiSM.logEvent("Control Pilot standby level too low");
@@ -611,7 +618,7 @@ bool selfTest()
         return false;
     }
 
-    OutputCurrentSensor.measure();
+    if (!measureOutputCurrent()) return false;
     float outputCurrent = OutputCurrentSensor.getRMS(); 
     if (outputCurrent > PersistentData.noCurrentThreshold)
     {
@@ -621,7 +628,7 @@ bool selfTest()
 
     if (!setRelay(true)) return false;
 
-    OutputCurrentSensor.measure();
+    if (!measureOutputCurrent()) return false;
     outputCurrent = OutputCurrentSensor.getRMS(); 
     if (outputCurrent > PersistentData.noCurrentThreshold)
     {
@@ -632,7 +639,7 @@ bool selfTest()
 
     if (!setRelay(false)) return false;
 
-    OutputCurrentSensor.measure();
+    if (!measureOutputCurrent()) return false;
     outputCurrent = OutputCurrentSensor.getRMS(); 
     if (outputCurrent > PersistentData.noCurrentThreshold)
     {
@@ -1459,11 +1466,11 @@ void handleHttpCurrentRequest()
 
     bool raw = WebServer.hasArg("raw");
 
-    if (state != EVSEState::Charging)
-        OutputCurrentSensor.measure(10);
-
     HttpResponse.clear();
-    OutputCurrentSensor.writeSampleCsv(HttpResponse, raw);
+    if ((state == EVSEState::Charging) || OutputCurrentSensor.measure())
+        OutputCurrentSensor.writeSampleCsv(HttpResponse, raw);
+    else
+        HttpResponse.println("Measuring output current failed");
 
     WebServer.send(200, ContentTypeText, HttpResponse.c_str());
 }
@@ -1474,12 +1481,6 @@ void handleHttpCalibrateRequest()
     Tracer tracer(F(__func__));
 
     bool savePersistentData = false;
-
-    if (WiFiSM.shouldPerformAction(CAL_CURRENT_ZERO))
-    {
-        PersistentData.currentZero = OutputCurrentSensor.calibrateZero();
-        savePersistentData = true;
-    }
 
     if (WebServer.hasArg(CAL_CURRENT))
     {
@@ -1501,11 +1502,10 @@ void handleHttpCalibrateRequest()
     }
 
     if (state != EVSEState::Charging)
-        OutputCurrentSensor.measure(50); // Measure 50 periods (1 s) for accuracy
+        OutputCurrentSensor.measure();
 
     float outputCurrentRMS = OutputCurrentSensor.getRMS();
     float outputCurrentPeak = OutputCurrentSensor.getPeak();
-    float outputCurrentDC = OutputCurrentSensor.getDC();
     float cpVoltage = ControlPilot.getVoltage();
     float cpDutyCycle = ControlPilot.getDutyCycle();
     float tMeasured = TempSensors.getTempC(PersistentData.tempSensorAddress);
@@ -1521,11 +1521,9 @@ void handleHttpCalibrateRequest()
     Html.writeHeading("Output current", 2);
     Html.writeFormStart("/calibrate", "grid");
     HttpResponse.printf(F("<label>Samples</label><div>%d</div>\r\n"), OutputCurrentSensor.getSampleCount());
-    HttpResponse.printf(F("<label>Measured (DC)</labeL><div>%0.1f mA "), outputCurrentDC * 1000);
-    Html.writeActionLink(CAL_CURRENT_ZERO, "[Calibrate zero]", currentTime);
-    Html.writeDivEnd();
-    HttpResponse.printf(F("<label>Measured (Peak)</labeL><div>%0.2f A</div>\r\n"), outputCurrentPeak);
-    HttpResponse.printf(F("<label>Measured (RMS)</labeL><div>%0.2f A</div>\r\n"), outputCurrentRMS);
+    HttpResponse.printf(F("<label>Measured DC</label><div>%d</div>\r\n"), OutputCurrentSensor.getDC());
+    HttpResponse.printf(F("<label>Measured (Peak)</label><div>%0.2f A</div>\r\n"), outputCurrentPeak);
+    HttpResponse.printf(F("<label>Measured (RMS)</label><div>%0.2f A</div>\r\n"), outputCurrentRMS);
     Html.writeNumberBox(CAL_CURRENT, "Actual (RMS)", outputCurrentRMS, 0, 20, 2);
     Html.writeSubmitButton("Calibrate");
     Html.writeFormEnd();

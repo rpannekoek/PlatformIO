@@ -1,11 +1,16 @@
+#include <Arduino.h>
 #include <Tracer.h>
 #include "IEC61851ControlPilot.h"
 
 constexpr uint32_t PWM_FREQ = 1000;
 constexpr uint8_t PWM_RESOLUTION_BITS = 8;
-constexpr float STATUS_POLL_INTERVAL = 1.0;
 constexpr int OVERSAMPLING = 5;
-constexpr float ADC_OFFSET = 0.7;
+
+#ifdef DEBUG_ESP_PORT
+constexpr uint32_t STATUS_UPDATE_INTERVAL_MS = 5000;
+#else
+constexpr uint32_t STATUS_UPDATE_INTERVAL_MS = 1000;
+#endif
 
 const char* _statusNames[] =
 {
@@ -23,12 +28,11 @@ const char* IEC61851ControlPilot::getStatusName()
 }
 
 
-IEC61851ControlPilot::IEC61851ControlPilot(uint8_t outputPin, uint8_t inputPin, uint8_t feedbackPin,uint8_t pwmChannel, float maxCurrent)
+IEC61851ControlPilot::IEC61851ControlPilot(uint8_t outputPin, uint8_t inputPin, uint8_t feedbackPin, float maxCurrent)
 {
     _outputPin = outputPin;
     _inputPin = inputPin;
     _feedbackPin = feedbackPin;
-    _pwmChannel = pwmChannel;
     _maxCurrent = maxCurrent;
 }
 
@@ -40,36 +44,15 @@ bool IEC61851ControlPilot::begin(float scale)
     _dutyCycle = 0;
     _scale = scale; 
 
-    int8_t adcChannel = digitalPinToAnalogChannel(_inputPin);
-    if (adcChannel < 0 || adcChannel >= ADC1_CHANNEL_MAX)
-    {
-        TRACE("Pin %d has no associated ADC1 channel.\n");
-        return false;
-    }
-    else
-        TRACE("Pin %d => ADC1 channel %d\n", _inputPin, adcChannel);
-    _adcChannel = static_cast<adc1_channel_t>(adcChannel);
-
-    adc1_config_width(ADC_WIDTH_BIT_12);
-    adc1_config_channel_atten(_adcChannel, ADC_ATTEN_DB_12);
-
     pinMode(_inputPin, ANALOG);
     pinMode(_outputPin, OUTPUT);
     pinMode(_feedbackPin, INPUT);
 
     digitalWrite(_outputPin, 0); // 0 V
 
-    _statusTicker.attach(STATUS_POLL_INTERVAL, determineStatus, this);
+    analogSetPinAttenuation(_inputPin, ADC_11db);
 
-#if (ESP_ARDUINO_VERSION_MAJOR == 2)
-    uint32_t freq = ledcSetup(_pwmChannel, PWM_FREQ, 8); // 1 kHz, 8 bits
-    return freq == PWM_FREQ;
-#else
-    // No separate PWM channel initialization anymore (see ledcAttach)
-    // Most LEDC functions now expect pin instead of channel; let _pwmChannel be the pin number for compatibility.
-    _pwmChannel = _outputPin;
     return true;
-#endif
 }
 
 
@@ -87,14 +70,14 @@ int IEC61851ControlPilot::calibrate()
         delay(100);
         standbyLevel = 0;
         for (int i = 0; i < OVERSAMPLING; i++)
-            standbyLevel += adc1_get_raw(_adcChannel);
+            standbyLevel += analogReadMilliVolts(_inputPin);
         standbyLevel /= OVERSAMPLING;
     }
-    while ((standbyLevel < MIN_CP_STANDBY_LEVEL) && (retries++ < 20));
+    while ((standbyLevel < MIN_CP_STANDBY_LEVEL) && (retries++ < 10));
 
     if (standbyLevel >= MIN_CP_STANDBY_LEVEL)
     {
-        _scale = (12.0F - ADC_OFFSET) / standbyLevel;
+        _scale = 12.0F / standbyLevel;
         TRACE("Standby level: %d => scale = %0.4f\n", standbyLevel, _scale);
     }
  
@@ -108,13 +91,12 @@ void IEC61851ControlPilot::setOff()
 {
     Tracer tracer("IEC61851ControlPilot::setOff");
 
-#if (ESP_ARDUINO_VERSION_MAJOR == 2)
-    ledcDetachPin(_outputPin);
-#else
-    ledcDetach(_outputPin);
-#endif
+    if (_dutyCycle > 0 && _dutyCycle < 1)
+    {
+        ledcDetach(_outputPin);
+        pinMode(_outputPin, OUTPUT);
+    }
 
-    pinMode(_outputPin, OUTPUT);
     digitalWrite(_outputPin, 0); // 0 V
     _dutyCycle = 0;
 }
@@ -124,13 +106,12 @@ void IEC61851ControlPilot::setReady()
 {
     Tracer tracer("IEC61851ControlPilot::setReady");
 
-#if (ESP_ARDUINO_VERSION_MAJOR == 2)
-    ledcDetachPin(_outputPin);
-#else
-    ledcDetach(_outputPin);
-#endif
+    if (_dutyCycle > 0 && _dutyCycle < 1)
+    {
+        ledcDetach(_outputPin);
+        pinMode(_outputPin, OUTPUT);
+    }
 
-    pinMode(_outputPin, OUTPUT);
     digitalWrite(_outputPin, 1); // 12 V
     _dutyCycle = 1;
 }
@@ -144,13 +125,9 @@ float IEC61851ControlPilot::setCurrentLimit(float ampere)
     _dutyCycle =  ampere / 60.0F;
     uint32_t duty = static_cast<uint32_t>(std::round(_dutyCycle * 256));
 
-#if (ESP_ARDUINO_VERSION_MAJOR == 2)
-    ledcAttachPin(_outputPin, _pwmChannel);
-#else
     if (!ledcAttach(_outputPin, PWM_FREQ, PWM_RESOLUTION_BITS))
         TRACE("Unable to attach LEDC to pin %u\n", _outputPin);
-#endif
-    ledcWrite(_pwmChannel, duty);
+    ledcWrite(_outputPin, duty);
 
     TRACE(
         "Set current limit %0.1f A. Duty cycle %0.0f %% (%d)\n",
@@ -168,8 +145,8 @@ float IEC61851ControlPilot::getVoltage()
     if (_dutyCycle > 0 && _dutyCycle < 1)
     {
         // Can't measure voltage is duty cycle is very low   
-        originalDuty = ledcRead(_pwmChannel);
-        if (originalDuty < 32) ledcWrite(_pwmChannel, 32);
+        originalDuty = ledcRead(_outputPin);
+        if (originalDuty < 32) ledcWrite(_outputPin, 32);
 
         // Wait for CP output low -> high transition
         int i = 0;
@@ -194,11 +171,10 @@ float IEC61851ControlPilot::getVoltage()
         delayMicroseconds(5); // Just switched to high; give signal some time to settle
     }
 
-    int sample = adc1_get_raw(_adcChannel);
-    float voltage = (sample < 5) ? 0.0F : _scale * sample + ADC_OFFSET;
+    float voltage = _scale * analogReadMilliVolts(_inputPin);
 
     if ((_dutyCycle > 0) && (_dutyCycle < 0.125))
-        ledcWrite(_pwmChannel, originalDuty);
+        ledcWrite(_outputPin, originalDuty);
 
     return voltage;
 }
@@ -216,6 +192,17 @@ bool IEC61851ControlPilot::awaitStatus(ControlPilotStatus status, int timeoutMs)
 }
 
 
+ControlPilotStatus IEC61851ControlPilot::getStatus()
+{
+    if (millis() >= _nextStatusUpdateMillis) 
+    {
+        determineStatus();
+        TRACE("CP: %s\n", getStatusName());
+    }
+    return _status;
+}
+
+
 void IEC61851ControlPilot::determineStatus() 
 {
     float voltage;
@@ -223,7 +210,7 @@ void IEC61851ControlPilot::determineStatus()
     do
     {
         voltage = getVoltage();
-        if (voltage == 0.0F && _dutyCycle > 0 && _dutyCycle < 1 && retries > 0)
+        if (voltage == 0.0F && _dutyCycle > 0  && retries > 0)
         {
             TRACE("Measured 0 V with duty cycle %0.0f. Retrying...\n", _dutyCycle * 100);
             voltage = -1;
@@ -241,10 +228,6 @@ void IEC61851ControlPilot::determineStatus()
         _status = ControlPilotStatus::ChargingVentilated;
     else
         _status = ControlPilotStatus::NoPower;
-}
 
-
-void IEC61851ControlPilot::determineStatus(IEC61851ControlPilot* instancePtr)
-{
-    instancePtr->determineStatus();
+    _nextStatusUpdateMillis = millis() + STATUS_UPDATE_INTERVAL_MS;
 }

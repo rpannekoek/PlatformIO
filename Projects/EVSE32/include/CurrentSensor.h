@@ -1,44 +1,28 @@
-#include <driver/adc.h>
-#include <Ticker.h>
+#include <stdint.h>
+#include <esp_adc/adc_continuous.h>
 
 class CurrentSensor
 {
     public:
         CurrentSensor(uint8_t pin, size_t bufferSize = 1024);
 
-        bool begin(uint16_t zero = 2048, float scale = 0.016F); // Defaults are approximates
-
-        uint16_t calibrateZero();
+        bool begin(float scale);
         float calibrateScale(float actualRMS);
-
-        void measure(uint16_t periods = 5);
-
-        uint16_t inline getSampleCount()
-        {
-            return _sampleIndex;
-        }
-
-        float inline getSample(uint16_t index)
-        {
-            int intValue = (int)_sampleBufferPtr[index] - _zero;
-            return _scale * intValue;
-        }
+        bool measure(uint16_t periods = 5);
+        uint16_t getSampleCount() { return _sampleIndex; }
 
         float getPeak();
         float getRMS();
-        float getDC();
+        uint16_t getDC() { return _dc; }
 
         void writeSampleCsv(Print& writeTo, bool raw);
 
     private:
         uint8_t _pin;
-        adc1_channel_t _adcChannel;
-        Ticker _ticker;
         uint16_t _sampleBufferSize;
-        uint16_t volatile _sampleIndex;
-        uint16_t* _sampleBufferPtr = nullptr;
-        uint16_t _zero;
+        uint16_t _sampleIndex;
+        int16_t* _sampleBufferPtr = nullptr;
+        int16_t _dc;
         float _scale;
-
-        static void sample(CurrentSensor* instancePtr);
+        adc_continuous_handle_t _adcContinuousHandle;
 };

@@ -1,7 +1,7 @@
-#include <driver/adc.h>
 #include <Ticker.h>
 
-#define MIN_CP_STANDBY_LEVEL 2500
+constexpr int MIN_CP_STANDBY_LEVEL = 2000;
+constexpr float DEFAULT_SCALE = 0.001F * (82+22) / 22; // 82k/22k voltage divider
 
 enum struct ControlPilotStatus
 {
@@ -16,46 +16,30 @@ enum struct ControlPilotStatus
 class IEC61851ControlPilot
 {
     public:
-        IEC61851ControlPilot(uint8_t outputPin, uint8_t inputPin, uint8_t feedbackPin, uint8_t pwmChannel = 0, float maxCurrent = 16);
+        IEC61851ControlPilot(uint8_t outputPin, uint8_t inputPin, uint8_t feedbackPin, float maxCurrent = 16);
 
-        bool begin(float scale = 0.0041); // Approximation using 82k/22k voltage divider
+        float getDutyCycle() { return _dutyCycle; }
 
+        bool begin(float scale = DEFAULT_SCALE);
         int calibrate();
-
         void setOff();
-
         void setReady();
-
         float setCurrentLimit(float ampere);
-
         float getVoltage();
-
         bool awaitStatus(ControlPilotStatus status, int timeoutMs = 500);
-
-        ControlPilotStatus inline getStatus()
-        {
-            return _status;
-        }
-
+        ControlPilotStatus getStatus();
         const char* getStatusName();
-
-        float inline getDutyCycle()
-        {
-            return _dutyCycle;
-        }
 
     private:
         uint8_t _outputPin;
         uint8_t _inputPin;
         uint8_t _feedbackPin;
         uint8_t _pwmChannel;
-        adc1_channel_t _adcChannel;
         float _dutyCycle;
         float _scale;
         float _maxCurrent;
         ControlPilotStatus volatile _status;
-        Ticker _statusTicker;
+        uint32_t _nextStatusUpdateMillis = 0;
 
         void determineStatus(); 
-        static void determineStatus(IEC61851ControlPilot* instancePtr); 
 };
