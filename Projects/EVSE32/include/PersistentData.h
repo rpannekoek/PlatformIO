@@ -19,6 +19,8 @@ struct Settings : WiFiSettingsWithFTP
     uint16_t registeredBeaconCount;
     uuid128_t registeredBeacons[MAX_BT_DEVICES];
     float noCurrentThreshold;
+    int solarPowerThreshold;
+    int solarOnOffDelay;
 #if USE_HOMEWIZARD_P1 == 2    
     char p1BearerToken[36];
 #endif
@@ -43,6 +45,8 @@ struct Settings : WiFiSettingsWithFTP
         addIntegerField(tempLimit, "Temperature Limit", 40, 60, 50);
         addFloatField(tempSensorOffset, "Temperature Offset", 1, -5.0, 5.0);
         addFloatField(noCurrentThreshold, "No current threshold", 2, 0, 1, 0.5);
+        addIntegerField(solarPowerThreshold, "Solar power threshold", 0, 100, 50);
+        addTimeSpanField(solarOnOffDelay, "Solar on/off delay", SECONDS_PER_MINUTE, SECONDS_PER_HOUR, SECONDS_PER_HOUR);
     }
 
     void initialize() override

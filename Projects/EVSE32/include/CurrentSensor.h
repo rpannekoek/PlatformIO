@@ -6,10 +6,12 @@ class CurrentSensor
     public:
         CurrentSensor(uint8_t pin, size_t bufferSize = 1024);
 
+        uint16_t getSampleCount() { return _sampleIndex; }
+
         bool begin(float scale);
         float calibrateScale(float actualRMS);
         bool measure(uint16_t periods = 5);
-        uint16_t getSampleCount() { return _sampleIndex; }
+        void setTestCurrent(float current);
 
         float getPeak();
         float getRMS();
@@ -25,4 +27,5 @@ class CurrentSensor
         int16_t _dc;
         float _scale;
         adc_continuous_handle_t _adcContinuousHandle;
+        float _testCurrent = -1;
 };

@@ -43,12 +43,14 @@ DsmrMonitorClient SmartMeter;
 constexpr int FTP_RETRY_INTERVAL = 15 * SECONDS_PER_MINUTE;
 constexpr int HTTP_POLL_INTERVAL = 60;
 constexpr int TEMP_POLL_INTERVAL = 10;
+constexpr int AUTO_RESUME_INTERVAL = 60;
 constexpr int CHARGE_CONTROL_INTERVAL = 10;
 constexpr int CHARGE_LOG_AGGREGATIONS = 6;
-constexpr int CHARGE_STATS_SIZE = 5;
+constexpr int CHARGE_STATS_SIZE = 10;
 constexpr int CHARGE_LOG_SIZE = 200;
 constexpr int CHARGE_LOG_PAGE_SIZE = 50;
 constexpr int EVENT_LOG_LENGTH = 50;
+constexpr size_t MIN_CHARGE_TIME_OPTIONS = 5;
 
 constexpr uint8_t RELAY_START_PIN = 13;
 constexpr uint8_t RELAY_ON_PIN = 11;
@@ -67,7 +69,6 @@ constexpr uint8_t STATUS_LED_PIN = EXTERNAL_RGBLED_PIN;
 #endif
 
 constexpr float LOW_CURRENT_THRESHOLD = 0.75;
-constexpr float CHARGE_VOLTAGE = 230;
 
 #define CAL_CURRENT "ActualCurrent"
 #define CAL_CURRENT_ZERO "CurrentZero"
@@ -111,6 +112,7 @@ const char* ContentTypeJson = "application/json";
 const char* ContentTypeText = "text/plain";
 
 const char* ButtonClass = "button";
+const char* ActionClass = "action";
 
 ESPWebServer WebServer(80); // Default HTTP port
 WiFiNTP TimeServer;
@@ -133,8 +135,10 @@ Navigation Nav;
 
 EVSEState state = EVSEState::Booting;
 float temperature = 0;
+float solarPower = 0;
+float outputVoltage = 230; // default
 float outputCurrent = 0;
-float currentLimit = 0;
+float currentLimit = 16; // for test purposes
 int aggregations = 0;
 bool isRelayActivated = false;
 bool isWebAuthorized = false;
@@ -147,31 +151,21 @@ time_t tempPollTime = 0;
 time_t chargeControlTime = 0;
 time_t ftpSyncTime = 0;
 time_t lastFTPSyncTime = 0;
+time_t autoSuspendMinTime = 0;
+time_t autoSuspendMaxTime = 0;
+time_t autoResumeTime = 0;
 
 int logEntriesToSync = 0;
 ChargeLogEntry newChargeLogEntry;
 ChargeLogEntry* lastChargeLogEntryPtr = nullptr;
-
 ChargeStatsEntry* lastChargeStatsPtr = nullptr;
 
-// Forward defines
-void handleHttpRootRequest();
-void handleHttpEventLogRequest();
-void handleHttpChargeLogRequest();
-void handleHttpSyncFTPRequest();
-void handleHttpBluetoothRequest();
-void handleHttpBluetoothFormPost();
-void handleHttpSmartMeterRequest();
-void handleHttpCalibrateRequest();
-void handleHttpConfigFormRequest();
-void handleHttpConfigFormPost();
-void handleHttpBluetoothJsonRequest();
-void handleHttpCurrentRequest();
-void onWiFiTimeSynced();
-void onWiFiInitialized();
-bool setRelay(bool);
+char* minChargeTimeOptions[MIN_CHARGE_TIME_OPTIONS];
 
- 
+// Forward defines
+bool setRelay(bool on);
+
+
 void setState(EVSEState newState)
 {
     state = newState;
@@ -295,133 +289,6 @@ bool measureOutputCurrent()
     return success;
 }
 
-// Boot code
-void setup()
-{
-    Serial.begin(115200); // Use same baudrate as bootloader
-    Serial.setTimeout(1000);
-    Serial.println();
-
-    #ifdef DEBUG_ESP_PORT
-    Tracer::traceTo(DEBUG_ESP_PORT);
-    Tracer::traceFreeHeap();
-    #endif
-
-    if (!StateLED.begin())
-        setFailure("Failed initializing RGB LED");
-
-    PersistentData.begin();
-    TimeServer.begin(PersistentData.ntpServer);
-    Html.setTitlePrefix(PersistentData.hostName);
-
-    Nav.width = "8em";
-    Nav.menuItems = 
-    {
-        MenuItem
-        {
-            .icon = Files[HomeIcon],
-            .label = PSTR("Home"),
-            .handler = handleHttpRootRequest
-        },
-        MenuItem
-        {
-            .icon = Files[LogFileIcon],
-            .label = PSTR("Event log"),
-            .urlPath = PSTR("events"),
-            .handler = handleHttpEventLogRequest
-        },
-        MenuItem
-        {
-            .icon = Files[FlashIcon],
-            .label = PSTR("Charge log"),
-            .urlPath = PSTR("chargelog"),
-            .handler = handleHttpChargeLogRequest
-        },
-        MenuItem
-        {
-            .icon = Files[UploadIcon],
-            .label = PSTR("FTP Sync"),
-            .urlPath = PSTR("sync"),
-            .handler= handleHttpSyncFTPRequest
-        },
-        MenuItem
-        {
-            .icon = Files[BluetoothIcon],
-            .label = PSTR("Bluetooth"),
-            .urlPath = PSTR("bt"),
-            .handler = handleHttpBluetoothRequest,
-            .postHandler = handleHttpBluetoothFormPost
-        },
-        MenuItem
-        {
-            .icon = Files[MeterIcon],
-            .label = PSTR("Smart Meter"),
-            .urlPath = PSTR("dsmr"),
-            .handler = handleHttpSmartMeterRequest
-        },
-        MenuItem
-        {
-            .icon = Files[CalibrateIcon],
-            .label = PSTR("Calibrate"),
-            .urlPath = PSTR("calibrate"),
-            .handler = handleHttpCalibrateRequest
-        },
-        MenuItem
-        {
-            .icon = Files[SettingsIcon],
-            .label = PSTR("Settings"),
-            .urlPath = PSTR("config"),
-            .handler = handleHttpConfigFormRequest,
-            .postHandler = handleHttpConfigFormPost
-        },
-    };
-    Nav.registerHttpHandlers(WebServer);
-
-    WebServer.on("/bt/json", handleHttpBluetoothJsonRequest);
-    WebServer.on("/current", handleHttpCurrentRequest);
-    
-    WiFiSM.registerStaticFiles(Files, _LastFileId);
-    WiFiSM.on(WiFiInitState::TimeServerSynced, onWiFiTimeSynced);
-    WiFiSM.on(WiFiInitState::Initialized, onWiFiInitialized);
-    WiFiSM.scanAccessPoints();
-    WiFiSM.begin(PersistentData.wifiSSID, PersistentData.wifiKey, PersistentData.hostName);
-
-    if (!OutputCurrentSensor.begin(PersistentData.currentScale))
-        setFailure("Failed initializing current sensor");
-
-    if (!OutputVoltageSensor.begin())
-        setFailure("Failed initializing voltage sensor");
-
-    pinMode(RELAY_START_PIN, OUTPUT);
-    pinMode(RELAY_ON_PIN, OUTPUT);
-    setRelay(false);
-
-    if (!ControlPilot.begin())
-        setFailure("Failed initializing Control Pilot");
-
-    if (Bluetooth.begin(PersistentData.hostName))
-        Bluetooth.registerBeacons(PersistentData.registeredBeaconCount, PersistentData.registeredBeacons);
-    else
-        setFailure("Failed initializing Bluetooth");
-
-    if (PersistentData.dsmrMonitor[0] != 0)
-    {
-        if (SmartMeter.begin(PersistentData.dsmrMonitor))
-        {
-#if USE_HOMEWIZARD_P1 == 2
-            SmartMeter.setBearerToken(PersistentData.p1BearerToken);
-#endif
-        }
-        else
-            setFailure("Failed initializing Smart Meter");
-    }
-
-    initTempSensor();
-
-    Tracer::traceFreeHeap();
-}
-
-
 bool isChargingAuthorized()
 {
     if (isWebAuthorized)
@@ -449,56 +316,6 @@ bool isChargingAuthorized()
         Bluetooth.startDiscovery();
 
     return false;
-}
-
-
-bool stopCharging(const char* cause)
-{
-    Tracer tracer(F(__func__), cause);
-
-    WiFiSM.logEvent("Charging stopped by %s.", cause);
-
-    ControlPilot.setOff();
-    ControlPilot.awaitStatus(ControlPilotStatus::NoPower);
-
-    // Wait max 5 seconds for output current to drop below threshold
-    int timeout = 50;
-    do
-    {
-        if (measureOutputCurrent())
-            outputCurrent = OutputCurrentSensor.getRMS();
-    }
-    while (outputCurrent > LOW_CURRENT_THRESHOLD && --timeout > 0);
-    if (timeout == 0)
-        WiFiSM.logEvent("Vehicle keeps drawing current: %0.1f A", outputCurrent);
-
-    if (!setRelay(false)) return false;    
-
-    ControlPilot.setReady();
-    ControlPilot.awaitStatus(ControlPilotStatus::VehicleDetected);
-
-    switch (ControlPilot.getStatus())
-    {
-        case ControlPilotStatus::Standby:
-            setState(EVSEState::Ready);
-            break;
-
-        case ControlPilotStatus::VehicleDetected:
-            setState(EVSEState::ChargeCompleted);
-            break;
-
-        default:
-            setState(EVSEState::StopCharging);
-    }
-
-    lastChargeStatsPtr->update(currentTime, outputCurrent * CHARGE_VOLTAGE, temperature);
-    if (PersistentData.isFTPEnabled())
-    {
-        ftpSyncTime = currentTime;
-        ftpSyncChargeStats = true;
-    }
-
-    return true;
 }
 
 
@@ -534,12 +351,90 @@ float determineCurrentLimit(bool awaitSmartMeter)
         }
     }
 
-    PhaseData& phase = SmartMeter.electricity[PersistentData.dsmrPhase - 1]; 
+    PhaseData& phase = SmartMeter.electricity[PersistentData.dsmrPhase - 1];
+    outputVoltage = phase.Voltage; 
     float phaseCurrent = phase.Power / phase.Voltage; 
-    if (state == EVSEState::Charging)
-        phaseCurrent = std::max(phaseCurrent - outputCurrent, 0.0F);
+    if (state == EVSEState::Charging) 
+    {
+        phaseCurrent -= outputCurrent;
+        solarPower = std::max(outputCurrent * outputVoltage - phase.Power, 0.0F); 
+    }
 
     return std::min((float)PersistentData.currentLimit - phaseCurrent, deratedCurrentLimit);
+}
+
+
+bool startCharging()
+{
+    Tracer tracer(__func__);
+
+    bool success = setRelay(true); 
+    if (success)
+    {
+        currentLimit = ControlPilot.setCurrentLimit(determineCurrentLimit(true));
+        setState(EVSEState::AwaitCharging);
+    }
+    return success;
+}
+
+
+bool stopCharging(bool suspend)
+{
+    Tracer tracer(__func__);
+
+    autoSuspendMinTime = 0;
+    autoSuspendMaxTime = 0;
+    autoResumeTime = 0;
+
+    if (suspend)
+        WiFiSM.logEvent("Charging suspended.");
+    else
+        WiFiSM.logEvent("Charging stopped by vehicle.");
+
+    ControlPilot.setOff();
+    ControlPilot.awaitStatus(ControlPilotStatus::NoPower);
+
+    // Wait max 5 seconds for output current to drop below threshold
+    int timeout = 50;
+    do
+    {
+        if (measureOutputCurrent())
+            outputCurrent = OutputCurrentSensor.getRMS();
+    }
+    while (outputCurrent > LOW_CURRENT_THRESHOLD && --timeout > 0);
+    if (timeout == 0)
+        WiFiSM.logEvent("Vehicle keeps drawing current: %0.1f A", outputCurrent);
+
+    if (!setRelay(false)) return false;    
+
+    ControlPilot.setReady();
+    ControlPilot.awaitStatus(ControlPilotStatus::VehicleDetected, 1000);
+
+    switch (ControlPilot.getStatus())
+    {
+        case ControlPilotStatus::Standby:
+            setState(EVSEState::Ready);
+            break;
+
+        case ControlPilotStatus::VehicleDetected:
+            if (suspend)
+                setState(EVSEState::ChargeSuspended);
+            else
+                setState(EVSEState::ChargeCompleted);
+            break;
+
+        default:
+            setState(EVSEState::StopCharging);
+    }
+
+    lastChargeStatsPtr->update(currentTime, outputCurrent * outputVoltage, temperature);
+    if (PersistentData.isFTPEnabled())
+    {
+        ftpSyncTime = currentTime;
+        ftpSyncChargeStats = true;
+    }
+
+    return true;
 }
 
 
@@ -568,12 +463,32 @@ void chargeControl()
             return;
         }
         float cl = determineCurrentLimit(true);
-        if (cl > 0) currentLimit = ControlPilot.setCurrentLimit(cl);
+        if (cl > 0) 
+        {
+            currentLimit = ControlPilot.setCurrentLimit(cl);
+
+            if ((autoSuspendMinTime != 0) && (currentTime >= autoSuspendMinTime))
+            {
+                if ((solarPower > PersistentData.solarPowerThreshold) || (autoSuspendMaxTime == 0))
+                    autoSuspendMaxTime = currentTime + PersistentData.solarOnOffDelay;
+                else if (currentTime >= autoSuspendMaxTime)
+                {
+                    WiFiSM.logEvent(
+                        "Solar power below %d W for %s",
+                        PersistentData.solarPowerThreshold,
+                        formatTimeSpan(PersistentData.solarOnOffDelay, true));
+                    stopCharging(true);
+
+                    // After auto suspend, enable auto resume.
+                    autoResumeTime = currentTime + PersistentData.solarOnOffDelay;
+                }
+            }
+        }
     }
     else
         WiFiSM.logEvent("Insufficient current samples: %d", OutputCurrentSensor.getSampleCount());
 
-    lastChargeStatsPtr->update(currentTime, outputCurrent * CHARGE_VOLTAGE, temperature);
+    lastChargeStatsPtr->update(currentTime, outputCurrent * outputVoltage, temperature);
 
     newChargeLogEntry.update(currentLimit, outputCurrent, temperature);
     if (++aggregations == CHARGE_LOG_AGGREGATIONS)
@@ -695,13 +610,7 @@ void runEVSEStateMachine()
 
         case EVSEState::Authorize: // Await authorization
             if (isChargingAuthorized())
-            {
-                if (setRelay(true))
-                {
-                    currentLimit = ControlPilot.setCurrentLimit(determineCurrentLimit(true));
-                    setState(EVSEState::AwaitCharging);
-                }
-            }
+                startCharging();
             else if (cpStatus == ControlPilotStatus::Standby)
                 setState(EVSEState::Ready);
             else if (cpStatus != ControlPilotStatus::VehicleDetected)
@@ -734,7 +643,7 @@ void runEVSEStateMachine()
 
         case EVSEState::Charging:
             if (cpStatus == ControlPilotStatus::VehicleDetected || cpStatus == ControlPilotStatus::Standby)
-                stopCharging("vehicle");
+                stopCharging(false);
             else if (currentTime >= chargeControlTime)
             {
                 chargeControlTime = currentTime + CHARGE_CONTROL_INTERVAL;
@@ -744,11 +653,43 @@ void runEVSEStateMachine()
 
         case EVSEState::StopCharging:
             if (cpStatus == ControlPilotStatus::VehicleDetected)
-                setState(EVSEState::ChargeCompleted);
+                setState(EVSEState::ChargeSuspended);
             else if (cpStatus == ControlPilotStatus::Standby)
                 setState(EVSEState::Ready);
             else if (cpStatus != ControlPilotStatus::Charging && cpStatus != ControlPilotStatus::ChargingVentilated)
                 setUnexpectedControlPilotStatus();
+            break;
+
+        case EVSEState::ChargeSuspended:
+            if (cpStatus == ControlPilotStatus::Standby)
+                setState(EVSEState::Ready);
+            else if (cpStatus != ControlPilotStatus::VehicleDetected)
+                setUnexpectedControlPilotStatus();
+            else if ((autoResumeTime != 0) && (currentTime >= chargeControlTime) && WiFiSM.isConnected())
+            {
+                int dsmrResult = SmartMeter.requestData();
+                if (dsmrResult != HTTP_REQUEST_PENDING)
+                {
+                    if (dsmrResult == HTTP_OK)
+                    {
+                        PhaseData& phaseData = SmartMeter.electricity[PersistentData.dsmrPhase - 1];
+                        solarPower = std::max(-phaseData.Power, 0.0F);
+                        if (solarPower < PersistentData.solarPowerThreshold)
+                            autoResumeTime = currentTime + PersistentData.solarOnOffDelay;
+                        else if (currentTime >= autoResumeTime)
+                        {
+                            WiFiSM.logEvent(
+                                "Solar power above %d W for %s",
+                                PersistentData.solarPowerThreshold,
+                                formatTimeSpan(PersistentData.solarOnOffDelay, true));
+                            startCharging();
+                        }
+                    }
+                    else
+                        WiFiSM.logEvent("SmartMeter: %s", SmartMeter.getLastError());
+                    chargeControlTime = currentTime + AUTO_RESUME_INTERVAL;
+                }
+            }
             break;
 
         case EVSEState::ChargeCompleted:
@@ -767,7 +708,7 @@ void runEVSEStateMachine()
 
 void test(String message)
 {
-    Tracer tracer(F(__func__), message.c_str());
+    Tracer tracer(__func__, message.c_str());
 
     if (message.startsWith("testF"))
     {
@@ -846,25 +787,21 @@ void test(String message)
         int number = message.substring(1).toInt();
         setState(static_cast<EVSEState>(number));
     }
-}
-
-
-// Called repeatedly
-void loop() 
-{
-    currentTime = WiFiSM.getCurrentTime();
-
-    // Let WiFi State Machine handle initialization and web requests
-    // This also calls the onXXX methods below
-    WiFiSM.run();
-
-    if (Serial.available())
+    else if (message.startsWith("cp"))
     {
-        String message = Serial.readStringUntil('\n');
-        test(message);
+        int number = message.substring(2).toInt();
+        ControlPilot.setTestStatus(static_cast<ControlPilotStatus>(number));
     }
-
-    runEVSEStateMachine();
+    else if (message.startsWith("vs"))
+    {
+        int number = message.substring(2).toInt();
+        OutputVoltageSensor.setTestState(number);
+    }
+    else if (message.startsWith("cs"))
+    {
+        float number = message.substring(2).toFloat();
+        OutputCurrentSensor.setTestCurrent(number);
+    }
 }
 
 
@@ -1018,135 +955,6 @@ void onWiFiInitialized()
             ftpSyncTime = currentTime + FTP_RETRY_INTERVAL;
         }
     }
-}
-
-
-void writeChargeStatistics()
-{
-    Html.writeHeading("Charging sessions");
-
-    Html.writeTableStart();
-    Html.writeRowStart();
-    Html.writeHeaderCell("Start");
-    Html.writeHeaderCell("Hours");
-    Html.writeHeaderCell("T (°C)");
-    Html.writeHeaderCell("P (kW)");
-    Html.writeHeaderCell("E (kWh)");
-    Html.writeRowEnd();
-
-    ChargeStatsEntry* chargeStatsPtr = ChargeStats.getFirstEntry();
-    while (chargeStatsPtr != nullptr)
-    {
-        Html.writeRowStart();
-        Html.writeCell(formatTime("%d %b %H:%M", chargeStatsPtr->startTime));
-        Html.writeCell(chargeStatsPtr->getDurationHours(), F("%0.1f"));
-        Html.writeCell(chargeStatsPtr->getAvgTemperature(), F("%0.1f"));
-        Html.writeCell(chargeStatsPtr->getAvgPower() / 1000, F("%0.1f"));
-        Html.writeCell(chargeStatsPtr->energy / 1000, F("%0.1f"));
-        Html.writeRowEnd();
-
-        chargeStatsPtr = ChargeStats.getNextEntry();
-    }
-
-    Html.writeTableEnd();
-}
-
-
-void handleHttpRootRequest()
-{
-    Tracer tracer(F(__func__));
-
-    if (WiFiSM.isInAccessPointMode())
-    {
-        handleHttpConfigFormRequest();
-        return;
-    }
-
-    Html.writeHeader("Home", Nav, HTTP_POLL_INTERVAL);
-
-    Html.writeTableStart();
-
-    Html.writeRow(
-        "EVSE State",
-        "<span style=\"color: %s; font-weight: bold\">%s</span>",
-        EVSEStateColors[state],
-        EVSEStateNames[state]);
-    Html.writeRow("Control Pilot", "%s", ControlPilot.getStatusName());
-
-    if (state == EVSEState::Charging)
-    {
-        Html.writeRow("Current limit", "%0.1f A", currentLimit);
-        Html.writeRow("Output current", "%0.1f A", outputCurrent);
-    }
-
-    Html.writeRow("Temperature", "%0.1f °C", temperature);
-    Html.writeRow("T<sub>max</sub>", "%0.1f °C @ %s", DayStats.tMax, formatTime("%H:%M", DayStats.tMaxTime));
-    Html.writeRow("T<sub>min</sub>", "%0.1f °C @ %s", DayStats.tMin, formatTime("%H:%M", DayStats.tMinTime));
-
-    Html.writeRow("WiFi RSSI", "%d dBm", static_cast<int>(WiFi.RSSI()));
-    Html.writeRow("WiFi AP", "%s", WiFi.BSSIDstr().c_str());
-    Html.writeRow("Free Heap", "%0.1f kB", float(ESP.getFreeHeap()) / 1024);
-    Html.writeRow("Uptime", "%0.1f days", float(WiFiSM.getUptime()) / SECONDS_PER_DAY);
-
-    String ftpSync;
-    if (!PersistentData.isFTPEnabled())
-        ftpSync = "Disabled";
-    else if (lastFTPSyncTime == 0)
-        ftpSync = "Not yet";
-    else
-        ftpSync = formatTime("%H:%M", lastFTPSyncTime);
-
-    Html.writeRow("FTP Sync", ftpSync);
-    if (PersistentData.isFTPEnabled())
-        Html.writeRow("Sync entries", "%d / %d", logEntriesToSync, PersistentData.ftpSyncEntries);
-
-    Html.writeTableEnd();
-
-    switch (state)
-    {
-        case EVSEState::Ready:
-        case EVSEState::Failure:
-            if (WiFiSM.shouldPerformAction("selftest"))
-            {
-                Html.writeParagraph("Performing self-test...");
-                setState(EVSEState::SelfTest);
-            }
-            else
-                Html.writeActionLink("selftest", "Perform self-test", currentTime, ButtonClass, Files[CalibrateIcon]);
-            break;
-
-        case EVSEState::Authorize:
-            if (WiFiSM.shouldPerformAction("authorize"))
-            {
-                Html.writeParagraph("Charging authorized.");
-                isWebAuthorized = true;
-            }
-            else if (!isWebAuthorized)
-                Html.writeActionLink("authorize", "Start charging", currentTime, ButtonClass, Files[FlashIcon]);
-            break;
-
-        case EVSEState::AwaitCharging:
-        case EVSEState::Charging:
-            if (WiFiSM.shouldPerformAction("stop"))
-            {
-                if (stopCharging("EVSE"))
-                    Html.writeParagraph("Charging stopped.");
-                else
-                    Html.writeParagraph("Stop charging failed.");
-            }
-            else
-                Html.writeActionLink("stop", "Stop charging", currentTime, ButtonClass, Files[CancelIcon]);
-            break;
-
-        default:
-            break;
-    }
-
-    writeChargeStatistics();
-
-    Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 
@@ -1417,7 +1225,7 @@ void handleHttpSmartMeterRequest()
                 Html.writeRowStart();
                 Html.writeCell(phaseData.Name);
                 Html.writeCell(phaseData.Voltage, F("%0.1f V"));
-                Html.writeCell(phaseData.Current, F("%0.0f A"));
+                Html.writeCell(phaseData.Current, F("%0.1f A"));
                 Html.writeCell(phaseData.Power, F("%0.0f W"));
                 Html.writeRowEnd();
             }
@@ -1429,7 +1237,7 @@ void handleHttpSmartMeterRequest()
             Html.writeParagraph(
                 "Phase '%s' current: %0.1f A",
                 monitoredPhaseData.Name.c_str(),
-                monitoredPhaseData.Power / CHARGE_VOLTAGE);
+                monitoredPhaseData.Power / monitoredPhaseData.Voltage);
         }
         else
             Html.writeParagraph(
@@ -1591,4 +1399,398 @@ void handleHttpConfigFormPost()
     PersistentData.writeToEEPROM();
 
     handleHttpConfigFormRequest();
+}
+
+
+int determineMinChargeTimeOptions()
+{
+    time_t sixOClock = getStartOfDay(currentTime) + 18 * SECONDS_PER_HOUR;
+    int result = 0;
+
+    strcpy(minChargeTimeOptions[0], "Now");
+
+    for (int i = 1; i < MIN_CHARGE_TIME_OPTIONS; i++)
+    {
+        int hours = i * 2;
+        time_t time = currentTime + hours * SECONDS_PER_HOUR;
+        if (time < sixOClock) result = i;
+        snprintf(
+            minChargeTimeOptions[i],
+            32,
+            "%d hours (%s)",
+            hours,
+            formatTime("%H:%M", time));
+    }
+
+    return result;
+}
+
+
+void writeActions()
+{
+    Html.writeDivStart("actions");
+    switch (state)
+    {
+        case EVSEState::Ready:
+        case EVSEState::Failure:
+            if (WiFiSM.shouldPerformAction("selftest"))
+            {
+                setState(EVSEState::SelfTest);
+                Html.writeParagraph("Performing self-test...");
+            }
+            else
+                Html.writeActionLink("selftest", "Self-test", currentTime, ActionClass, Files[CalibrateIcon]);
+            break;
+
+        case EVSEState::Authorize:
+            if (WiFiSM.shouldPerformAction("authorize"))
+            {
+                isWebAuthorized = true;
+                Html.writeParagraph("Start charging...");
+            }
+            else if (!isWebAuthorized)
+                Html.writeActionLink("authorize", "Start", currentTime, ActionClass, Files[FlashIcon]);
+            break;
+
+        case EVSEState::AwaitCharging:
+        case EVSEState::Charging:
+        if (WiFiSM.shouldPerformAction("autoSuspend"))
+        {
+            int selected = determineMinChargeTimeOptions();
+            Html.writeFormStart("/");
+            Html.writeDropdown(
+                "minChargeTime",
+                "Minimum charging time",
+                const_cast<const char**>(minChargeTimeOptions),
+                MIN_CHARGE_TIME_OPTIONS,
+                selected);
+            Html.writeSubmitButton("Ok");
+            Html.writeFormEnd();
+            break;
+        }
+        else if (WebServer.hasArg("minChargeTime"))
+        {
+            int hours = 2 * WebServer.arg("minChargeTime").toInt();
+            autoSuspendMinTime = currentTime + hours * SECONDS_PER_HOUR;
+        }
+        else if (autoSuspendMinTime == 0)
+            Html.writeActionLink("autoSuspend", "Solar off", currentTime, ActionClass, Files[MeterIcon]);
+
+        if (WiFiSM.shouldPerformAction("suspend"))
+            {
+                if (stopCharging(true))
+                    Html.writeParagraph("Suspending charging...");
+                else
+                    Html.writeParagraph("Suspend charging failed.");
+            }
+            else
+                Html.writeActionLink("suspend", "Suspend", currentTime, ActionClass, Files[CancelIcon]);
+
+            break;
+
+        case EVSEState::ChargeSuspended:
+            if (WiFiSM.shouldPerformAction("autoResume"))
+                autoResumeTime = currentTime;
+            else if (autoResumeTime == 0)
+                Html.writeActionLink("autoResume", "Solar on", currentTime, ActionClass, Files[MeterIcon]);
+
+            if (WiFiSM.shouldPerformAction("resume"))
+            {
+                if (startCharging())
+                    Html.writeParagraph("Resuming charging...");
+                else
+                    Html.writeParagraph("Resume charging failed.");
+            }
+            else
+                Html.writeActionLink("resume", "Resume", currentTime, ActionClass, Files[FlashIcon]);
+            break;
+
+        case EVSEState::ChargeCompleted:
+            Html.writeParagraph("Please disconnect vehicle.");
+            break;
+
+        default:
+            break;
+    }
+    Html.writeDivEnd();
+}
+
+
+void writeChargingSessions()
+{
+    Html.writeSectionStart("Charging sessions");
+
+    Html.writeTableStart();
+    Html.writeRowStart();
+    Html.writeHeaderCell("Start");
+    Html.writeHeaderCell("Duration");
+    Html.writeHeaderCell("Temperature");
+    Html.writeHeaderCell("Power");
+    Html.writeHeaderCell("Energy");
+    Html.writeRowEnd();
+
+    ChargeStatsEntry* chargeStatsPtr = ChargeStats.getFirstEntry();
+    while (chargeStatsPtr != nullptr)
+    {
+        Html.writeRowStart();
+        Html.writeCell(formatTime("%d %b %H:%M", chargeStatsPtr->startTime));
+        Html.writeCell(chargeStatsPtr->getDurationHours(), F("%0.1f h"));
+        Html.writeCell(chargeStatsPtr->getAvgTemperature(), F("%0.1f °C"));
+        Html.writeCell(chargeStatsPtr->getAvgPower(), F("%0.0f W"));
+        Html.writeCell(chargeStatsPtr->energy / 1000, F("%0.1f kWh"));
+        Html.writeRowEnd();
+
+        chargeStatsPtr = ChargeStats.getNextEntry();
+    }
+
+    Html.writeTableEnd();
+    Html.writeSectionEnd();
+}
+
+
+void handleHttpRootRequest()
+{
+    Tracer tracer(F(__func__));
+
+    if (WiFiSM.isInAccessPointMode())
+    {
+        handleHttpConfigFormRequest();
+        return;
+    }
+
+    String ftpSync;
+    if (!PersistentData.isFTPEnabled())
+        ftpSync = "Disabled";
+    else if (lastFTPSyncTime == 0)
+        ftpSync = "Not yet";
+    else
+        ftpSync = formatTime("%H:%M", lastFTPSyncTime);
+
+    char evseStateHeading[64];
+    snprintf(
+        evseStateHeading,
+        sizeof(evseStateHeading),
+        "<span style=\"color: %s\">%s</span>",
+        EVSEStateColors[state],
+        EVSEStateNames[state]);
+
+    Html.writeHeader("Home", Nav, HTTP_POLL_INTERVAL);
+
+    writeActions();
+
+    Html.writeDivStart("flex-container");
+
+    Html.writeSectionStart(evseStateHeading);
+    Html.writeTableStart();
+    Html.writeRow("Vehicle", "%s", ControlPilot.getStatusName());
+    if (state == EVSEState::Charging)
+    {
+        Html.writeRow("Output current", "%0.1f / %0.1f A", outputCurrent, currentLimit);
+        Html.writeRow("Output power", "%0.0f W", outputCurrent * outputVoltage);
+        Html.writeRow("Solar power", "%0.0f W", solarPower);
+        if (autoSuspendMinTime != 0)
+        {
+            const char* solarOff = "Solar off";
+            if (currentTime < autoSuspendMinTime)
+                Html.writeRow(solarOff, "After %s", formatTime("%H:%M", autoSuspendMinTime));
+            else if (solarPower > PersistentData.solarPowerThreshold)
+                Html.writeRow(solarOff, "Pending");
+            else
+                Html.writeRow(solarOff, "Until %s", formatTime("%H:%M", autoSuspendMaxTime));
+        }
+    }
+    else if ((state == EVSEState::ChargeSuspended) && (autoResumeTime != 0))
+    {
+        Html.writeRow("Solar power", "%0.0f W", solarPower);
+        const char* solarOn = "Solar on";
+        if (solarPower < PersistentData.solarPowerThreshold)
+            Html.writeRow(solarOn, "Pending");
+        else
+            Html.writeRow(solarOn, "After %s", formatTime("%H:%M", autoResumeTime));
+    }
+    Html.writeTableEnd();
+    Html.writeSectionEnd();
+
+    Html.writeSectionStart("Temperature");
+    Html.writeTableStart();
+    Html.writeRow("Now", "%0.1f °C", temperature);
+    Html.writeRow(
+        "Min",
+        "<div>%0.1f °C</div><div class=\"timestamp\">@ %s</div>",
+         DayStats.tMin,
+        formatTime("%H:%M", DayStats.tMinTime));
+    Html.writeRow(
+        "Max",
+        "<div>%0.1f °C</div><div class=\"timestamp\">@ %s</div>",
+        DayStats.tMax,
+        formatTime("%H:%M", DayStats.tMaxTime));
+    Html.writeTableEnd();
+    Html.writeSectionEnd();
+
+    Html.writeSectionStart("Status");
+    Html.writeTableStart();
+    Html.writeRow("WiFi RSSI", "%d dBm", static_cast<int>(WiFi.RSSI()));
+    Html.writeRow("Free Heap", "%0.1f kB", float(ESP.getFreeHeap()) / 1024);
+    Html.writeRow("Uptime", "%0.1f days", float(WiFiSM.getUptime()) / SECONDS_PER_DAY);
+    Html.writeRow("FTP Sync", ftpSync);
+    if (PersistentData.isFTPEnabled())
+        Html.writeRow("Sync entries", "%d / %d", logEntriesToSync, PersistentData.ftpSyncEntries);
+    Html.writeTableEnd();
+    Html.writeSectionEnd();
+    
+    writeChargingSessions();
+
+    Html.writeDivEnd(); // flex-container
+    Html.writeFooter();
+
+    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
+}
+
+
+// Boot code
+void setup()
+{
+    Serial.begin(115200); // Use same baudrate as bootloader
+    Serial.setTimeout(1000);
+    Serial.println();
+
+    #ifdef DEBUG_ESP_PORT
+    Tracer::traceTo(DEBUG_ESP_PORT);
+    Tracer::traceFreeHeap();
+    #endif
+
+    if (!StateLED.begin())
+        setFailure("Failed initializing RGB LED");
+
+    PersistentData.begin();
+    TimeServer.begin(PersistentData.ntpServer);
+    Html.setTitlePrefix(PersistentData.hostName);
+
+    Nav.width = "8em";
+    Nav.menuItems = 
+    {
+        MenuItem
+        {
+            .icon = Files[HomeIcon],
+            .label = PSTR("Home"),
+            .handler = handleHttpRootRequest
+        },
+        MenuItem
+        {
+            .icon = Files[LogFileIcon],
+            .label = PSTR("Event log"),
+            .urlPath = PSTR("events"),
+            .handler = handleHttpEventLogRequest
+        },
+        MenuItem
+        {
+            .icon = Files[FlashIcon],
+            .label = PSTR("Charge log"),
+            .urlPath = PSTR("chargelog"),
+            .handler = handleHttpChargeLogRequest
+        },
+        MenuItem
+        {
+            .icon = Files[UploadIcon],
+            .label = PSTR("FTP Sync"),
+            .urlPath = PSTR("sync"),
+            .handler= handleHttpSyncFTPRequest
+        },
+        MenuItem
+        {
+            .icon = Files[BluetoothIcon],
+            .label = PSTR("Bluetooth"),
+            .urlPath = PSTR("bt"),
+            .handler = handleHttpBluetoothRequest,
+            .postHandler = handleHttpBluetoothFormPost
+        },
+        MenuItem
+        {
+            .icon = Files[MeterIcon],
+            .label = PSTR("Smart Meter"),
+            .urlPath = PSTR("dsmr"),
+            .handler = handleHttpSmartMeterRequest
+        },
+        MenuItem
+        {
+            .icon = Files[CalibrateIcon],
+            .label = PSTR("Calibrate"),
+            .urlPath = PSTR("calibrate"),
+            .handler = handleHttpCalibrateRequest
+        },
+        MenuItem
+        {
+            .icon = Files[SettingsIcon],
+            .label = PSTR("Settings"),
+            .urlPath = PSTR("config"),
+            .handler = handleHttpConfigFormRequest,
+            .postHandler = handleHttpConfigFormPost
+        },
+    };
+    Nav.registerHttpHandlers(WebServer);
+
+    WebServer.on("/bt/json", handleHttpBluetoothJsonRequest);
+    WebServer.on("/current", handleHttpCurrentRequest);
+    
+    WiFiSM.registerStaticFiles(Files, _LastFileId);
+    WiFiSM.on(WiFiInitState::TimeServerSynced, onWiFiTimeSynced);
+    WiFiSM.on(WiFiInitState::Initialized, onWiFiInitialized);
+    WiFiSM.scanAccessPoints();
+    WiFiSM.begin(PersistentData.wifiSSID, PersistentData.wifiKey, PersistentData.hostName);
+
+    if (!OutputCurrentSensor.begin(PersistentData.currentScale))
+        setFailure("Failed initializing current sensor");
+
+    if (!OutputVoltageSensor.begin())
+        setFailure("Failed initializing voltage sensor");
+
+    pinMode(RELAY_START_PIN, OUTPUT);
+    pinMode(RELAY_ON_PIN, OUTPUT);
+    setRelay(false);
+
+    if (!ControlPilot.begin())
+        setFailure("Failed initializing Control Pilot");
+
+    if (Bluetooth.begin(PersistentData.hostName))
+        Bluetooth.registerBeacons(PersistentData.registeredBeaconCount, PersistentData.registeredBeacons);
+    else
+        setFailure("Failed initializing Bluetooth");
+
+    if (PersistentData.dsmrMonitor[0] != 0)
+    {
+        if (SmartMeter.begin(PersistentData.dsmrMonitor))
+        {
+#if USE_HOMEWIZARD_P1 == 2
+            SmartMeter.setBearerToken(PersistentData.p1BearerToken);
+#endif
+        }
+        else
+            setFailure("Failed initializing Smart Meter");
+    }
+
+    initTempSensor();
+
+    for (int i = 0; i < MIN_CHARGE_TIME_OPTIONS; i++)
+        minChargeTimeOptions[i] = new char[32];
+
+    Tracer::traceFreeHeap();
+}
+
+
+// Called repeatedly
+void loop() 
+{
+    currentTime = WiFiSM.getCurrentTime();
+
+    // Let WiFi State Machine handle initialization and web requests
+    // This also calls the onXXX methods below
+    WiFiSM.run();
+
+    if (Serial.available())
+    {
+        String message = Serial.readStringUntil('\n');
+        test(message);
+    }
+
+    runEVSEStateMachine();
 }

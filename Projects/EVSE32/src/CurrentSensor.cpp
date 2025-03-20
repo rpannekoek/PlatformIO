@@ -120,6 +120,14 @@ bool CurrentSensor::measure(uint16_t periods)
 }
 
 
+void CurrentSensor::setTestCurrent(float current)
+{
+    TRACE("CurrentSensor::setTestCurrent(%0.1f)\n", current);
+
+     _testCurrent = current;
+}
+
+
 float CurrentSensor::calibrateScale(float actualRMS)
 {
     Tracer tracer("CurrentSensor::calibrateScale");
@@ -155,6 +163,8 @@ float CurrentSensor::getPeak()
 
 float CurrentSensor::getRMS()
 {
+    if (_testCurrent >= 0) return _testCurrent;
+
     if (_sampleBufferPtr == nullptr || _sampleIndex == 0)
         return 0.0F;
 

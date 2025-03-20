@@ -1,21 +1,22 @@
 #include <Tracer.h>
 #include "Status.h"
 
-#define BLACK LEDColor { .red = 0, .green = 0, .blue = 0, .breathe = 0 }
-#define BLUE LEDColor { .red = 0, .green = 0, .blue = 255, .breathe = 0 }
-#define GREEN LEDColor { .red = 0, .green = 255, .blue = 0, .breathe = 0 }
-#define GREEN_BREATHE LEDColor { .red = 0, .green = 255, .blue = 0, .breathe = 1 }
-#define CYAN LEDColor { .red = 0, .green = 255, .blue = 255, .breathe = 0 }
-#define RED LEDColor { .red = 255, .green = 0, .blue = 0, .breathe = 0 }
-#define MAGENTA LEDColor { .red = 255, .green = 0, .blue = 255, .breathe = 0 }
-#define YELLOW LEDColor { .red = 255, .green = 255, .blue = 0, .breathe = 0 }
+#define BLACK { .red = 0, .green = 0, .blue = 0, .breathe = 0 }
+#define BLUE { .red = 0, .green = 0, .blue = 255, .breathe = 0 }
+#define GREEN { .red = 0, .green = 255, .blue = 0, .breathe = 0 }
+#define GREEN_BREATHE { .red = 0, .green = 255, .blue = 0, .breathe = 1 }
+#define CYAN { .red = 0, .green = 255, .blue = 255, .breathe = 0 }
+#define CYAN_BREATHE { .red = 0, .green = 255, .blue = 255, .breathe = 1 }
+#define RED { .red = 255, .green = 0, .blue = 0, .breathe = 0 }
+#define MAGENTA { .red = 255, .green = 0, .blue = 255, .breathe = 0 }
+#define YELLOW { .red = 255, .green = 255, .blue = 0, .breathe = 0 }
 #define YELLOW_BREATHE { .red = 255, .green = 255, .blue = 0, .breathe = 2 }
 #define ORANGE { .red = 255, .green = 165, .blue = 0, .breathe = 0 }
 #define ORANGE_BREATHE { .red = 255, .green = 165, .blue = 0, .breathe = 2 }
 #define WHITE { .red = 255, .green = 255, .blue = 255, .breathe = 0 }
 
-#define BREATHE_INTERVAL 0.1F
-#define BREATHE_STEPS 48
+constexpr float BREATHE_INTERVAL = 0.1F;
+constexpr int BREATHE_STEPS = 48;
 
 
 const char* EVSEStateNames[] = 
@@ -28,6 +29,7 @@ const char* EVSEStateNames[] =
     [EVSEState::AwaitCharging] = "Await charging",
     [EVSEState::Charging] = "Charging",
     [EVSEState::StopCharging] = "Stop charging",
+    [EVSEState::ChargeSuspended] = "Charge suspended",
     [EVSEState::ChargeCompleted] = "Charge completed"
 };
 
@@ -41,6 +43,7 @@ const char* EVSEStateColors[] =
     [EVSEState::AwaitCharging] = "cyan",
     [EVSEState::Charging] = "orange",
     [EVSEState::StopCharging] = "yellow",
+    [EVSEState::ChargeSuspended] = "cyan",
     [EVSEState::ChargeCompleted] = "black"
 };
 
@@ -54,6 +57,7 @@ LEDColor StatusLED::_statusColors[] =
     [EVSEState::AwaitCharging] = CYAN,
     [EVSEState::Charging] = ORANGE_BREATHE,
     [EVSEState::StopCharging] = YELLOW,
+    [EVSEState::ChargeSuspended] = CYAN_BREATHE,
     [EVSEState::ChargeCompleted] = BLACK
 };
 

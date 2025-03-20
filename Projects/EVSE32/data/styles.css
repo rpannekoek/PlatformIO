@@ -83,6 +83,78 @@ nav a:hover
     border-radius: 0.5em;
     margin-top: 0.5em;
     margin-bottom: 0.5em;
+    margin-right: 0.5em;
+}
+
+.actions
+{
+    margin-bottom: 10px;
+}
+
+.action
+{
+    display: inline-block;
+    font-size: 1em;
+    text-decoration: none;
+    color: white;
+    background-color: darkgrey;
+    padding: 0.5em;
+    border: none;
+    border-radius: 0.5em;
+    box-shadow: 0 4px 8px darkslategray;    
+    margin-right: 5px;
+}
+
+.action .icon
+{
+    height: 4em;
+    width: 4em;
+}
+
+.action .label
+{
+    display: block;
+}
+
+.actions select
+{
+    font-size: 1em;
+    margin-bottom: 5px;
+}
+
+.actions input
+{
+    font-size: 1em;
+}
+
+.timestamp
+{
+    font-size: 0.8em;
+    color: #202020;
+}
+
+.flex-container
+{
+    display: flex;
+    flex-flow: row wrap;
+}
+
+section
+{
+    background-color: lightyellow;
+    border: none;
+    border-radius: 10px;
+    padding: 10px;
+    margin-bottom: 10px;
+    margin-right: 10px;
+}
+
+section h1
+{
+    font-size: 1.5em;
+    text-align: center;
+    margin-top: 0;
+    margin-bottom: 0.5em;
 }
 
 .pager

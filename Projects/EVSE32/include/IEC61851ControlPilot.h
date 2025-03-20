@@ -29,6 +29,7 @@ class IEC61851ControlPilot
         bool awaitStatus(ControlPilotStatus status, int timeoutMs = 500);
         ControlPilotStatus getStatus();
         const char* getStatusName();
+        void setTestStatus(ControlPilotStatus status);
 
     private:
         uint8_t _outputPin;

@@ -575,6 +575,7 @@ void HtmlWriter::writeActionLink(
         currentTime);
     if (icon.length() != 0)
         _output.printf(F("<img class=\"icon\" src=\"%s\">"), icon.c_str());
+    _output.print(F("<span class=\"label\">"));
     _output.print(label);
-    _output.print(F("</a>"));
+    _output.print(F("</span></a>"));
 }

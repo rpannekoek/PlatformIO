@@ -3,15 +3,16 @@
 
 enum EVSEState
 {
-    Booting,
-    SelfTest,
-    Failure,
-    Ready,
-    Authorize,
-    AwaitCharging,
-    Charging,
-    StopCharging,
-    ChargeCompleted
+    Booting = 0,
+    SelfTest = 1,
+    Failure = 2,
+    Ready = 3,
+    Authorize = 4,
+    AwaitCharging = 5,
+    Charging = 6,
+    StopCharging = 7,
+    ChargeSuspended = 8,
+    ChargeCompleted = 9
 };
 
 extern const char* EVSEStateNames[];

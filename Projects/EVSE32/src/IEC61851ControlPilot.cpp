@@ -14,8 +14,8 @@ constexpr uint32_t STATUS_UPDATE_INTERVAL_MS = 1000;
 
 const char* _statusNames[] =
 {
-    "Standby",
-    "Vehicle detected",
+    "Not Connected",
+    "Connected",
     "Charging",
     "Charging (ventilated)",
     "No power"
@@ -121,12 +121,16 @@ float IEC61851ControlPilot::setCurrentLimit(float ampere)
 {
     Tracer tracer("IEC61851ControlPilot::setCurrentLimit");
 
+    if (_dutyCycle == 0 || _dutyCycle == 1)
+    {
+        if ( !ledcAttach(_outputPin, PWM_FREQ, PWM_RESOLUTION_BITS))
+            TRACE("Unable to attach LEDC to pin %u\n", _outputPin);
+    }
+
     ampere = std::min(std::max(ampere, 6.0F), _maxCurrent);
     _dutyCycle =  ampere / 60.0F;
     uint32_t duty = static_cast<uint32_t>(std::round(_dutyCycle * 256));
 
-    if (!ledcAttach(_outputPin, PWM_FREQ, PWM_RESOLUTION_BITS))
-        TRACE("Unable to attach LEDC to pin %u\n", _outputPin);
     ledcWrite(_outputPin, duty);
 
     TRACE(
@@ -200,6 +204,15 @@ ControlPilotStatus IEC61851ControlPilot::getStatus()
         TRACE("CP: %s\n", getStatusName());
     }
     return _status;
+}
+
+
+void IEC61851ControlPilot::setTestStatus(ControlPilotStatus status)
+{
+    _status = status;
+    _nextStatusUpdateMillis = millis() + 300 * 1000;
+
+    TRACE("IEC61851ControlPilot::setTestStatus(%s)\n", getStatusName());
 }
 
 
