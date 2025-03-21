@@ -314,15 +314,21 @@ td.graph
     color: gold;
 }
 
-.meter {
+.meter 
+{
     border: none;
-    background-color: #707070;
     width: 30em;
     height: 1em;
     display: block;
 }
 
-.meter span {
+.fill .meter
+{
+    background-color: #707070;
+}
+
+.meter span 
+{
   height: inherit;  
   background-size: 100% 100%;
   display: block;

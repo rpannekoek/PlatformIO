@@ -144,7 +144,7 @@ void P1MonitorClass::writeCurrentValues(HtmlWriter& html, int maxPhasePower)
         html.writeDiv((phaseData.Power >= 0) ? "pIn" : "pOut", F("%0.0f W"), phaseData.Power);
         html.writeDiv("pSolar", F("%0.0f W"), solarPower[i]);
         html.writeCellEnd();
-        html.writeCellStart("graph");
+        html.writeCellStart("graph fill");
         html.writeMeterDiv(abs(phaseData.Power), 0, maxPhasePower, (phaseData.Power >= 0) ? "deliveredBar" : "returnedBar");
         html.writeMeterDiv(solarPower[i], 0, maxPhasePower, "solarBar");
         html.writeCellEnd();
@@ -167,7 +167,7 @@ void P1MonitorClass::writeCurrentValues(HtmlWriter& html, int maxPhasePower)
     html.writeDiv((total.Power >= 0) ? "pIn" : "pOut", F("%0.0f W"), total.Power);
     html.writeDiv("pSolar", F("%0.0f W"), totalSolarPower);
     html.writeCellEnd();
-    html.writeCellStart("graph");
+    html.writeCellStart("graph fill");
     html.writeMeterDiv(abs(total.Power), 0, maxTotalPower, (total.Power >= 0) ? "deliveredBar" : "returnedBar");
     html.writeMeterDiv(totalSolarPower, 0, maxTotalPower, "solarBar");
     html.writeCellEnd();
@@ -177,7 +177,7 @@ void P1MonitorClass::writeCurrentValues(HtmlWriter& html, int maxPhasePower)
     html.writeHeaderCell("Gas");
     html.writeHeaderCell(String(gasKWh, 1) + " kWh", 2);
     html.writeCell(_gasPower, F("%0.0f W"));
-    html.writeCellStart("graph");
+    html.writeCellStart("graph fill");
     html.writeMeterDiv(_gasPower, 0, maxTotalPower, "gasBar");
     html.writeCellEnd();
     html.writeRowEnd();

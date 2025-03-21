@@ -721,11 +721,8 @@ void writeGraphRow(
     Html.writeCellStart("graph");
     for (EnergyLogEntry* logEntryPtr : energyLogEntryPtrs)
     {
-        float barValue = 0.0F;
-        if (logEntryPtr != nullptr && logEntryPtr->time == time)
-            barValue = logEntryPtr->energy / maxValue;
-
-        Html.writeBar(barValue, "energyBar", false, true, MAX_BAR_LENGTH);
+        float value = (logEntryPtr != nullptr && logEntryPtr->time == time) ? logEntryPtr->energy : 0.0F;
+        Html.writeMeterDiv(value, 0, maxValue, "energyBar");
     }
     Html.writeCellEnd();
 
