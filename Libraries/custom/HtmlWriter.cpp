@@ -89,6 +89,17 @@ void HtmlWriter::writeFooter()
 }
 
 
+void HtmlWriter::writeMeterDiv(float value, float minValue, float maxValue, const String& cssClass)
+{
+    float percentage = std::min(std::max((value - minValue) / (maxValue - minValue), 0.0F), 1.0F) * 100;
+
+    _output.printf(
+        F("<div class=\"meter\"><span class=\"%s\" style=\"width: %0.0f%%;\"></span></div>"),
+        cssClass.c_str(),
+        roundf(percentage));
+}
+
+
 void HtmlWriter::writeBar(float value, const String& cssClass, bool fill, bool useDiv, size_t maxBarLength)
 {
     char* bar = _strBuffer;
@@ -375,6 +386,20 @@ void HtmlWriter::writeDivStart(const String& cssClass)
 void HtmlWriter::writeDivEnd()
 {
     _output.println(F("</div>"));
+}
+
+
+void HtmlWriter::writeDiv(const String& cssClass, const __FlashStringHelper* format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    int length = vsnprintf(_strBuffer, sizeof(_strBuffer) - 1, (const char*)format, args);
+    _strBuffer[length] = 0;
+    va_end(args);
+
+    writeDivStart(cssClass);
+    _output.print(_strBuffer);
+    writeDivEnd();
 }
 
 

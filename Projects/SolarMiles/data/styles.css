@@ -1,7 +1,7 @@
 html 
 {
     color: black;
-    background-color: yellow;
+    background-color: gold;
     font-family: sans-serif;
 }
 
@@ -109,7 +109,7 @@ td a:hover
 
 section
 {
-    background-color: lightgray;
+    background-color: gray;
     opacity: 80%;
     border: none;
     border-radius: 10px;
@@ -195,7 +195,7 @@ td,th
 {
 	padding-left: 0.5em;
 	padding-right: 0.5em;
-    border: thin solid gray;
+    border: thin solid lightgray;
 }
 
 td
@@ -299,6 +299,36 @@ td.graph
     color: blue;
 }
 
+.pIn
+{
+    color: blue;
+}
+
+.pOut
+{
+    color: yellowgreen;
+}
+
+.pSolar
+{
+    color: gold;
+}
+
+.meter {
+    border: none;
+    background-color: #707070;
+    width: 30em;
+    height: 1em;
+    display: block;
+}
+
+.meter span {
+  height: inherit;  
+  background-size: 100% 100%;
+  display: block;
+  text-indent: -9999px;
+}
+
 .energyBar
 {
 	background-color: blue;
@@ -313,8 +343,14 @@ td.graph
 
 .returnedBar
 {
-	background-color: yellow;
-    color: yellow;
+	background-color: yellowgreen;
+    color: yellowgreen;
+}
+
+.solarBar
+{
+	background-color: gold;
+    color: gold;
 }
 
 .gasBar
@@ -325,8 +361,9 @@ td.graph
 
 .barFill
 {
-	background-color: gray;
-    color: gray;
+	background-color: black;
+    color: black;
+    opacity: 15%;
 }
 
 .emptyBar

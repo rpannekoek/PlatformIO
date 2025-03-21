@@ -7,44 +7,40 @@
 constexpr uint32_t P1_AGGREGATION_INTERVAL = 60; // seconds
 constexpr float GAS_CALORIFIC_VALUE = 9769; // Wh/m3
 
+struct PhaseDayStats
+{
+    float minVoltage = 666;
+    float maxVoltage = 0;
+    float minPower = 6666;
+    float maxPower = 0;
+    float energyIn = 0;
+    float energyOut = 0;
+    float solarEnergy = 0;
+    float grossEnergy = 0;
+
+    void update(float voltage, float power, float solarPower, uint32_t seconds)
+    {
+        minVoltage = std::min(minVoltage, voltage);
+        maxVoltage = std::max(maxVoltage, voltage);
+        minPower = std::min(minPower, power);
+        maxPower = std::max(maxPower, power);
+
+        float energy = power * seconds / SECONDS_PER_HOUR;
+        if (energy >= 0)
+            energyIn += energy;
+        else
+            energyOut += -energy;
+
+        solarEnergy += solarPower * seconds / SECONDS_PER_HOUR;
+        grossEnergy += std::max(power + solarPower, 0.0F) * seconds / SECONDS_PER_HOUR;
+    }
+
+};
+
 struct P1MonitorDayStatsEntry
 {
     time_t day;
-    float minVoltage[3];
-    float maxVoltage[3];
-    float minPower[3];
-    float maxPower[3];
-    float energyIn[3];
-    float energyOut[3];
-
-    P1MonitorDayStatsEntry()
-    {
-        for (int i = 0; i < 3; i++)
-        {
-            minVoltage[i] = 666;
-            maxVoltage[i] = 0;
-            minPower[i] = 6666;
-            maxPower[i] = 0;
-            energyIn[i] = 0;
-            energyOut[i] = 0;
-        }
-    }
-
-    void update(int phase, float voltage, float power, uint32_t seconds)
-    {
-        float energy = power * seconds / SECONDS_PER_HOUR;
-
-        minVoltage[phase] = std::min(minVoltage[phase], voltage);
-        maxVoltage[phase] = std::max(maxVoltage[phase], voltage);
-        minPower[phase] = std::min(minPower[phase], power);
-        maxPower[phase] = std::max(maxPower[phase], power);
-        if (energy >= 0)
-            energyIn[phase] += energy;
-        else
-            energyOut[phase] += -energy;
-    }
-
-    void writeTableRow(HtmlWriter& html);
+    PhaseDayStats phase[3];
 };
 
 struct P1MonitorLogEntry
@@ -94,13 +90,17 @@ class P1MonitorClass
         StaticLog<P1MonitorDayStatsEntry> DayStats;
         StaticLog<P1MonitorLogEntry> Log;
         int logEntriesToSync = 0;
+        float solarPower[3];
 
         bool isInitialized() { return _p1Client.isInitialized; }
         bool isRequestPending() { return _p1Client.isRequestPending(); }
 
         // Constructor
         P1MonitorClass(ILogger& logger, uint16_t logSize) 
-            : DayStats(7), Log(logSize), _logger(logger) {}
+            : DayStats(7), Log(logSize), _logger(logger)
+        {
+            memset(solarPower, 0, sizeof(solarPower));
+        }
 
         bool begin(const char* host, uint32_t pollInterval, float powerDelta, float voltageDelta);
         bool run(time_t time);

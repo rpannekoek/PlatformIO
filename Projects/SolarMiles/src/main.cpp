@@ -185,6 +185,14 @@ void handleSerialRequest()
         for (int i = 0; i < MAX_EVENT_LOG_SIZE; i++)
             WiFiSM.logEvent("Test event to fill event log");
     }
+    else if (cmd.startsWith("sp"))
+    {
+        int phase = cmd.substring(2,3).toInt() - 1;
+        int power = cmd.substring(4).toInt();
+        P1Monitor.solarPower[phase] = power;
+        pollInvertersTime = currentTime + SECONDS_PER_HOUR;
+        TRACE("P1Monitor.solarPower[%d]=%d W\n", phase, power);
+    }
 }
 
 
@@ -208,6 +216,8 @@ void updatePowerLog(int numInverters)
 bool pollInverters()
 {
     Tracer tracer("pollInverters");
+
+    for (int i = 0; i < 3; i++) P1Monitor.solarPower[i] = 0;
 
     int numInverters = Hoymiles.getNumInverters();
     bool isAnyInverterReachable = false;
@@ -300,6 +310,12 @@ bool pollInverters()
             acVoltage /= acChannels.size();
         newPowerLogEntry.updateAC(i, inverterPower, acVoltage);
         inverterLogPtr->acEnergyLogPtr->update(currentTime, inverterPower);
+
+        int phase = PersistentData.inverterPhase[i];
+        if (phase < 3)
+            P1Monitor.solarPower[phase] += inverterPower;
+        else
+            TRACE("Invalid inverter phase: %d\n", phase);
     }
 
     TRACE("Total power: %0.1f W\n", totalPower);
@@ -1039,6 +1055,7 @@ void handleHttpInvertersFormRequest()
     Html.writeRowStart();
     Html.writeHeaderCell("Serial#");
     Html.writeHeaderCell("Name");
+    Html.writeHeaderCell("Phase");
     Html.writeHeaderCell("Type");
     Html.writeHeaderCell("P<sub>max</sub> (W)");
     Html.writeHeaderCell("Limit (%)");
@@ -1065,6 +1082,11 @@ void handleHttpInvertersFormRequest()
             registeredInverter.name,
             MAX_INVERTER_NAME_LENGTH - 1);
 
+        HttpResponse.printf(
+            F("<td><input type='number' name='phase_%d' value='%d' min='1' max='3'></td>"), 
+            i,
+            PersistentData.inverterPhase[i] + 1);
+    
         if (inverterPtr != nullptr)
         {
             float percent = (inverterPtr->RadioStats.TxRequestData == 0) ? 0.0F : 100.0F / float(inverterPtr->RadioStats.TxRequestData);
@@ -1100,7 +1122,8 @@ void handleHttpInvertersFormRequest()
         HttpResponse.printf(
             F("<td><input type='text' name='new_name' maxlength='%d' placeholder='Enter name'></td>"), 
             MAX_INVERTER_NAME_LENGTH - 1);
-            
+        HttpResponse.print(F("<td><input type='number' name='new_phase' value='1' min='1' max='3'></td>"));
+                
         for (int c = 0; c < numDataColumns; c++)
             Html.writeCell("");
 
@@ -1143,12 +1166,18 @@ void handleHttpInvertersFormPost()
             else
                 TRACE(F("Not found.\n"));
         }
+        else if (argName.startsWith("phase_"))
+        {
+            int n = argName.substring(6).toInt();
+            PersistentData.inverterPhase[n] = WebServer.arg(i).toInt() - 1;
+        }
     }
 
     // Register new inverter
     String newSerialString = WebServer.arg("new_serial");
     String newName = WebServer.arg("new_name");
-    TRACE(F("new_serial='%s', new_name='%s'\n"), newSerialString.c_str(), newName.c_str());
+    int newPhase = WebServer.arg("new_phase").toInt() - 1;
+    TRACE(F("new_serial='%s', new_name='%s', new_phase=%d\n"), newSerialString.c_str(), newName.c_str(), newPhase);
     if ((newSerialString.length() != 0) && (newName.length() != 0) && (PersistentData.registeredInvertersCount < MAX_REGISTERED_INVERTERS))
     {
         uint64_t newSerial = parseSerial(newSerialString.c_str());
@@ -1159,6 +1188,7 @@ void handleHttpInvertersFormPost()
             PersistentData.registeredInverters[i].serial = newSerial;
             strncpy(PersistentData.registeredInverters[i].name, newName.c_str(), MAX_INVERTER_NAME_LENGTH);
         }
+        PersistentData.inverterPhase[i] = newPhase;
     }
 
     PersistentData.writeToEEPROM();
@@ -1251,7 +1281,7 @@ void handleHttpRootRequest()
         return;
     }
     
-    Html.writeHeader("Home", Nav, pollInterval);
+    Html.writeHeader("Home", Nav);
 
     const char* ftpSync;
     if (!PersistentData.isFTPEnabled())
@@ -1325,27 +1355,6 @@ void setup()
         },
         MenuItem
         {
-            .icon = Files[GraphIcon],
-            .label = PSTR("Power log"),
-            .urlPath = PSTR("powerlog"),
-            .handler = handleHttpPowerLogRequest            
-        },
-        MenuItem
-        {
-            .icon = Files[LogFileIcon],
-            .label = PSTR("Event log"),
-            .urlPath =PSTR("events"),
-            .handler = handleHttpEventLogRequest
-        },
-        MenuItem
-        {
-            .icon = Files[UploadIcon],
-            .label = PSTR("FTP Sync"),
-            .urlPath = PSTR("sync"),
-            .handler= handleHttpSyncFTPRequest
-        },
-        MenuItem
-        {
             .icon = Files[ElectricityIcon],
             .label = PSTR("Smart Meter"),
             .urlPath =PSTR("dsmr"),
@@ -1357,6 +1366,27 @@ void setup()
             .label = PSTR("Smart Home"),
             .urlPath =PSTR("smartHome"),
             .handler = handleHttpSmartHomeRequest
+        },
+        MenuItem
+        {
+            .icon = Files[LogFileIcon],
+            .label = PSTR("Event log"),
+            .urlPath =PSTR("events"),
+            .handler = handleHttpEventLogRequest
+        },
+        MenuItem
+        {
+            .icon = Files[GraphIcon],
+            .label = PSTR("Power log"),
+            .urlPath = PSTR("powerlog"),
+            .handler = handleHttpPowerLogRequest            
+        },
+        MenuItem
+        {
+            .icon = Files[UploadIcon],
+            .label = PSTR("FTP Sync"),
+            .urlPath = PSTR("sync"),
+            .handler= handleHttpSyncFTPRequest
         },
         MenuItem
         {

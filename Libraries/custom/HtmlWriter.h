@@ -16,6 +16,7 @@ class HtmlWriter
         void writeHeader(const String& title, const Navigation& navigation, uint16_t refreshInterval = 0);
         void writeFooter();
 
+        void writeMeterDiv(float value, float minValue, float maxValue, const String& cssClass);
         void writeBar(float value, const String& cssClass, bool fill, bool useDiv = true, size_t maxBarLength = 0);
         void writeStackedBar(float value1, float value2, const String& cssClass1, const String& cssClass2, bool fill, bool useDiv = true);
         void writeGraphCell(float value, const String& barCssClass, bool fill, size_t maxBarLength = 0);
@@ -39,6 +40,7 @@ class HtmlWriter
         void writeDivStart(const String& cssClass = String());
         void writeDivEnd();
         void writeDiv(const String& format, ...);
+        void writeDiv(const String& cssClass, const __FlashStringHelper* format, ...);
         void writePreStart(const String& cssClass = String());
         void writePreEnd();
 

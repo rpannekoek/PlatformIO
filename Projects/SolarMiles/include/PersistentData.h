@@ -26,10 +26,11 @@ struct Settings : public WiFiSettingsWithFTP
     int powerThreshold;
     int idleDelay;
     char p1MonitorHost[32];
+    uint8_t inverterPhase[MAX_REGISTERED_INVERTERS];
 
     Settings() : WiFiSettingsWithFTP(
         PSTR("SolarMiles"),
-        sizeof(registeredInvertersCount) + sizeof(registeredInverters))
+        sizeof(registeredInvertersCount) + sizeof(registeredInverters) + sizeof(inverterPhase))
     {
         addStringField(dtuSerial, sizeof(dtuSerial), "DTU serial#", DEFAULT_DTU_SERIAL);
         addIntegerField(dtuTxLevel, "DTU Tx Level", RF24_PA_MIN, RF24_PA_MAX, RF24_PA_MAX);
@@ -45,6 +46,7 @@ struct Settings : public WiFiSettingsWithFTP
     {
         WiFiSettingsWithFTP::initialize();
         registeredInvertersCount = 0;
+        memset(inverterPhase, 0, sizeof(inverterPhase));
     }
 
     void validate() override

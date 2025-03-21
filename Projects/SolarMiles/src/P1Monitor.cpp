@@ -8,8 +8,11 @@ enum DayStatsProperty
     Pmin,
     Pmax,
     Ein,
-    Eout
+    Eout,
+    Esolar,
+    Egross
 };
+
 
 bool P1MonitorClass::begin(const char* host, uint32_t pollInterval, float powerDelta, float voltageDelta)
 {
@@ -66,7 +69,7 @@ void P1MonitorClass::updateLog(time_t time)
     {
         _newLogEntry.voltage[i] += phaseData.Voltage;
         _newLogEntry.power[i] += phaseData.Power;
-        _currentDayStatsPtr->update(i, phaseData.Voltage, phaseData.Power, _pollInterval);
+        _currentDayStatsPtr->phase[i].update(phaseData.Voltage, phaseData.Power, solarPower[i], _pollInterval);
         i++;
     }
     _aggregations++;
@@ -125,28 +128,33 @@ void P1MonitorClass::writeCurrentValues(HtmlWriter& html, int maxPhasePower)
         .Current = 0,
         .Power = 0
     };
+    float totalSolarPower = 0;
 
     html.writeSectionStart("Current values");
     html.writeTableStart();
 
+    int i = 0;
     for (PhaseData& phaseData : _p1Client.electricity)
     {
         html.writeRowStart();
         html.writeHeaderCell(phaseData.Name);
         html.writeCell(phaseData.Voltage, F("%0.1f V"));
         html.writeCell(phaseData.Current, F("%0.1f A"));
-        html.writeCell(phaseData.Power, F("%0.0f W"));
+        html.writeCellStart("");
+        html.writeDiv((phaseData.Power >= 0) ? "pIn" : "pOut", F("%0.0f W"), phaseData.Power);
+        html.writeDiv("pSolar", F("%0.0f W"), solarPower[i]);
+        html.writeCellEnd();
         html.writeCellStart("graph");
-        html.writeBar(
-            abs(phaseData.Power) / maxPhasePower,
-            (phaseData.Power >= 0) ? F("deliveredBar") : F("returnedBar"),
-            true);
+        html.writeMeterDiv(abs(phaseData.Power), 0, maxPhasePower, (phaseData.Power >= 0) ? "deliveredBar" : "returnedBar");
+        html.writeMeterDiv(solarPower[i], 0, maxPhasePower, "solarBar");
         html.writeCellEnd();
         html.writeRowEnd();
 
         total.Voltage += phaseData.Voltage;
         total.Current += phaseData.Current;
         total.Power += phaseData.Power;
+        totalSolarPower += solarPower[i];
+        i++;
     }
 
     total.Voltage /= _p1Client.electricity.size();
@@ -155,21 +163,22 @@ void P1MonitorClass::writeCurrentValues(HtmlWriter& html, int maxPhasePower)
     html.writeHeaderCell(total.Name);
     html.writeCell(total.Voltage, F("%0.1f V"));
     html.writeCell(total.Current, F("%0.1f A"));
-    html.writeCell(total.Power, F("%0.0f W"));
+    html.writeCellStart("");
+    html.writeDiv((total.Power >= 0) ? "pIn" : "pOut", F("%0.0f W"), total.Power);
+    html.writeDiv("pSolar", F("%0.0f W"), totalSolarPower);
+    html.writeCellEnd();
     html.writeCellStart("graph");
-    html.writeBar(
-        abs(total.Power) / maxTotalPower,
-        (total.Power >= 0) ? F("deliveredBar") : F("returnedBar"),
-        true);
+    html.writeMeterDiv(abs(total.Power), 0, maxTotalPower, (total.Power >= 0) ? "deliveredBar" : "returnedBar");
+    html.writeMeterDiv(totalSolarPower, 0, maxTotalPower, "solarBar");
     html.writeCellEnd();
     html.writeRowEnd();
 
     html.writeRowStart();
     html.writeHeaderCell("Gas");
-    html.writeHeaderCell(String(gasKWh, 3) + " kWh", 2);
+    html.writeHeaderCell(String(gasKWh, 1) + " kWh", 2);
     html.writeCell(_gasPower, F("%0.0f W"));
     html.writeCellStart("graph");
-    html.writeBar(_gasPower / maxTotalPower, F("gasBar"), true);
+    html.writeMeterDiv(_gasPower, 0, maxTotalPower, "gasBar");
     html.writeCellEnd();
     html.writeRowEnd();
 
@@ -198,7 +207,7 @@ void P1MonitorClass::writeDayStats(HtmlWriter& html)
     for (PhaseData& phaseData : _p1Client.electricity)
     {
         html.writeRowStart();
-        html.writeHeaderCell(phaseData.Name, 0, 6);
+        html.writeHeaderCell(phaseData.Name, 0, 8);
         html.writeHeaderCell("U<sub>min</sub>");
         writeDayStats(html, phase, Vmin);
         html.writeRowEnd();
@@ -222,6 +231,15 @@ void P1MonitorClass::writeDayStats(HtmlWriter& html)
         html.writeHeaderCell("E<sub>out</sub>");
         writeDayStats(html, phase, Eout);
         html.writeRowEnd();
+        html.writeRowStart();
+        html.writeHeaderCell("E<sub>solar</sub>");
+        writeDayStats(html, phase, Esolar);
+        html.writeRowEnd();
+        html.writeRowStart();
+        html.writeHeaderCell("E<sub>gross</sub>");
+        writeDayStats(html, phase, Egross);
+        html.writeRowEnd();
+
         phase++;
     }
 
@@ -235,30 +253,40 @@ void P1MonitorClass::writeDayStats(HtmlWriter& html, int phase, int property)
     P1MonitorDayStatsEntry* dayStatsEntryPtr = DayStats.getFirstEntry();
     while (dayStatsEntryPtr != nullptr)
     {
+        PhaseDayStats& phaseStats = dayStatsEntryPtr->phase[phase];
+
         switch (property)
         {
             case Vmin:
-                html.writeCell(dayStatsEntryPtr->minVoltage[phase], F("%0.1f V"));
+                html.writeCell(phaseStats.minVoltage, F("%0.1f V"));
                 break;
 
             case Vmax:
-                html.writeCell(dayStatsEntryPtr->maxVoltage[phase], F("%0.1f V"));
+                html.writeCell(phaseStats.maxVoltage, F("%0.1f V"));
                 break;
             
             case Pmin:
-                html.writeCell(dayStatsEntryPtr->minPower[phase], F("%0.0f W"));
+                html.writeCell(phaseStats.minPower, F("%0.0f W"));
                 break;
 
             case Pmax:
-                html.writeCell(dayStatsEntryPtr->maxPower[phase], F("%0.0f W"));
+                html.writeCell(phaseStats.maxPower, F("%0.0f W"));
                 break;
 
             case Ein:
-                html.writeCell(dayStatsEntryPtr->energyIn[phase], F("%0.0f Wh"));
+                html.writeCell(phaseStats.energyIn, F("%0.0f Wh"));
                 break;
 
             case Eout:
-                html.writeCell(dayStatsEntryPtr->energyOut[phase], F("%0.0f Wh"));
+                html.writeCell(phaseStats.energyOut, F("%0.0f Wh"));
+                break;
+
+            case Esolar:
+                html.writeCell(phaseStats.solarEnergy, F("%0.0f Wh"));
+                break;
+
+            case Egross:
+                html.writeCell(phaseStats.grossEnergy, F("%0.0f Wh"));
                 break;
         }
         dayStatsEntryPtr = DayStats.getNextEntry();
@@ -340,21 +368,4 @@ void P1MonitorLogEntry::writeCsv(Print& output)
     }
     output.printf("%0.0f", gasPower);
     output.println();
-}
-
-
-void P1MonitorDayStatsEntry::writeTableRow(HtmlWriter& html)
-{
-    html.writeRowStart();
-    html.writeCell(formatTime("%a", day));
-    for (int i = 0; i < 3; i++)
-    {
-        html.writeCell(minVoltage[i]);
-        html.writeCell(maxVoltage[i]);
-        html.writeCell(minPower[i], F("%0.0f"));
-        html.writeCell(maxPower[i], F("%0.0f"));
-        html.writeCell(energyIn[i] / 1000, F("%0.3f"));
-        html.writeCell(energyOut[i] / 1000, F("%0.3f"));
-    }
-    html.writeRowEnd();
 }
