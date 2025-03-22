@@ -579,6 +579,7 @@ void writeTotals()
     float acPower = 0;
     float acEnergyToday = 0;
     float dcEnergyTotal = 0;
+    float dcEnergyToday = 0;
 
     for (int i = 0; i < Hoymiles.getNumInverters(); i++)
     {
@@ -588,7 +589,10 @@ void writeTotals()
         for (ChannelNum_t channel : inverterStatsPtr->getChannelsByType(TYPE_AC))
             acPower += inverterStatsPtr->getChannelFieldValue(TYPE_AC, channel, FLD_PAC);
         for (ChannelNum_t channel : inverterStatsPtr->getChannelsByType(TYPE_DC))
+        {
             dcEnergyTotal += inverterStatsPtr->getChannelFieldValue(TYPE_DC, channel, FLD_YT);
+            dcEnergyToday += inverterStatsPtr->getChannelFieldValue(TYPE_DC, channel, FLD_YD);
+        }
     }
 
     for (InverterLog* inverterLogPtr : InverterLogPtrs)
@@ -598,6 +602,7 @@ void writeTotals()
     Html.writeDivStart("totals");
     writeTotalCard("AC Power", std::round(acPower), "W");
     writeTotalCard("AC Energy Today", std::round(acEnergyToday), "Wh");
+    writeTotalCard("DC Energy Today", std::round(dcEnergyToday), "Wh");
     writeTotalCard("DC Energy Total", std::round(dcEnergyTotal), "kWh");
     Html.writeDivEnd();
     Html.writeSectionEnd();
