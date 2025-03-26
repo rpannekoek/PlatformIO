@@ -31,6 +31,7 @@ enum FileId
     SettingsIcon,
     UploadIcon,
     ElectricityIcon,
+    BinaryIcon,
     _LastFile
 };
 
@@ -43,7 +44,8 @@ const char* Files[] =
     "LogFile.svg",
     "Settings.svg",
     "Upload.svg",
-    "Electricity.svg"
+    "Electricity.svg",
+    "Binary.svg"
 };
 
 const char* Timeframes[] = 
@@ -63,6 +65,7 @@ RGBLED BuiltinLED(LED_BUILTIN);
 ESPWebServer WebServer(80); // Default HTTP port
 WiFiNTP TimeServer;
 WiFiFTPClient FTPClient(FTP_TIMEOUT_MS);
+StringBuilder HoymilesOutput(HOYMILES_OUTPUT_BUFFER_SIZE);
 StringBuilder HttpResponse(HTTP_RESPONSE_BUFFER_SIZE);
 HtmlWriter Html(HttpResponse, Files[Logo], Files[Styles], MAX_BAR_LENGTH);
 StringLog EventLog(MAX_EVENT_LOG_SIZE, 128);
@@ -82,9 +85,10 @@ bool ftpSyncEnergy = false;
 EnergyLog TotalEnergyLog;
 std::vector<InverterLog*> InverterLogPtrs;
 
-uint32_t pollInterval = POLL_INTERVAL_DAY;
+uint32_t inverterPollInterval = INV_POLL_INTERVAL_ACTIVE;
 time_t currentTime = 0;
 time_t pollInvertersTime = 0;
+time_t lastSolarStart = 0;
 time_t syncFTPTime = 0;
 time_t lastFTPSyncTime = 0;
 
@@ -101,7 +105,7 @@ bool addInverter(const char* name, uint64_t serial)
     }
     inverterPtr->setEnablePolling(true);
     inverterPtr->setZeroYieldDayOnMidnight(true);
-    inverterPtr->setReachableThreshold(5);
+    inverterPtr->setReachableThreshold(10);
 
     InverterLogPtrs.push_back(new InverterLog());
     PowerLog.clear();
@@ -462,6 +466,7 @@ void onTimeServerSynced()
 {
     currentTime = TimeServer.getCurrentTime();
     pollInvertersTime = currentTime;
+    lastSolarStart = getStartOfDay(currentTime) + 6 * SECONDS_PER_HOUR;
 
     newPowerLogEntry.reset(Hoymiles.getNumInverters());
 
@@ -499,15 +504,28 @@ void onWiFiInitialized()
     {
         BuiltinLED.setColor(LED_YELLOW);
         if (pollInverters())
-            pollInterval = POLL_INTERVAL_DAY;
-        else if (pollInterval < POLL_INTERVAL_NIGHT)
         {
-            pollInterval = std::min(pollInterval * 2, POLL_INTERVAL_NIGHT);
-            if ((pollInterval == POLL_INTERVAL_NIGHT) && (PersistentData.ftpSyncEntries != 0) && PersistentData.isFTPEnabled())
-                syncFTPTime = currentTime; // Force FTP sync at end of day 
+            // At least one inverter is reachable
+            inverterPollInterval = INV_POLL_INTERVAL_ACTIVE;
+            if (currentTime > lastSolarStart + 20 * SECONDS_PER_HOUR)
+                lastSolarStart = currentTime;
         }
-        Hoymiles.setPollInterval(pollInterval);
-        pollInvertersTime = currentTime + pollInterval;
+        else if (inverterPollInterval < INV_POLL_INTERVAL_INACTIVE)
+        {
+            // None of the inverter is reachable; use exponential backoff
+            inverterPollInterval *= 2;
+            if (inverterPollInterval >= INV_POLL_INTERVAL_INACTIVE)
+            {
+                if ((PersistentData.ftpSyncEntries != 0) && PersistentData.isFTPEnabled())
+                    syncFTPTime = currentTime; // Force FTP sync at end of day 
+                time_t nextPollTime = lastSolarStart + 23 * SECONDS_PER_HOUR;
+                inverterPollInterval = nextPollTime - currentTime;
+            } 
+        }
+        else
+            inverterPollInterval = INV_POLL_INTERVAL_INACTIVE;
+        Hoymiles.setPollInterval(inverterPollInterval);
+        pollInvertersTime = currentTime + inverterPollInterval;
         delay(100); // Ensure LED blink is visible
         BuiltinLED.setOff();
     }
@@ -723,7 +741,7 @@ void writeGraphRow(
     Html.writeCell(maxPowerHtml);
     Html.writeCell(energyHtml);
 
-    Html.writeCellStart("graph");
+    Html.writeCellStart("graph fill");
     for (EnergyLogEntry* logEntryPtr : energyLogEntryPtrs)
     {
         float value = (logEntryPtr != nullptr && logEntryPtr->time == time) ? logEntryPtr->energy : 0.0F;
@@ -1273,6 +1291,26 @@ void handleHttpSmartHomeRequest()
 }
 
 
+void handleHttpDebugRequest()
+{
+    Tracer tracer("handleHttpDebugRequest");
+
+    if (WiFiSM.shouldPerformAction("clear"))
+    {
+        HoymilesOutput.clear();
+    }
+
+    Html.writeHeader("Debug", Nav);
+    Html.writePreStart();
+    HttpResponse.println(HoymilesOutput.c_str());
+    Html.writePreEnd();
+
+    Html.writeActionLink("clear", "Clear", currentTime, ButtonClass);
+
+    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
+}
+
+
 void handleHttpRootRequest()
 {
     Tracer tracer("handleHttpRootRequest");
@@ -1285,13 +1323,13 @@ void handleHttpRootRequest()
     
     Html.writeHeader("Home", Nav);
 
-    const char* ftpSync;
+    String ftpSync;
     if (!PersistentData.isFTPEnabled())
         ftpSync = "Disabled";
     else if (lastFTPSyncTime == 0)
         ftpSync = "Not yet";
     else
-        ftpSync = formatTime("%H:%M", lastFTPSyncTime);
+        ftpSync = formatTime("%H:%M:%S", lastFTPSyncTime);
 
     Html.writeDivStart("flex-container");
 
@@ -1300,9 +1338,14 @@ void handleHttpRootRequest()
     Html.writeRow("WiFi RSSI", "%d dBm", static_cast<int>(WiFi.RSSI()));
     Html.writeRow("Free Heap", "%0.1f kB", float(ESP.getFreeHeap()) / 1024);
     Html.writeRow("Uptime", "%0.1f days", float(WiFiSM.getUptime()) / SECONDS_PER_DAY);
-    Html.writeRow("Next poll", "%lld s", pollInvertersTime - currentTime);
-    Html.writeRow("FTP Sync", ftpSync);
-    Html.writeRow("Sync Entries", "%d / %d", powerLogEntriesToSync, PersistentData.ftpSyncEntries);
+    Html.writeRow("Solar start", "%s", formatTime("%H:%M:%S", lastSolarStart));
+    Html.writeRow("Next poll", "%s", formatTime("%H:%M:%S", pollInvertersTime));
+    Html.writeRow("FTP Sync", ftpSync.c_str());
+    Html.writeRow(
+        "Sync Entries", "%d, %d / %d",
+        powerLogEntriesToSync,
+        P1Monitor.logEntriesToSync,
+        PersistentData.ftpSyncEntries);
     Html.writeTableEnd();
     Html.writeSectionEnd();
 
@@ -1392,6 +1435,13 @@ void setup()
         },
         MenuItem
         {
+            .icon = Files[BinaryIcon],
+            .label = PSTR("Debug"),
+            .urlPath = PSTR("debug"),
+            .handler= handleHttpDebugRequest
+        },
+        MenuItem
+        {
             .icon = Files[SettingsIcon],
             .label = PSTR("Inverters"),
             .urlPath =PSTR("inverters"),
@@ -1417,8 +1467,9 @@ void setup()
     WiFiSM.scanAccessPoints();
     WiFiSM.begin(PersistentData.wifiSSID, PersistentData.wifiKey, PersistentData.hostName);
 
+    Hoymiles.setMessageOutput(&HoymilesOutput);
     Hoymiles.init();
-    Hoymiles.setPollInterval(pollInterval);
+    Hoymiles.setPollInterval(INV_POLL_INTERVAL_ACTIVE);
 
 #ifdef DISABLE_NRF
     WiFiSM.logEvent("NRF Radio disabled");
