@@ -136,6 +136,8 @@ class SmartHomeClass
 
         const char* getStateLabel();
 
+        std::function<bool(void)> isHostReady;
+
         bool begin(float powerThreshold, uint32_t powerOffDelay, uint32_t pollInterval);
         bool useFritzbox(const char* host, const char* user, const char* password);
         bool useSmartThings(const char* pat);

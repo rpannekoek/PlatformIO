@@ -462,6 +462,12 @@ bool trySyncFTP(Print* printTo)
 }
 
 
+bool canUseWiFi()
+{
+    return Hoymiles.isAllRadioIdle() && WiFiSM.isConnected();
+}
+
+
 void onTimeServerSynced()
 {
     currentTime = TimeServer.getCurrentTime();
@@ -482,6 +488,7 @@ void onTimeServerSynced()
         if (PersistentData.smartThingsPAT[0] != 0)
             SmartHome.useSmartThings(PersistentData.smartThingsPAT);
 
+        SmartHome.isHostReady = canUseWiFi;
         if (!SmartHome.begin(PersistentData.powerThreshold, PersistentData.idleDelay, SMARTHOME_POLL_INTERVAL))
             WiFiSM.logEvent("Unable to initialize SmartHome");
 
@@ -530,7 +537,7 @@ void onWiFiInitialized()
         BuiltinLED.setOff();
     }
 
-    P1Monitor.run(currentTime);
+    if (canUseWiFi()) P1Monitor.run(currentTime);
 
     if (BuiltinLED.isOn())
     {

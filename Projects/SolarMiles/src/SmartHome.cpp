@@ -230,7 +230,7 @@ void SmartHomeClass::run(void* taskParam)
 void SmartHomeClass::runStateMachine()
 {
     uint32_t currentMillis = millis();
-    if (currentMillis < _nextActionMillis) return;
+    if ((currentMillis < _nextActionMillis) || !isHostReady()) return;
 
     switch (_state)
     {
@@ -268,8 +268,7 @@ void SmartHomeClass::runStateMachine()
             if (devices.size() > 0)
             {
                 _nextActionMillis = currentMillis + _pollInterval * 1000;
-                if (WiFi.status() == WL_CONNECTED)
-                    updateDevice();
+                updateDevice();
             }
             break;
 
