@@ -509,7 +509,6 @@ void onWiFiInitialized()
 
     if (currentTime >= pollInvertersTime)
     {
-        BuiltinLED.setColor(LED_YELLOW);
         if (pollInverters())
         {
             // At least one inverter is reachable
@@ -533,23 +532,20 @@ void onWiFiInitialized()
             inverterPollInterval = INV_POLL_INTERVAL_INACTIVE;
         Hoymiles.setPollInterval(inverterPollInterval);
         pollInvertersTime = currentTime + inverterPollInterval;
-        delay(100); // Ensure LED blink is visible
-        BuiltinLED.setOff();
     }
 
     if (canUseWiFi()) P1Monitor.run(currentTime);
 
-    if (BuiltinLED.isOn())
-    {
-        if (!SmartHome.isAwaiting() && !FTPClient.isAsyncPending() && !P1Monitor.isRequestPending())
-            BuiltinLED.setOff();
-    }
+    if (!Hoymiles.isAllRadioIdle())
+        BuiltinLED.setColor(LED_YELLOW);
     else if (P1Monitor.isRequestPending())
         BuiltinLED.setColor(LED_GREEN);
     else if (SmartHome.isAwaiting())
         BuiltinLED.setColor(LED_CYAN);
     else if (FTPClient.isAsyncPending())
         BuiltinLED.setColor(LED_MAGENTA);
+    else
+        BuiltinLED.setOff();
 
     if (SmartHome.logEntriesToSync != 0 && syncFTPTime == 0)
         syncFTPTime = currentTime + FTP_RETRY_INTERVAL; // Prevent FTP sync shortly after eachother

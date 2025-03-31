@@ -25,7 +25,7 @@ class RESTClient
 
         String getBaseUrl() { return _baseUrl; }
         String getLastError() { return _lastError; }
-        bool isRequestPending() { return _requestMillis != 0; }
+        bool isRequestPending() { return (_requestMillis != 0) && !isResponseAvailable(); }
         uint32_t getResponseTimeMs() { return _responseTimeMs; }
 
         void setBearerToken(const String& bearerToken);

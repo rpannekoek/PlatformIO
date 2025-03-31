@@ -1455,25 +1455,16 @@ void onWiFiUpdating()
 
 void onWiFiInitialized()
 {
-    if (BuiltinLED.isOn())
-    {
-        if (!HeatMon.isRequestPending()
-            && !EvoHome.isRequestPending()
-            && !WeatherService.isRequestPending()
-            && !FTPClient.isAsyncPending())
-            BuiltinLED.setOff();
-    }
+    if (HeatMon.isRequestPending())
+        BuiltinLED.setColor(LED_YELLOW);
+    else if (EvoHome.isRequestPending())
+        BuiltinLED.setColor(LED_WHITE);
+    else if (WeatherService.isRequestPending())
+        BuiltinLED.setColor(LED_CYAN);
+    else if (FTPClient.isAsyncPending())
+        BuiltinLED.setColor(LED_MAGENTA);
     else
-    {
-        if (HeatMon.isRequestPending())
-            BuiltinLED.setColor(LED_YELLOW);
-        else if (EvoHome.isRequestPending())
-            BuiltinLED.setColor(LED_WHITE);
-        else if (WeatherService.isRequestPending())
-            BuiltinLED.setColor(LED_CYAN);
-        else if (FTPClient.isAsyncPending())
-            BuiltinLED.setColor(LED_MAGENTA);
-    }
+        BuiltinLED.setOff();
 
     if (currentTime >= updateLogTime)
     {
@@ -1705,6 +1696,7 @@ void loop()
     currentTime = WiFiSM.getCurrentTime();
 
     WiFiSM.run();
+
     if (!OTGW.run(currentTime))
         WiFiSM.logEvent("OTGW error: %s", OTGW.getLastError());
 

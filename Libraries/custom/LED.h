@@ -23,11 +23,11 @@ class LED
 
     protected:
         uint8_t _pin = 0;
-        uint8_t _red;
-        uint8_t _green;
-        uint8_t _blue;
+        uint8_t _red = 0;
+        uint8_t _green = 0;
+        uint8_t _blue = 0;
         bool _isInitialized = false;
-        bool _isOn;
+        bool _isOn = false;
 
         LED(uint8_t pin) : _pin(pin) {}
 };

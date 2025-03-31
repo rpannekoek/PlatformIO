@@ -193,14 +193,14 @@ void RESTClient::runHttpRequests()
 {
     while (true)
     {
-        if ((_requestMillis != 0) && (_httpResult == 0))
+        if (isRequestPending())
         {
             int httpResult = _httpClient.GET();
             _responseTimeMs = millis() - _requestMillis; 
             if (httpResult == HTTP_OK)
                 _response = _httpClient.getString();
             else if (httpResult < 0)
-                _lastError = HTTPClient::errorToString(_httpResult);
+                _lastError = HTTPClient::errorToString(httpResult);
             _httpClient.end();
             _httpResult = httpResult;
         }
