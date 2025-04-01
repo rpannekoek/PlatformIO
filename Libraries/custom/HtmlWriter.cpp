@@ -185,6 +185,17 @@ void HtmlWriter::writeGraphCell(float value1, float value2, const String& barCss
 }
 
 
+void HtmlWriter::writeGraphCell(float value, float minValue, float maxValue, const String& cssClass, bool fill)
+{
+    if (fill)
+        writeCellStart(F("graph fill"));
+    else
+        writeCellStart(F("graph"));
+    writeMeterDiv(value, minValue, maxValue, cssClass);
+    writeCellEnd();
+}
+
+
 void HtmlWriter::writeFormStart(const String& action, const String& cssClass)
 {
     _output.printf(

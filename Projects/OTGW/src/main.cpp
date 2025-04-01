@@ -36,10 +36,11 @@ constexpr int WEATHER_SERVICE_POLL_INTERVAL = 15 * SECONDS_PER_MINUTE;
 constexpr int FTP_RETRY_INTERVAL = 15 * SECONDS_PER_MINUTE;
 constexpr int HEATMON_POLL_INTERVAL = 1 * SECONDS_PER_MINUTE;
 constexpr int EVOHOME_POLL_INTERVAL = 5 * SECONDS_PER_MINUTE;
+constexpr float MIN_TEMP = 20;
 constexpr float MAX_HEATPUMP_POWER = 4.0; // kW
 constexpr float MAX_PRESSURE = 3.0; // bar
 constexpr float MAX_FLOW_RATE = 12.0; // l/min
-constexpr float TROOM_BAR_RANGE = 4.0;
+constexpr float TROOM_BAR_RANGE = 2.0;
 
 #ifdef DEBUG_ESP_PORT
     constexpr int OTGW_TIMEOUT = 5 * SECONDS_PER_MINUTE;
@@ -809,15 +810,15 @@ float getBarValue(float t, float tMin = 20, float tMax = 0)
 }
 
 
-void writeOpenThermTemperatureRow(String label, String cssClass, uint16_t dataValue, float tMin = 20, float tMax = 0)
+void writeOpenThermTemperatureRow(String label, String cssClass, uint16_t dataValue, float tMin = MIN_TEMP, float tMax = 0)
 {
     float value = OpenThermGateway::getDecimal(dataValue);
-    float barValue = getBarValue(value, tMin, tMax);
+    if (tMax == 0) tMax = boilerTSet[BoilerLevel::High];
 
     Html.writeRowStart();
     Html.writeHeaderCell(label);
     Html.writeCell(value, F("%0.1f °C"));
-    Html.writeGraphCell(barValue, cssClass, true);
+    Html.writeGraphCell(value, tMin, tMax, cssClass, true);
     Html.writeRowEnd();
 }
 
@@ -841,7 +842,7 @@ void writeCurrentValues()
             Html.writeCell(F("%0.1f °C @ %0.0f %%"), thermostatTSet, maxRelMod);
         else
             Html.writeCell(F("CH off"));
-        Html.writeGraphCell(getBarValue(thermostatTSet), F("setBar"), true);
+        Html.writeGraphCell(thermostatTSet, MIN_TEMP, boilerTSet[BoilerLevel::High], F("setBar"), true);
         Html.writeRowEnd();
 
         Html.writeRowStart();
@@ -850,7 +851,7 @@ void writeCurrentValues()
             Html.writeCell(F("%0.1f °C @ %0.0f %%"), boilerTset, relMod);
         else
             Html.writeCell(F("Off"));
-        Html.writeGraphCell(getBarValue(boilerTset), F("setBar"), true);
+        Html.writeGraphCell(boilerTset, MIN_TEMP, boilerTSet[BoilerLevel::High], F("setBar"), true);
         Html.writeRowEnd();
 
         writeOpenThermTemperatureRow(F("T<sub>boiler</sub>"), flame ? F("flameBar") : F("waterBar"), lastOTLogEntryPtr->tBoiler); 
@@ -862,14 +863,14 @@ void writeCurrentValues()
         Html.writeRowStart();
         Html.writeHeaderCell(F("Pressure"));
         Html.writeCell(pressure, F("%0.2f bar"));
-        Html.writeGraphCell(pressure / MAX_PRESSURE, F("pressureBar"), true);
+        Html.writeGraphCell(pressure, 0, MAX_PRESSURE, F("pressureBar"), true);
         Html.writeRowEnd();
 
         float flowRate = OpenThermGateway::getDecimal(lastOTLogEntryPtr->flowRate);
         Html.writeRowStart();
         Html.writeHeaderCell(F("Flow"));
         Html.writeCell(flowRate, F("%0.1f l/min"));
-        Html.writeGraphCell(flowRate / MAX_FLOW_RATE, F("waterBar"), true);
+        Html.writeGraphCell(flowRate, 0, MAX_FLOW_RATE, F("waterBar"), true);
         Html.writeRowEnd();
     }
 
@@ -878,17 +879,27 @@ void writeCurrentValues()
         Html.writeRowStart();
         Html.writeHeaderCell(F("P<sub>heatpump</sub>"));
         Html.writeCell(HeatMon.pIn, F("%0.2f kW"));
-        Html.writeGraphCell(HeatMon.pIn / MAX_HEATPUMP_POWER, F("powerBar"), true);
+        Html.writeGraphCell(HeatMon.pIn, 0, MAX_HEATPUMP_POWER, F("powerBar"), true);
         Html.writeRowEnd();
     }
 
     if (EvoHome.zones.size() > 0)
     {
         ZoneInfo& primaryZone = EvoHome.zones[0];
+        float tRoomMin = primaryZone.setpoint - TROOM_BAR_RANGE;
+        float tRoomMax = primaryZone.setpoint + TROOM_BAR_RANGE;
+        String barStyle;
+        if (primaryZone.actual < primaryZone.setpoint - 0.5)
+            barStyle = "roomBelowBar";
+        else if (primaryZone.actual > primaryZone.setpoint + 0.5)
+            barStyle = "roomAboveBar";
+        else
+            barStyle = "roomSetBar";     
+
         Html.writeRowStart();
         Html.writeHeaderCell(F("T<sub>room</sub>"));
-        Html.writeCell(primaryZone.actual, F("%0.1f °C"));
-        Html.writeGraphCell(1.0F - (primaryZone.setpoint - primaryZone.actual) / TROOM_BAR_RANGE, F("roomBar"), true);
+        Html.writeCell(F("%0.1f / %0.1f °C"), primaryZone.actual, primaryZone.setpoint);
+        Html.writeGraphCell(primaryZone.actual, tRoomMin, tRoomMax, barStyle, true);
         Html.writeRowEnd();
     }
 
@@ -897,7 +908,7 @@ void writeCurrentValues()
     Html.writeRowStart();
     Html.writeHeaderCell(F("Override"));
     Html.writeCell(F("%s %s"), BoilerLevelNames[currentBoilerLevel], duration);
-    Html.writeGraphCell(float(overrideTimeLeft) / TSET_OVERRIDE_DURATION, F("overrideBar"), true);
+    Html.writeGraphCell(overrideTimeLeft, 0, TSET_OVERRIDE_DURATION, F("overrideBar"), true);
     Html.writeRowEnd();
 
     if (lowLoadPeriod != 0 || pwmDutyCycle < 1)
@@ -908,7 +919,7 @@ void writeCurrentValues()
         Html.writeRowStart();
         Html.writeHeaderCell(F("PWM"));
         Html.writeCell(F("%s %0.0f %%"), pwmType, dutyCycle * 100);
-        Html.writeGraphCell(dutyCycle, F("overrideBar"), true);
+        Html.writeGraphCell(dutyCycle, 0, 1, F("overrideBar"), true);
         Html.writeRowEnd();
     }
 
@@ -957,9 +968,7 @@ void writeStatisticsPerDay()
         Html.writeCell(formatTimeSpan(logEntryPtr->chSeconds));
         Html.writeCell(formatTimeSpan(logEntryPtr->dhwSeconds));
         Html.writeCell(formatTimeSpan(logEntryPtr->flameSeconds));
-        Html.writeCellStart(F("graph"));
-        Html.writeBar(float(logEntryPtr->flameSeconds) / maxFlameSeconds, F("flameBar"), false, false);
-        Html.writeCellEnd();
+        Html.writeGraphCell(logEntryPtr->flameSeconds, 0, maxFlameSeconds, F("flameBar"), false);
         Html.writeRowEnd();
 
         logEntryPtr = StatusLog.getNextEntry();

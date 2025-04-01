@@ -192,6 +192,26 @@ td.graph
     }
 }
 
+.meter 
+{
+    border: none;
+    width: 30em;
+    height: 1em;
+    display: block;
+}
+
+.fill .meter
+{
+    background-color: #C0C0C0;
+}
+
+.meter span 
+{
+  height: inherit;  
+  background-size: 100% 100%;
+  display: block;
+  text-indent: -9999px;
+}
 
 .setBar
 {
@@ -223,10 +243,22 @@ td.graph
     color: green;
 }
 
-.roomBar
+.roomBelowBar
+{
+	background-color: lightskyblue;
+    color: lightskyblue;
+}
+
+.roomSetBar
 {
 	background-color: lightgreen;
     color: lightgreen;
+}
+
+.roomAboveBar
+{
+	background-color: orange;
+    color: orange;
 }
 
 .pressureBar
