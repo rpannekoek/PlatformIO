@@ -500,10 +500,10 @@ void WiFiStateMachine::run()
     {
         _webServer.handleClient();
         ArduinoOTA.handle();
-        delay(10);
+        delay(activeDelay);
     }
     else
-        delay(100);
+        delay(inactiveDelay);
 
     if ((_resetMillis > 0) && (currentMillis >= _resetMillis))
     {

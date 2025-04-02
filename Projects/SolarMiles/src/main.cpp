@@ -1469,6 +1469,7 @@ void setup()
     WiFiSM.on(WiFiInitState::Initialized, onWiFiInitialized);
     WiFiSM.scanAccessPoints();
     WiFiSM.begin(PersistentData.wifiSSID, PersistentData.wifiKey, PersistentData.hostName);
+    WiFiSM.activeDelay = 1; // Hoymiles hops channels every 4 ms, we have to call Hoymiles.loop more frequently.
 
     Hoymiles.setMessageOutput(&HoymilesOutput);
     Hoymiles.init();

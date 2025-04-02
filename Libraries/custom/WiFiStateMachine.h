@@ -32,6 +32,9 @@ enum struct WiFiInitState
 class WiFiStateMachine : public ILogger
 {
     public:
+        uint32_t activeDelay = 10; // ms
+        uint32_t inactiveDelay = 100; // ms
+
         // Constructor
         WiFiStateMachine(LED& led, WiFiNTP& timeServer, ESPWebServer& webServer, Log<const char>& eventLog);
 
