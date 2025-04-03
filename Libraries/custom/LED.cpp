@@ -20,7 +20,7 @@ bool LED::begin(bool on, uint8_t red, uint8_t green, uint8_t blue)
 
 bool LED::setOn(bool on)
 {
-    if (!_isInitialized || (on == _isOn)) return false;
+    if (!_isInitialized || (!on && !_isOn)) return false;
 
     _isOn = on;
     return true;

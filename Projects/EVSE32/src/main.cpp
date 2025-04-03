@@ -171,8 +171,7 @@ void setState(EVSEState newState)
     state = newState;
     stateChangeTime = currentTime;
     WiFiSM.logEvent("EVSE State changed to %s", EVSEStateNames[newState]);
-    if (!StateLED.setStatus(newState))
-        WiFiSM.logEvent("Failed setting RGB LED status");
+    StateLED.setStatus(newState);
     delay(10);
 }
 
