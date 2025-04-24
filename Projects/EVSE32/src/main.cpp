@@ -15,6 +15,7 @@
 #include <Navigation.h>
 #include <HtmlWriter.h>
 #include <LED.h>
+#include <Localization.h>
 #include <Log.h>
 #include <BLE.h>
 #include <OneWire.h>
@@ -110,6 +111,7 @@ const char* Files[] PROGMEM =
 const char* ContentTypeHtml = "text/html;charset=UTF-8";
 const char* ContentTypeJson = "application/json";
 const char* ContentTypeText = "text/plain";
+const char* AcceptLanguage = "Accept-Language";
 
 const char* ButtonClass = "button";
 const char* ActionClass = "action";
@@ -964,7 +966,7 @@ void handleHttpBluetoothRequest()
     BluetoothState btState = Bluetooth.getState();
     uint16_t refreshInterval = (btState == BluetoothState::Discovering) ? 5 : 0;
 
-    Html.writeHeader("Bluetooth", Nav, refreshInterval);
+    Html.writeHeader(L10N("Bluetooth"), Nav, refreshInterval);
 
     if (WiFiSM.shouldPerformAction("startDiscovery"))
     {
@@ -1107,7 +1109,7 @@ void handleHttpChargeLogRequest()
     int currentPage = WebServer.hasArg("page") ? WebServer.arg("page").toInt() : 0;
     int totalPages = ((ChargeLog.count() - 1) / CHARGE_LOG_PAGE_SIZE) + 1;
 
-    Html.writeHeader("Charge log", Nav);
+    Html.writeHeader(L10N("Charge log"), Nav);
     Html.writePager(totalPages, currentPage);
     Html.writeTableStart();
 
@@ -1152,7 +1154,7 @@ void handleHttpEventLogRequest()
         WiFiSM.logEvent("Event log cleared.");
     }
 
-    Html.writeHeader("Event log", Nav);
+    Html.writeHeader(L10N("Event log"), Nav);
 
     const char* event = EventLog.getFirstEntry();
     while (event != nullptr)
@@ -1173,7 +1175,7 @@ void handleHttpSyncFTPRequest()
 {
     Tracer tracer("handleHttpSyncFTPRequest");
 
-    Html.writeHeader("FTP Sync", Nav);
+    Html.writeHeader(L10N("FTP Sync"), Nav);
 
     HttpResponse.println("<pre>");
     bool success = trySyncFTP(&HttpResponse); 
@@ -1203,7 +1205,7 @@ void handleHttpSmartMeterRequest()
 {
     Tracer tracer(F(__func__));
 
-    Html.writeHeader("Smart Meter", Nav);
+    Html.writeHeader(L10N("Smart Meter"), Nav);
 
     if (SmartMeter.isInitialized)
     {
@@ -1317,7 +1319,7 @@ void handleHttpCalibrateRequest()
     float cpDutyCycle = ControlPilot.getDutyCycle();
     float tMeasured = TempSensors.getTempC(PersistentData.tempSensorAddress);
 
-    Html.writeHeader("Calibrate", Nav);
+    Html.writeHeader(L10N("Calibrate"), Nav);
 
     Html.writeHeading("Control Pilot", 2);
     Html.writeTableStart();
@@ -1353,7 +1355,7 @@ void handleHttpConfigFormRequest()
 {
     Tracer tracer(F(__func__));
 
-    Html.writeHeader("Settings", Nav);
+    Html.writeHeader(L10N("Settings"), Nav);
 
 #if USE_HOMEWIZARD_P1 == 2
     if ((PersistentData.dsmrMonitor[0] != 0) && (PersistentData.p1BearerToken[0] == 0))
@@ -1406,7 +1408,7 @@ int determineMinChargeTimeOptions()
     time_t sixOClock = getStartOfDay(currentTime) + 18 * SECONDS_PER_HOUR;
     int result = 0;
 
-    strcpy(minChargeTimeOptions[0], "Now");
+    strcpy(minChargeTimeOptions[0], L10N("Now"));
 
     for (int i = 1; i < MIN_CHARGE_TIME_OPTIONS; i++)
     {
@@ -1416,8 +1418,9 @@ int determineMinChargeTimeOptions()
         snprintf(
             minChargeTimeOptions[i],
             32,
-            "%d hours (%s)",
+            "%d %s (%s)",
             hours,
+            L10N("hours"),
             formatTime("%H:%M", time));
     }
 
@@ -1435,20 +1438,20 @@ void writeActions()
             if (WiFiSM.shouldPerformAction("selftest"))
             {
                 setState(EVSEState::SelfTest);
-                Html.writeParagraph("Performing self-test...");
+                Html.writeParagraph(L10N("Performing self-test..."));
             }
             else
-                Html.writeActionLink("selftest", "Self-test", currentTime, ActionClass, Files[CalibrateIcon]);
+                Html.writeActionLink("selftest", L10N("Self Test"), currentTime, ActionClass, Files[CalibrateIcon]);
             break;
 
         case EVSEState::Authorize:
             if (WiFiSM.shouldPerformAction("authorize"))
             {
                 isWebAuthorized = true;
-                Html.writeParagraph("Start charging...");
+                Html.writeParagraph(L10N("Start charging..."));
             }
             else if (!isWebAuthorized)
-                Html.writeActionLink("authorize", "Start", currentTime, ActionClass, Files[FlashIcon]);
+                Html.writeActionLink("authorize", L10N("Start"), currentTime, ActionClass, Files[FlashIcon]);
             break;
 
         case EVSEState::AwaitCharging:
@@ -1459,7 +1462,7 @@ void writeActions()
             Html.writeFormStart("/");
             Html.writeDropdown(
                 "minChargeTime",
-                "Minimum charging time",
+                L10N("Minimum charging time"),
                 const_cast<const char**>(minChargeTimeOptions),
                 MIN_CHARGE_TIME_OPTIONS,
                 selected);
@@ -1473,17 +1476,17 @@ void writeActions()
             autoSuspendMinTime = currentTime + hours * SECONDS_PER_HOUR;
         }
         else if (autoSuspendMinTime == 0)
-            Html.writeActionLink("autoSuspend", "Solar off", currentTime, ActionClass, Files[MeterIcon]);
+            Html.writeActionLink("autoSuspend", L10N("Solar off"), currentTime, ActionClass, Files[MeterIcon]);
 
         if (WiFiSM.shouldPerformAction("suspend"))
             {
                 if (stopCharging(true))
-                    Html.writeParagraph("Suspending charging...");
+                    Html.writeParagraph(L10N("Suspending charging..."));
                 else
-                    Html.writeParagraph("Suspend charging failed.");
+                    Html.writeParagraph(L10N("Suspend charging failed."));
             }
             else
-                Html.writeActionLink("suspend", "Suspend", currentTime, ActionClass, Files[CancelIcon]);
+                Html.writeActionLink("suspend", L10N("Suspend"), currentTime, ActionClass, Files[CancelIcon]);
 
             break;
 
@@ -1491,21 +1494,21 @@ void writeActions()
             if (WiFiSM.shouldPerformAction("autoResume"))
                 autoResumeTime = currentTime;
             else if (autoResumeTime == 0)
-                Html.writeActionLink("autoResume", "Solar on", currentTime, ActionClass, Files[MeterIcon]);
+                Html.writeActionLink("autoResume", L10N("Solar on"), currentTime, ActionClass, Files[MeterIcon]);
 
             if (WiFiSM.shouldPerformAction("resume"))
             {
                 if (startCharging())
-                    Html.writeParagraph("Resuming charging...");
+                    Html.writeParagraph(L10N("Resuming charging..."));
                 else
-                    Html.writeParagraph("Resume charging failed.");
+                    Html.writeParagraph(L10N("Resume charging failed."));
             }
             else
-                Html.writeActionLink("resume", "Resume", currentTime, ActionClass, Files[FlashIcon]);
+                Html.writeActionLink("resume", L10N("Resume"), currentTime, ActionClass, Files[FlashIcon]);
             break;
 
         case EVSEState::ChargeCompleted:
-            Html.writeParagraph("Please disconnect vehicle.");
+            Html.writeParagraph(L10N("Please disconnect vehicle."));
             break;
 
         default:
@@ -1517,15 +1520,15 @@ void writeActions()
 
 void writeChargingSessions()
 {
-    Html.writeSectionStart("Charging sessions");
+    Html.writeSectionStart(L10N("Charging sessions"));
 
     Html.writeTableStart();
     Html.writeRowStart();
-    Html.writeHeaderCell("Start");
-    Html.writeHeaderCell("Duration");
-    Html.writeHeaderCell("Temperature");
-    Html.writeHeaderCell("Power");
-    Html.writeHeaderCell("Energy");
+    Html.writeHeaderCell(L10N("Start"));
+    Html.writeHeaderCell(L10N("Duration"));
+    Html.writeHeaderCell(L10N("Temperature"));
+    Html.writeHeaderCell(L10N("Power"));
+    Html.writeHeaderCell(L10N("Energy"));
     Html.writeRowEnd();
 
     ChargeStatsEntry* chargeStatsPtr = ChargeStats.getFirstEntry();
@@ -1557,11 +1560,14 @@ void handleHttpRootRequest()
         return;
     }
 
+    String acceptLanguage = WebServer.header(AcceptLanguage);
+    TRACE("%s: '%s'\n", AcceptLanguage, acceptLanguage.c_str());
+
     String ftpSync;
     if (!PersistentData.isFTPEnabled())
-        ftpSync = "Disabled";
+        ftpSync = L10N("Disabled");
     else if (lastFTPSyncTime == 0)
-        ftpSync = "Not yet";
+        ftpSync = L10N("Not yet");
     else
         ftpSync = formatTime("%H:%M", lastFTPSyncTime);
 
@@ -1571,7 +1577,7 @@ void handleHttpRootRequest()
         sizeof(evseStateHeading),
         "<span style=\"color: %s\">%s</span>",
         EVSEStateColors[state],
-        EVSEStateNames[state]);
+        L10N(EVSEStateNames[state]));
 
     Html.writeHeader("Home", Nav, HTTP_POLL_INTERVAL);
 
@@ -1581,38 +1587,38 @@ void handleHttpRootRequest()
 
     Html.writeSectionStart(evseStateHeading);
     Html.writeTableStart();
-    Html.writeRow("Vehicle", "%s", ControlPilot.getStatusName());
+    Html.writeRow(L10N("Vehicle"), "%s", L10N(ControlPilot.getStatusName()));
     if (state == EVSEState::Charging)
     {
-        Html.writeRow("Output current", "%0.1f / %0.1f A", outputCurrent, currentLimit);
-        Html.writeRow("Output power", "%0.0f W", outputCurrent * outputVoltage);
-        Html.writeRow("Solar power", "%0.0f W", solarPower);
+        Html.writeRow(L10N("Output current"), "%0.1f / %0.1f A", outputCurrent, currentLimit);
+        Html.writeRow(L10N("Output power"), "%0.0f W", outputCurrent * outputVoltage);
+        Html.writeRow(L10N("Solar power"), "%0.0f W", solarPower);
         if (autoSuspendMinTime != 0)
         {
-            const char* solarOff = "Solar off";
+            const char* solarOff = L10N("Solar off");
             if (currentTime < autoSuspendMinTime)
-                Html.writeRow(solarOff, "After %s", formatTime("%H:%M", autoSuspendMinTime));
+                Html.writeRow(solarOff, "%s %s", L10N("After"), formatTime("%H:%M", autoSuspendMinTime));
             else if (solarPower > PersistentData.solarPowerThreshold)
-                Html.writeRow(solarOff, "Pending");
+                Html.writeRow(solarOff, L10N("Pending"));
             else
-                Html.writeRow(solarOff, "Until %s", formatTime("%H:%M", autoSuspendMaxTime));
+                Html.writeRow(solarOff, "%s %s", L10N("Until"), formatTime("%H:%M", autoSuspendMaxTime));
         }
     }
     else if ((state == EVSEState::ChargeSuspended) && (autoResumeTime != 0))
     {
-        Html.writeRow("Solar power", "%0.0f W", solarPower);
-        const char* solarOn = "Solar on";
+        Html.writeRow(L10N("Solar power"), "%0.0f W", solarPower);
+        const char* solarOn = L10N("Solar on");
         if (solarPower < PersistentData.solarPowerThreshold)
-            Html.writeRow(solarOn, "Pending");
+            Html.writeRow(solarOn, L10N("Pending"));
         else
-            Html.writeRow(solarOn, "After %s", formatTime("%H:%M", autoResumeTime));
+            Html.writeRow(solarOn, "%s %s", L10N("After"), formatTime("%H:%M", autoResumeTime));
     }
     Html.writeTableEnd();
     Html.writeSectionEnd();
 
-    Html.writeSectionStart("Temperature");
+    Html.writeSectionStart(L10N("Temperature"));
     Html.writeTableStart();
-    Html.writeRow("Now", "%0.1f °C", temperature);
+    Html.writeRow(L10N("Now"), "%0.1f °C", temperature);
     Html.writeRow(
         "Min",
         "<div>%0.1f °C</div><div class=\"timestamp\">@ %s</div>",
@@ -1626,14 +1632,14 @@ void handleHttpRootRequest()
     Html.writeTableEnd();
     Html.writeSectionEnd();
 
-    Html.writeSectionStart("Status");
+    Html.writeSectionStart(L10N("Status"));
     Html.writeTableStart();
     Html.writeRow("WiFi RSSI", "%d dBm", static_cast<int>(WiFi.RSSI()));
-    Html.writeRow("Free Heap", "%0.1f kB", float(ESP.getFreeHeap()) / 1024);
-    Html.writeRow("Uptime", "%0.1f days", float(WiFiSM.getUptime()) / SECONDS_PER_DAY);
-    Html.writeRow("FTP Sync", ftpSync);
+    Html.writeRow(L10N("Free Heap"), "%0.1f kB", float(ESP.getFreeHeap()) / 1024);
+    Html.writeRow(L10N("Uptime"), "%0.1f %s", float(WiFiSM.getUptime()) / SECONDS_PER_DAY, L10N("days"));
+    Html.writeRow(L10N("FTP Sync"), ftpSync);
     if (PersistentData.isFTPEnabled())
-        Html.writeRow("Sync entries", "%d / %d", logEntriesToSync, PersistentData.ftpSyncEntries);
+        Html.writeRow(L10N("Sync entries"), "%d / %d", logEntriesToSync, PersistentData.ftpSyncEntries);
     Html.writeTableEnd();
     Html.writeSectionEnd();
     
@@ -1665,63 +1671,67 @@ void setup()
     TimeServer.begin(PersistentData.ntpServer);
     Html.setTitlePrefix(PersistentData.hostName);
 
-    Nav.width = "8em";
+    WebServer.collectHeaders(&AcceptLanguage, 1);
+    Localization::getLanguage = []() -> String { return WebServer.header(AcceptLanguage); };
+
+    Nav.isLocalizable = true;
+    Nav.width = "10em";
     Nav.menuItems = 
     {
         MenuItem
         {
             .icon = Files[HomeIcon],
-            .label = PSTR("Home"),
+            .label = "Home",
             .handler = handleHttpRootRequest
         },
         MenuItem
         {
             .icon = Files[LogFileIcon],
-            .label = PSTR("Event log"),
-            .urlPath = PSTR("events"),
+            .label = "Event log",
+            .urlPath = "events",
             .handler = handleHttpEventLogRequest
         },
         MenuItem
         {
             .icon = Files[FlashIcon],
-            .label = PSTR("Charge log"),
-            .urlPath = PSTR("chargelog"),
+            .label = "Charge log",
+            .urlPath = "chargelog",
             .handler = handleHttpChargeLogRequest
         },
         MenuItem
         {
             .icon = Files[UploadIcon],
-            .label = PSTR("FTP Sync"),
-            .urlPath = PSTR("sync"),
+            .label = "FTP Sync",
+            .urlPath = "sync",
             .handler= handleHttpSyncFTPRequest
         },
         MenuItem
         {
             .icon = Files[BluetoothIcon],
-            .label = PSTR("Bluetooth"),
-            .urlPath = PSTR("bt"),
+            .label = "Bluetooth",
+            .urlPath = "bt",
             .handler = handleHttpBluetoothRequest,
             .postHandler = handleHttpBluetoothFormPost
         },
         MenuItem
         {
             .icon = Files[MeterIcon],
-            .label = PSTR("Smart Meter"),
-            .urlPath = PSTR("dsmr"),
+            .label = "Smart Meter",
+            .urlPath = "dsmr",
             .handler = handleHttpSmartMeterRequest
         },
         MenuItem
         {
             .icon = Files[CalibrateIcon],
-            .label = PSTR("Calibrate"),
-            .urlPath = PSTR("calibrate"),
+            .label = "Calibrate",
+            .urlPath = "calibrate",
             .handler = handleHttpCalibrateRequest
         },
         MenuItem
         {
             .icon = Files[SettingsIcon],
-            .label = PSTR("Settings"),
-            .urlPath = PSTR("config"),
+            .label = "Settings",
+            .urlPath = "config",
             .handler = handleHttpConfigFormRequest,
             .postHandler = handleHttpConfigFormPost
         },

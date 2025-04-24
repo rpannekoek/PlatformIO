@@ -2,6 +2,7 @@
 #include <HtmlWriter.h>
 #include <math.h>
 #include <Tracer.h>
+#include <Localization.h>
 
 // Constructor
 HtmlWriter::HtmlWriter(StringBuilder& output, PGM_P icon, PGM_P css, size_t maxBarLength)
@@ -75,7 +76,10 @@ void HtmlWriter::writeHeader(const String& title, const Navigation& navigation, 
             strncpy_P(icon, menuItem.icon, sizeof(icon));
             _output.printf(F("<img class=\"icon\" src=\"%s\">"), icon);
         }
-        _output.print(FPSTR(menuItem.label));
+        if (navigation.isLocalizable)
+            _output.print(L10N(menuItem.label));
+        else
+            _output.print(FPSTR(menuItem.label));
         _output.println(F("</a>"));
     }
     _output.println(F("</nav>"));

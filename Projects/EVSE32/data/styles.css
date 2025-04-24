@@ -95,6 +95,7 @@ nav a:hover
 {
     display: inline-block;
     font-size: 1em;
+    text-align: center;
     text-decoration: none;
     color: white;
     background-color: darkgrey;
@@ -107,8 +108,8 @@ nav a:hover
 
 .action .icon
 {
-    height: 4em;
-    width: 4em;
+    height: 5em;
+    width: 5em;
 }
 
 .action .label

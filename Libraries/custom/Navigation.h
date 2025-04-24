@@ -15,6 +15,7 @@ struct MenuItem
 
 struct Navigation
 {
+    bool isLocalizable = false;
     String width = "10em";
     std::vector<MenuItem> menuItems;
 
