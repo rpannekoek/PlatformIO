@@ -45,7 +45,7 @@ struct Settings : WiFiSettingsWithFTP
         addIntegerField(tempLimit, "Temperature Limit", 40, 60, 50);
         addFloatField(tempSensorOffset, "Temperature Offset", 1, -5.0, 5.0);
         addFloatField(noCurrentThreshold, "No current threshold", 2, 0, 1, 0.5);
-        addIntegerField(solarPowerThreshold, "Solar power threshold", 0, 100, 50);
+        addIntegerField(solarPowerThreshold, "Solar power threshold", 0, 500, 50);
         addTimeSpanField(solarOnOffDelay, "Solar on/off delay", SECONDS_PER_MINUTE, SECONDS_PER_HOUR, SECONDS_PER_HOUR);
     }
 

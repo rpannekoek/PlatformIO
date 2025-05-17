@@ -29,7 +29,7 @@ bool LED::setOn(bool on)
 
 bool LED::setColor(uint8_t red, uint8_t green, uint8_t blue)
 {
-    if ((red == _red) && (green == _green) && (blue == _blue))
+    if (_isOn && (red == _red) && (green == _green) && (blue == _blue))
         return false;
 
     _red = red;

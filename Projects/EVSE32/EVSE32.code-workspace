@@ -64,7 +64,18 @@
 			"cinttypes": "cpp",
 			"typeinfo": "cpp",
 			"format": "cpp",
-			"span": "cpp"
+			"span": "cpp",
+			"bitset": "cpp",
+			"bit": "cpp",
+			"charconv": "cpp",
+			"compare": "cpp",
+			"concepts": "cpp",
+			"set": "cpp",
+			"netfwd": "cpp",
+			"numbers": "cpp",
+			"semaphore": "cpp",
+			"stop_token": "cpp",
+			"variant": "cpp"
 		}
 	}
 }

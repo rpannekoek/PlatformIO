@@ -634,7 +634,7 @@ bool WiFiStateMachine::shouldPerformAction(String name)
 
     time_t actionTime = _webServer.arg(name).toInt();
 
-    if (actionTime == _actionPerformedTime)
+    if (actionTime <= _actionPerformedTime)
         return false; // Action already performed
 
     _actionPerformedTime = actionTime;
