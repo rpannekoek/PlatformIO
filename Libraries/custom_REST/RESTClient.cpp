@@ -11,6 +11,14 @@ bool RESTClient::begin(const String& baseUrl, const char* certificate)
 #ifdef ESP8266
     isInitialized = true;
 #else
+    if (baseUrl.startsWith("https:"))
+    {
+        if (certificate == nullptr)
+            _tlsClient.setInsecure(); // Skip certificate validation
+        else
+            _tlsClient.setCACert(certificate);
+    }
+
     uint32_t timeoutMs = static_cast<uint32_t>(_timeout) * 1000;
     _httpClient.setTimeout(timeoutMs);
     _httpClient.setConnectTimeout(timeoutMs);
@@ -62,7 +70,7 @@ int RESTClient::requestData(const String& urlSuffix)
     if (_requestMillis == 0)
     {
         String url = _baseUrl + urlSuffix;
-        int result = sendRequest(url);
+        int result = startRequest(url);
         if (result == HTTP_REQUEST_PENDING) _requestMillis = millis();
         return result;
     }
@@ -122,9 +130,9 @@ int RESTClient::awaitData(const String& urlSuffix)
 
 
 #ifdef ESP8266
-int RESTClient::sendRequest(const String& url)
+int RESTClient::startRequest(const String& url)
 {
-    Tracer tracer(F("RESTClient::sendRequest"), url.c_str());
+    Tracer tracer(F("RESTClient::startRequest"), url.c_str());
 
     if (!_asyncHttpRequest.open("GET", url.c_str()))
     {
@@ -157,14 +165,21 @@ int RESTClient::getResponse()
         _lastError = _asyncHttpRequest.responseHTTPString();
     return result;
 }
-#else
-int RESTClient::sendRequest(const String& url)
-{
-    Tracer tracer(F("RESTClient::sendRequest"), url.c_str());
 
-    bool success = (_certificate == nullptr)
-        ? _httpClient.begin(url)
-        : _httpClient.begin(url, _certificate);
+
+int RESTClient::POST(const String& payload)
+{
+    return 0; // TODO
+}
+
+#else
+int RESTClient::startRequest(const String& url)
+{
+    TRACE("RESTClient::startRequest(\"%s\")\n", url.c_str());
+
+    bool success = url.startsWith("https:") ?
+        _httpClient.begin(_tlsClient, url) :
+        _httpClient.begin(url);
 
     if (!success)
     {
@@ -206,5 +221,45 @@ void RESTClient::runHttpRequests()
         }
         delay(10);
     }
+}
+
+
+int RESTClient::request(RequestMethod method, const String& urlSuffix, const String& payload, String& response)
+{
+    Tracer tracer(F("RESTClient::request"), payload.c_str());
+
+    int startResult = startRequest(_baseUrl + urlSuffix);
+    if (startResult != HTTP_REQUEST_PENDING) return startResult;
+
+    int result;
+    switch (method)
+    {
+        case RequestMethod::GET:
+            result = _httpClient.GET();
+            break;
+        case RequestMethod::POST:
+            result = _httpClient.POST(payload);
+            break;
+        case RequestMethod::PUT:
+            result = _httpClient.PUT(payload);
+            break;
+    }
+    response = _httpClient.getString();
+    _httpClient.end();
+    TRACE("HTTP %d:\n%s\n", result, response.c_str());
+
+    if (result != HTTP_OK)
+    {
+        if (result < 0)
+            _lastError = HTTPClient::errorToString(result);
+        else
+        {
+            _lastError = "HTTP ";
+            _lastError += result;
+            _lastError += ": ";
+            _lastError += response;
+        }
+    }
+    return result;
 }
 #endif

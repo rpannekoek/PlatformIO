@@ -7,6 +7,7 @@
 #include <AsyncHTTPRequest_Generic.hpp>
 #else
 #include <HTTPClient.h>
+#include <NetworkClientSecure.h>
 #endif
 
 constexpr int HTTP_REQUEST_PENDING = 0;
@@ -14,6 +15,14 @@ constexpr int HTTP_OK = 200;
 constexpr int HTTP_OPEN_FAILED = -100;
 constexpr int HTTP_SEND_FAILED = -101;
 constexpr int RESPONSE_PARSING_FAILED = -102;
+
+enum struct RequestMethod
+{
+    GET,
+    POST,
+    PUT,
+    DELETE
+};
 
 class RESTClient
 {
@@ -29,7 +38,7 @@ class RESTClient
         uint32_t getResponseTimeMs() { return _responseTimeMs; }
 
         void setBearerToken(const String& bearerToken);
-        int requestData(const String& urlSuffix = "");
+        virtual int requestData(const String& urlSuffix = "");
         int awaitData(const String& urlSuffix = "");
 
     protected:
@@ -39,12 +48,14 @@ class RESTClient
         void addHeader(const String& name, const String& value);
         virtual bool parseResponse(const JsonDocument& response) = 0;
         void setLastError(const String& message) { _lastError = message; }
+        int request(RequestMethod method, const String& urlSuffix, const String& payload, String& response);
 
     private:
 #ifdef ESP8266    
         AsyncHTTPRequest _asyncHttpRequest;
 #else
         TaskHandle_t _taskHandle;
+        NetworkClientSecure _tlsClient;
         HTTPClient _httpClient;
         volatile int _httpResult;
 
@@ -64,7 +75,7 @@ class RESTClient
         uint32_t _responseTimeMs = 0;
         String _response;
 
-        int sendRequest(const String& url);
+        int startRequest(const String& url);
         bool isResponseAvailable();
         int getResponse();
 };

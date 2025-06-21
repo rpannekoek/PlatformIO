@@ -11,6 +11,17 @@ struct PhaseData
     float Power;
 };
 
+struct BatteryInfo
+{
+    String mode;
+    int power;
+    int targetPower;
+    int maxConsumptionPower;
+    int maxProductionPower;
+
+    bool isInitialized() const { return !mode.isEmpty(); }
+};
+
 class HomeWizardP1V1Client : public RESTClient
 {
     public:
@@ -32,12 +43,22 @@ class HomeWizardP1V2Client : public RESTClient
 {
     public:
         std::vector<PhaseData> electricity;
+        BatteryInfo batteries;
 
         // Constructor
         HomeWizardP1V2Client(uint16_t timeout = 5) : RESTClient(timeout) {}
 
         bool begin(const char* host);
         String getBearerToken(const String& name);
+        bool setBatteryMode(bool enable);
+
+        virtual int requestData(const String& urlSuffix = "") override
+        {
+            if (urlSuffix.isEmpty())
+                return RESTClient::requestData("measurement");
+            else
+                return RESTClient::requestData(urlSuffix);
+        }
 
     protected:
         virtual bool parseResponse(const JsonDocument& response) override;

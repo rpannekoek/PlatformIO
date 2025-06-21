@@ -1,5 +1,3 @@
-#define USE_HOMEWIZARD_P1 1
-
 #include <Arduino.h>
 #include <math.h>
 #include <ESPWiFi.h>
@@ -14,6 +12,7 @@
 #include <StringBuilder.h>
 #include <Navigation.h>
 #include <HtmlWriter.h>
+#include <HomeWizardP1Client.h>
 #include <LED.h>
 #include <Localization.h>
 #include <Log.h>
@@ -28,18 +27,6 @@
 #include "DayStatistics.h"
 #include "ChargeLogEntry.h"
 #include "ChargeStatsEntry.h"
-
-#ifdef USE_HOMEWIZARD_P1
-#include <HomeWizardP1Client.h>
-#if USE_HOMEWIZARD_P1 == 1
-HomeWizardP1V1Client SmartMeter;
-#else
-HomeWizardP1V2Client SmartMeter;
-#endif
-#else
-#include "DsmrMonitorClient.h"
-DsmrMonitorClient SmartMeter;
-#endif
 
 constexpr int FTP_RETRY_INTERVAL = 15 * SECONDS_PER_MINUTE;
 constexpr int HTTP_POLL_INTERVAL = 60;
@@ -134,6 +121,7 @@ StaticLog<ChargeLogEntry> ChargeLog(CHARGE_LOG_SIZE);
 StaticLog<ChargeStatsEntry> ChargeStats(CHARGE_STATS_SIZE);
 DayStatistics DayStats;
 Navigation Nav;
+HomeWizardP1V2Client SmartMeter;
 
 EVSEState state = EVSEState::Booting;
 float temperature = 0;
@@ -352,7 +340,7 @@ float determineCurrentLimit(bool awaitSmartMeter)
         }
     }
 
-    PhaseData& phase = SmartMeter.electricity[PersistentData.dsmrPhase - 1];
+    PhaseData& phase = SmartMeter.electricity[PersistentData.evsePhase - 1];
     outputVoltage = phase.Voltage; 
     float phaseCurrent = phase.Power / phase.Voltage; 
     if (state == EVSEState::Charging) 
@@ -368,6 +356,14 @@ float determineCurrentLimit(bool awaitSmartMeter)
 bool startCharging()
 {
     Tracer tracer(__func__);
+
+    if (SmartMeter.batteries.mode == "zero")
+    {
+        if (SmartMeter.setBatteryMode(false))
+            WiFiSM.logEvent("Batteries disabled.");
+        else
+            WiFiSM.logEvent("Batteries: %s", SmartMeter.getLastError().c_str());
+    }
 
     bool success = setRelay(true); 
     if (success)
@@ -433,6 +429,14 @@ bool stopCharging(bool suspend)
     {
         ftpSyncTime = currentTime;
         ftpSyncChargeStats = true;
+    }
+
+    if (SmartMeter.batteries.mode == "standby")
+    {
+        if (SmartMeter.setBatteryMode(true))
+            WiFiSM.logEvent("Batteries enabled.");
+        else
+            WiFiSM.logEvent("Batteries: %s", SmartMeter.getLastError().c_str());
     }
 
     return true;
@@ -668,13 +672,21 @@ void runEVSEStateMachine()
                 setUnexpectedControlPilotStatus();
             else if ((autoResumeTime != 0) && (currentTime >= chargeControlTime) && WiFiSM.isConnected())
             {
-                int dsmrResult = SmartMeter.requestData();
-                if (dsmrResult != HTTP_REQUEST_PENDING)
+                int httpResult = SmartMeter.batteries.isInitialized() 
+                    ? SmartMeter.requestData("batteries")
+                    : SmartMeter.requestData();
+                if (httpResult != HTTP_REQUEST_PENDING)
                 {
-                    if (dsmrResult == HTTP_OK)
+                    if (httpResult == HTTP_OK)
                     {
-                        PhaseData& phaseData = SmartMeter.electricity[PersistentData.dsmrPhase - 1];
-                        solarPower = std::max(-phaseData.Power, 0.0F);
+                        if (SmartMeter.batteries.isInitialized())
+                            solarPower = std::max(SmartMeter.batteries.targetPower, 0);
+                        else
+                        {
+                            PhaseData& phaseData = SmartMeter.electricity[PersistentData.evsePhase - 1];
+                            solarPower = std::max(-phaseData.Power, 0.0F);
+                        }
+
                         if (solarPower < PersistentData.solarPowerThreshold)
                             autoResumeTime = currentTime + PersistentData.solarOnOffDelay;
                         else if (currentTime >= autoResumeTime)
@@ -687,7 +699,7 @@ void runEVSEStateMachine()
                         }
                     }
                     else
-                        WiFiSM.logEvent("SmartMeter: %s", SmartMeter.getLastError());
+                        WiFiSM.logEvent("SmartMeter: %s", SmartMeter.getLastError().c_str());
                     chargeControlTime = currentTime + AUTO_RESUME_INTERVAL;
                 }
             }
@@ -782,6 +794,17 @@ void test(String message)
 
         ControlPilot.setReady();
         setState(EVSEState::Ready);
+    }
+    else if (message.startsWith("b"))
+    {
+        if (message.startsWith("b?"))
+        {
+            int httpResult = SmartMeter.awaitData("batteries");
+            if (httpResult != HTTP_OK)
+                TRACE("Failed to get battery info: %s\n", SmartMeter.getLastError().c_str());    
+        }
+        else if (!SmartMeter.setBatteryMode(message.startsWith("b1")))
+            TRACE("Failed to set battery state: %s\n", SmartMeter.getLastError().c_str());
     }
     else if (message.startsWith("s"))
     {
@@ -906,6 +929,18 @@ bool trySyncFTP(Print* printTo)
 
 void onWiFiTimeSynced()
 {
+    if (SmartMeter.isInitialized)
+    {
+        if (SmartMeter.awaitData("batteries") == HTTP_OK)
+            WiFiSM.logEvent(
+                "Batteries: %d/%d W '%s'",
+                SmartMeter.batteries.maxProductionPower,
+                SmartMeter.batteries.maxConsumptionPower,
+                SmartMeter.batteries.mode.c_str());
+        else
+            WiFiSM.logEvent("Batteries: %s", SmartMeter.getLastError().c_str());
+    }
+
     if (state == EVSEState::Booting)
         setState(EVSEState::SelfTest);
     tempPollTime = currentTime;
@@ -1232,9 +1267,18 @@ void handleHttpSmartMeterRequest()
             }
             Html.writeTableEnd();
 
-            TRACE("DSMR phase: %d\n", PersistentData.dsmrPhase);
+            if (SmartMeter.batteries.isInitialized())
+            {
+                SmartMeter.awaitData("batteries"); // Refresh battery info
+                Html.writeHeading("Batteries", 2);
+                Html.writeTableStart();
+                Html.writeRow("State", "%s", SmartMeter.batteries.mode.c_str());
+                Html.writeRow("Power", "%d W", SmartMeter.batteries.power);
+                Html.writeRow("Target", "%d W", SmartMeter.batteries.targetPower);
+                Html.writeTableEnd();
+            }
 
-            PhaseData& monitoredPhaseData = SmartMeter.electricity[PersistentData.dsmrPhase - 1];
+            PhaseData& monitoredPhaseData = SmartMeter.electricity[PersistentData.evsePhase - 1];
             Html.writeParagraph(
                 "Phase '%s' current: %0.1f A",
                 monitoredPhaseData.Name.c_str(),
@@ -1243,7 +1287,7 @@ void handleHttpSmartMeterRequest()
         else
             Html.writeParagraph(
                 "%s returned %d: %s",
-                PersistentData.dsmrMonitor,
+                PersistentData.p1Meter,
                 dsmrResult,
                 SmartMeter.getLastError().c_str());
     }
@@ -1357,8 +1401,7 @@ void handleHttpConfigFormRequest()
 
     Html.writeHeader(L10N("Settings"), Nav);
 
-#if USE_HOMEWIZARD_P1 == 2
-    if ((PersistentData.dsmrMonitor[0] != 0) && (PersistentData.p1BearerToken[0] == 0))
+    if ((PersistentData.p1Meter[0] != 0) && (PersistentData.p1BearerToken[0] == 0))
     {
         if (WiFiSM.shouldPerformAction("p1Token"))
         {
@@ -1373,7 +1416,6 @@ void handleHttpConfigFormRequest()
         else
             Html.writeActionLink("p1Token", "Get P1 Token", currentTime, ButtonClass);
     }
-#endif
 
     Html.writeFormStart("/config", "grid");
     PersistentData.writeHtmlForm(Html);
@@ -1765,14 +1807,10 @@ void setup()
     else
         setFailure("Failed initializing Bluetooth");
 
-    if (PersistentData.dsmrMonitor[0] != 0)
+    if (PersistentData.p1Meter[0] != 0)
     {
-        if (SmartMeter.begin(PersistentData.dsmrMonitor))
-        {
-#if USE_HOMEWIZARD_P1 == 2
+        if (SmartMeter.begin(PersistentData.p1Meter))
             SmartMeter.setBearerToken(PersistentData.p1BearerToken);
-#endif
-        }
         else
             setFailure("Failed initializing Smart Meter");
     }
