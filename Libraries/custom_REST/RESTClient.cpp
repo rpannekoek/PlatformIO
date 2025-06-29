@@ -167,9 +167,9 @@ int RESTClient::getResponse()
 }
 
 
-int RESTClient::POST(const String& payload)
+int RESTClient::request(RequestMethod method, const String& urlSuffix, const String& payload, String& response)
 {
-    return 0; // TODO
+    return HTTP_OPEN_FAILED; // TODO
 }
 
 #else

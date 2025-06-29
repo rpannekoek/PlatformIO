@@ -190,6 +190,27 @@ td.graph
     }
 }
 
+.meter 
+{
+    border: none;
+    width: 30em;
+    height: 1em;
+    display: block;
+}
+
+.fill .meter
+{
+    background-color: #C0C0C0;
+}
+
+.meter span 
+{
+  height: inherit;  
+  background-size: 100% 100%;
+  display: block;
+  text-indent: -9999px;
+}
+
 .temp1Bar
 {
 	background-color: orange;
@@ -236,6 +257,12 @@ td.graph
 {
 	background-color: red;
     color: red;
+}
+
+.pwmBar
+{
+    background-color: black;
+    color: black;
 }
 
 .barFill

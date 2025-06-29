@@ -18,6 +18,10 @@
 #include "DayStatsEntry.h"
 #include "OTGWClient.h"
 
+constexpr uint8_t SOLAR_PUMP_PWM_PIN = 16;
+constexpr uint32_t SOLAR_PUMP_PWM_FREQ = 500; // Hz
+constexpr uint32_t SOLAR_PUMP_PWM_RANGE = 255; // 8-bit PWM range
+
 #define HTTP_POLL_INTERVAL 60
 #define EVENT_LOG_LENGTH 50
 #define TOPIC_LOG_SIZE 200
@@ -89,8 +93,10 @@ bool isDefrosting = false;
 bool antiFreezeActivated = false;
 bool testAntiFreeze = false;
 bool testDefrost = false;
+int testSolarDeltaT = 0;
 bool pumpPrime = false;
 int otgwAttempt = 0;
+float solarPumpDutyCycle = 0.0F;
 
 time_t currentTime = 0;
 time_t queryAquareaTime = 0;
@@ -155,6 +161,20 @@ void otgwPumpControl(bool pumpIsOn, int defrostingState)
         pumpPrime = false;
         otgwSetPump(true);
     }
+}
+
+
+void solarPumpControl(int solarDeltaT, int solarOffDeltaT)
+{
+    if (solarDeltaT < solarOffDeltaT)
+        solarPumpDutyCycle = 0.0F;
+    else
+    {
+        float p = std::min(float(solarDeltaT - solarOffDeltaT) / PersistentData.solarPumpPWMDeltaT, 1.0F);
+        solarPumpDutyCycle = 0.1F + 0.8F * p; // Pump PWM should be between 10% and 90%
+    }
+
+    analogWrite(SOLAR_PUMP_PWM_PIN, round(solarPumpDutyCycle * SOLAR_PUMP_PWM_RANGE));
 }
 
 
@@ -258,6 +278,8 @@ void handleNewAquareaData()
     float heatPower = HeatPump.getTopic(TopicId::Heat_Power).getValue().toFloat();
     int defrostingState = HeatPump.getTopic(TopicId::Defrosting_State).getValue().toInt();
     float pumpFlow = HeatPump.getTopic(TopicId::Pump_Flow).getValue().toFloat();
+    int solarDeltaT = HeatPump.getTopic(TopicId::Solar_DeltaT).getValue().toInt();
+    int solarOffDeltaT = HeatPump.getTopic(TopicId::Solar_Off_Delta).getValue().toInt();
 
     if (testDefrost) defrostingState = 1;
 
@@ -269,6 +291,8 @@ void handleNewAquareaData()
 
     if (OTGW.isInitialized && WiFiSM.isConnected())
         otgwPumpControl(pumpIsOn, defrostingState);
+    if ((PersistentData.solarPumpPWMDeltaT > 0) && (testSolarDeltaT == 0))
+        solarPumpControl(solarDeltaT, solarOffDeltaT);
     antiFreezeControl(inletTemp, outletTemp, compPower);
     updateDayStats(secondsSinceLastUpdate, compPower, heatPower, defrostingState);
     updateTopicLog();
@@ -366,11 +390,20 @@ void writeCurrentValues()
         Html.writeRowStart();
         Html.writeHeaderCell(FPSTR(topic.htmlLabel));
         Html.writeCell(topic.formatValue(topicValue, true));
-        Html.writeCellStart(F("graph"));
-        Html.writeBar(barValue, barCssClass, true);
+        Html.writeCellStart(F("graph fill"));
+        Html.writeMeterDiv(topicValue, topic.minValue, topic.maxValue, barCssClass);
         Html.writeCellEnd();
         Html.writeRowEnd();
     }
+
+    Html.writeRowStart();
+    Html.writeHeaderCell(F("PWM"));
+    Html.writeCell("%0.0f %%", solarPumpDutyCycle * 100);
+    Html.writeCellStart(F("graph fill"));
+    Html.writeMeterDiv(solarPumpDutyCycle, 0.0F, 1.0F, F("pwmBar"));
+    Html.writeCellEnd();
+    Html.writeRowEnd();
+
     Html.writeTableEnd();
     Html.writeSectionEnd();
 }
@@ -645,9 +678,7 @@ void handleHttpTestRequest()
     {
         testAntiFreeze = !testAntiFreeze;
         const char* switchState = testAntiFreeze ? "on" : "off"; 
-        Html.writeParagraph(
-            F("Anti-freeze test: %s"),
-            switchState);
+        Html.writeParagraph(F("Anti-freeze test: %s"), switchState);
     }
 
     if (WiFiSM.shouldPerformAction(F("defrost")))
@@ -655,13 +686,24 @@ void handleHttpTestRequest()
         testDefrost = !testDefrost;
         handleNewAquareaData();
         const char* switchState = testDefrost ? "on" : "off"; 
-        Html.writeParagraph(
-            F("Defrost test: %s"),
-            switchState);
+        Html.writeParagraph(F("Defrost test: %s"), switchState);
     }
 
+    if (WiFiSM.shouldPerformAction(F("solarPWM")))
+    {
+        testSolarDeltaT += 2;
+        if (testSolarDeltaT > PersistentData.solarPumpPWMDeltaT)
+            testSolarDeltaT = 0;
+        solarPumpControl(testSolarDeltaT, 0);
+        Html.writeParagraph(
+            F("Solar DeltaT: %d => %0.0f %% duty cycle"),
+            testSolarDeltaT,
+            solarPumpDutyCycle * 100);
+    }
+    
     Html.writeActionLink(F("antiFreeze"), F("Test anti-freeze (switch)"), currentTime, ButtonClass);
     Html.writeActionLink(F("defrost"), F("Test defrost (switch)"), currentTime, ButtonClass);
+    Html.writeActionLink(F("solarPWM"), F("Test solar pump PWM"), currentTime, ButtonClass);
 
     if (WiFiSM.shouldPerformAction(F("fillDayStats")))
     {
@@ -994,7 +1036,11 @@ void setup()
         OTGW.begin(PersistentData.otgwHost);
     }
 
-    BuiltinLED.setOn(false);
+    pinMode(SOLAR_PUMP_PWM_PIN, OUTPUT);
+    analogWriteFreq(SOLAR_PUMP_PWM_FREQ);
+    analogWriteRange(SOLAR_PUMP_PWM_RANGE);
+ 
+    BuiltinLED.setOff();
 }
 
 
