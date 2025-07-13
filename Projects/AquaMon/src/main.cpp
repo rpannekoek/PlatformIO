@@ -17,10 +17,10 @@
 #include "MonitoredTopics.h"
 #include "DayStatsEntry.h"
 #include "OTGWClient.h"
+#include "SolarPumpControl.h"
 
 constexpr uint8_t SOLAR_PUMP_PWM_PIN = 16;
-constexpr uint32_t SOLAR_PUMP_PWM_FREQ = 500; // Hz
-constexpr uint32_t SOLAR_PUMP_PWM_RANGE = 255; // 8-bit PWM range
+constexpr uint16_t SOLAR_LOG_SIZE = 50;
 
 #define HTTP_POLL_INTERVAL 60
 #define EVENT_LOG_LENGTH 50
@@ -79,6 +79,7 @@ StaticLog<DayStatsEntry> DayStats(7);
 SimpleLED BuiltinLED(LED_BUILTIN, true);
 WiFiStateMachine WiFiSM(BuiltinLED, TimeServer, WebServer, EventLog);
 Aquarea HeatPump;
+SolarPumpControl SolarPump(SOLAR_PUMP_PWM_PIN, SOLAR_LOG_SIZE);
 Navigation Nav;
 
 TopicLogEntry newTopicLogEntry;
@@ -93,10 +94,9 @@ bool isDefrosting = false;
 bool antiFreezeActivated = false;
 bool testAntiFreeze = false;
 bool testDefrost = false;
-int testSolarDeltaT = 0;
+float testSolarDeltaT = 0;
 bool pumpPrime = false;
 int otgwAttempt = 0;
-float solarPumpDutyCycle = 0.0F;
 
 time_t currentTime = 0;
 time_t queryAquareaTime = 0;
@@ -161,20 +161,6 @@ void otgwPumpControl(bool pumpIsOn, int defrostingState)
         pumpPrime = false;
         otgwSetPump(true);
     }
-}
-
-
-void solarPumpControl(int solarDeltaT, int solarOffDeltaT)
-{
-    if (solarDeltaT < solarOffDeltaT)
-        solarPumpDutyCycle = 0.0F;
-    else
-    {
-        float p = std::min(float(solarDeltaT - solarOffDeltaT) / PersistentData.solarPumpPWMDeltaT, 1.0F);
-        solarPumpDutyCycle = 0.1F + 0.8F * p; // Pump PWM should be between 10% and 90%
-    }
-
-    analogWrite(SOLAR_PUMP_PWM_PIN, round(solarPumpDutyCycle * SOLAR_PUMP_PWM_RANGE));
 }
 
 
@@ -279,6 +265,7 @@ void handleNewAquareaData()
     int defrostingState = HeatPump.getTopic(TopicId::Defrosting_State).getValue().toInt();
     float pumpFlow = HeatPump.getTopic(TopicId::Pump_Flow).getValue().toFloat();
     int solarDeltaT = HeatPump.getTopic(TopicId::Solar_DeltaT).getValue().toInt();
+    int solarOnDeltaT = HeatPump.getTopic(TopicId::Solar_On_Delta).getValue().toInt();
     int solarOffDeltaT = HeatPump.getTopic(TopicId::Solar_Off_Delta).getValue().toInt();
 
     if (testDefrost) defrostingState = 1;
@@ -291,8 +278,16 @@ void handleNewAquareaData()
 
     if (OTGW.isInitialized && WiFiSM.isConnected())
         otgwPumpControl(pumpIsOn, defrostingState);
-    if ((PersistentData.solarPumpPWMDeltaT > 0) && (testSolarDeltaT == 0))
-        solarPumpControl(solarDeltaT, solarOffDeltaT);
+    if ((PersistentData.solarPumpPWMDeltaT > 0) && (testSolarDeltaT == 0.0F))
+    {
+        SolarPump.control(
+            solarDeltaT,
+            solarOnDeltaT,
+            solarOffDeltaT,
+            PersistentData.solarPumpPWMDeltaT,
+            PersistentData.solarPumpPWMChangeRatePct);
+        SolarPump.updateLog(currentTime, solarDeltaT);
+    }
     antiFreezeControl(inletTemp, outletTemp, compPower);
     updateDayStats(secondsSinceLastUpdate, compPower, heatPower, defrostingState);
     updateTopicLog();
@@ -382,7 +377,6 @@ void writeCurrentValues()
     {
         MonitoredTopic topic = MonitoredTopics[i];
         float topicValue = HeatPump.getTopic(topic.id).getValue().toFloat();
-        float barValue = (topicValue - topic.minValue) / (topic.maxValue - topic.minValue);
 
         String barCssClass = topic.style;
         barCssClass += "Bar";
@@ -396,13 +390,7 @@ void writeCurrentValues()
         Html.writeRowEnd();
     }
 
-    Html.writeRowStart();
-    Html.writeHeaderCell(F("PWM"));
-    Html.writeCell("%0.0f %%", solarPumpDutyCycle * 100);
-    Html.writeCellStart(F("graph fill"));
-    Html.writeMeterDiv(solarPumpDutyCycle, 0.0F, 1.0F, F("pwmBar"));
-    Html.writeCellEnd();
-    Html.writeRowEnd();
+    SolarPump.writeStateRow(Html);
 
     Html.writeTableEnd();
     Html.writeSectionEnd();
@@ -616,6 +604,47 @@ void handleHttpTopicLogRequest()
 }
 
 
+void handleHttpSolarLogRequest()
+{
+    Tracer tracer(F("handleHttpSolarLogRequest"));
+
+    WebServer.chunkedResponseModeStart(200, ContentTypeHtml);
+    Html.writeHeader(F("Solar log"), Nav);
+
+    Html.writeTableStart();
+    Html.writeRowStart();
+    Html.writeHeaderCell(F("Time"));
+    Html.writeHeaderCell(F("ΔT"));
+    Html.writeHeaderCell(F("Duty"));
+    Html.writeHeaderCell(F("Target"));
+    Html.writeRowEnd();
+
+    SolarLogEntry* logEntryPtr = SolarPump.Log.getFirstEntry();
+    while (logEntryPtr != nullptr)
+    {
+        Html.writeRowStart();
+        Html.writeCell(formatTime("%H:%M:%S", logEntryPtr->time));
+        Html.writeCell(logEntryPtr->deltaT);
+        Html.writeCell(F("%0.0f %%"), logEntryPtr->dutyCycle * 100);
+        Html.writeCell(F("%0.0f %%"), logEntryPtr->targetDutyCycle * 100);
+        Html.writeRowEnd();
+
+        if (HttpResponse.length() > 4000)
+        {
+            sendChunk(false);
+            HttpResponse.clear();
+        }
+
+        logEntryPtr = SolarPump.Log.getNextEntry();
+    }
+
+    Html.writeTableEnd();
+    Html.writeFooter();
+
+    sendChunk(true);
+}
+
+
 void handleHttpHexDumpRequest()
 {
     Tracer tracer(F("handleHttpHexDumpRequest"));
@@ -691,14 +720,25 @@ void handleHttpTestRequest()
 
     if (WiFiSM.shouldPerformAction(F("solarPWM")))
     {
-        testSolarDeltaT += 2;
-        if (testSolarDeltaT > PersistentData.solarPumpPWMDeltaT)
-            testSolarDeltaT = 0;
-        solarPumpControl(testSolarDeltaT, 0);
-        Html.writeParagraph(
-            F("Solar DeltaT: %d => %0.0f %% duty cycle"),
+        const int testSolarOnDeltaT = 7;
+        const int testSolarOffDeltaT = 3;
+        if (testSolarDeltaT <= testSolarOnDeltaT)
+            testSolarDeltaT += 1.0F;
+        else if (testSolarDeltaT <= (testSolarOffDeltaT + PersistentData.solarPumpPWMDeltaT))
+            testSolarDeltaT += 0.5F;
+        else
+            testSolarDeltaT = 0.0F;
+        SolarPump.control(
             testSolarDeltaT,
-            solarPumpDutyCycle * 100);
+            testSolarOnDeltaT,
+            testSolarOffDeltaT,
+            PersistentData.solarPumpPWMDeltaT,
+            PersistentData.solarPumpPWMChangeRatePct);
+        SolarPump.updateLog(currentTime, testSolarDeltaT);
+        Html.writeParagraph(F("Solar DeltaT: %d"), int(testSolarDeltaT));
+        Html.writeTableStart();
+        SolarPump.writeStateRow(Html);
+        Html.writeTableEnd();
     }
     
     Html.writeActionLink(F("antiFreeze"), F("Test anti-freeze (switch)"), currentTime, ButtonClass);
@@ -987,6 +1027,13 @@ void setup()
         },
         MenuItem
         {
+            .icon = Files[GraphIcon],
+            .label = PSTR("Solar log"),
+            .urlPath = PSTR("solar"),
+            .handler = handleHttpSolarLogRequest
+        },
+        MenuItem
+        {
             .icon = Files[UploadIcon],
             .label = PSTR("FTP Sync"),
             .urlPath = PSTR("sync"),
@@ -1036,9 +1083,7 @@ void setup()
         OTGW.begin(PersistentData.otgwHost);
     }
 
-    pinMode(SOLAR_PUMP_PWM_PIN, OUTPUT);
-    analogWriteFreq(SOLAR_PUMP_PWM_FREQ);
-    analogWriteRange(SOLAR_PUMP_PWM_RANGE);
+    SolarPump.begin();
  
     BuiltinLED.setOff();
 }
