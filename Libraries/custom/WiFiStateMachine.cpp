@@ -135,7 +135,7 @@ void WiFiStateMachine::begin(String ssid, String password, String hostName, uint
 }
 
 
-void WiFiStateMachine::forceReconnect()
+void WiFiStateMachine::forceReconnect(const uint8_t* bssid)
 {
     Tracer tracer(F("WiFiStateMachine::forceReconnect"));
 
@@ -144,9 +144,10 @@ void WiFiStateMachine::forceReconnect()
         TRACE(F("WiFi.reconnect() failed.\n"));
 #else
     // It seems ESP32 needs more force to make it forget the earlier AP
-    if (!WiFi.eraseAP())
-        TRACE("WiFi.eraseAP failed\n");
-    initializeSTA();
+    if (!WiFi.STA.disconnect(true, 1000))
+        logEvent("WiFi.STA.disconnect failed");
+    if (!WiFi.STA.connect(_ssid.c_str(), _password.c_str(), 0, bssid))
+        logEvent("WiFi.STA.connect failed");
 #endif
 }
 
@@ -178,6 +179,7 @@ void WiFiStateMachine::traceDiag()
     TRACE(
         "bssid: %02X:%02X:%02X:%02X:%02X:%02X\n",
         bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
+    TRACE("btm_enabled: %d\n", wifiConfig.sta.btm_enabled);
     TRACE("scan_method: %d\n", wifiConfig.sta.scan_method);
     TRACE("sort_method: %d\n", wifiConfig.sta.sort_method);
     TRACE("threshold.rssi: %d\n", wifiConfig.sta.threshold.rssi);
@@ -284,14 +286,10 @@ void WiFiStateMachine::initializeSTA()
         TRACE(F("Unable to set host name ('%s')\n"), _hostName.c_str());
     if (!WiFi.mode(WIFI_STA))
         TRACE(F("Unable to set WiFi mode (STA)\n"));
-    if (!WiFi.disconnect())
+    if (!WiFi.disconnect(false, true))
         TRACE(F("WiFi disconnect failed\n"));
     WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
     WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
-    // ESP32 doesn't reliably set the status to WL_DISCONNECTED despite disconnect() call.
-#if (ESP_ARDUINO_VERSION_MAJOR == 2)
-    WiFiSTAClass::_setStatus(WL_DISCONNECTED);
-#endif
 #endif
     ArduinoOTA.setHostname(_hostName.c_str());
     WiFi.begin(_ssid.c_str(), _password.c_str());
@@ -554,6 +552,7 @@ void WiFiStateMachine::scanForBetterAccessPoint()
     {
         TRACE(F("Found %d Access Points:\n"), scannedAPs);
 
+        int bestAP = 0;
         int8_t bestRSSI = -100;
         int8_t currentRSSI = 0;
         String bestBSSID;
@@ -566,17 +565,20 @@ void WiFiStateMachine::scanForBetterAccessPoint()
             TRACE(F("BSSID: %s (RSSI: %d dBm)\n"), bssid.c_str(), rssi);
             if (rssi > bestRSSI)
             {
+                bestAP = i;
                 bestRSSI = rssi;
                 bestBSSID = bssid;               
             }
             if (bssid == currentBSSID) currentRSSI = rssi;
         }
 
-        if (bestBSSID != currentBSSID && bestRSSI > (currentRSSI + _rssiThreshold))
+        if ((bestBSSID != currentBSSID && bestRSSI > (currentRSSI + _rssiThreshold)) || (_rssiThreshold == 0))
         {
             logEvent(F("Found better Access Point: %s (%d vs %d dBm)"), bestBSSID.c_str(), bestRSSI, currentRSSI);
+            uint8_t bssid[6];
+            WiFi.BSSID(bestAP, bssid);
             _staDisconnected = false;
-            forceReconnect();
+            forceReconnect(bssid);
             _scanAccessPointsTime = getCurrentTime() + _scanAccessPointsInterval + _switchAccessPointDelay;
             setState(WiFiInitState::SwitchingAP);
         }

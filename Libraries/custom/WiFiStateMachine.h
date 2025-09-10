@@ -48,7 +48,7 @@ class WiFiStateMachine : public ILogger
         void begin(String ssid, String password, String hostName, uint32_t reconnectInterval = 60);
         void run();
         void reset();
-        void forceReconnect();
+        void forceReconnect(const uint8_t* bssid = nullptr);
 
         void traceDiag();
         virtual void logEvent(String format, ...) override;
@@ -63,7 +63,7 @@ class WiFiStateMachine : public ILogger
         String getIPAddress() { return _ipAddress.toString(); }
         bool isConnected() { return _state >= WiFiInitState::Connected; }
 
-        void scanAccessPoints(uint32_t intervalSeconds = 1800, uint32_t switchDelaySeconds = 0, int8_t rssiThreshold = 6)
+        void scanAccessPoints(uint32_t intervalSeconds = 900, uint32_t switchDelaySeconds = 0, int8_t rssiThreshold = 6)
         {
             _scanAccessPointsInterval = intervalSeconds;
             _switchAccessPointDelay = switchDelaySeconds;

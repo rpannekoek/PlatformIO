@@ -7,5 +7,19 @@
 			"path": "../../Libraries"
 		}
 	],
-	"settings": {}
+	"settings": {
+		"files.associations": {
+			"string": "cpp",
+			"array": "cpp",
+			"deque": "cpp",
+			"list": "cpp",
+			"unordered_map": "cpp",
+			"unordered_set": "cpp",
+			"vector": "cpp",
+			"string_view": "cpp",
+			"format": "cpp",
+			"initializer_list": "cpp",
+			"span": "cpp"
+		}
+	}
 }
