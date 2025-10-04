@@ -110,7 +110,7 @@ BluetoothDeviceInfo::BluetoothDeviceInfo(const BluetoothDeviceInfo& other)
 }
 
 
-BluetoothDeviceInfo::BluetoothDeviceInfo(esp_bd_addr_t bda)
+BluetoothDeviceInfo::BluetoothDeviceInfo(uint8_t* bda)
 {
     memcpy(address, bda, sizeof(esp_bd_addr_t));
     name[0] = 0;

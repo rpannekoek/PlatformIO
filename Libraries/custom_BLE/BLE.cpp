@@ -61,7 +61,7 @@ void BLE::onResult(BLEAdvertisedDevice bleDevice)
 
     if (bleDevice.getRSSI() < _rssiLimit) return;
 
-    BluetoothDeviceInfo btDevice(*bleDevice.getAddress().getNative());
+    BluetoothDeviceInfo btDevice(bleDevice.getAddress().getNative());
     btDevice.rssi = bleDevice.getRSSI();
 
     if (bleDevice.haveName())
@@ -69,11 +69,7 @@ void BLE::onResult(BLEAdvertisedDevice bleDevice)
 
     if (bleDevice.haveManufacturerData())
     {
-#if (ESP_ARDUINO_VERSION_MAJOR == 2)
-        std::string manufacturerData = bleDevice.getManufacturerData();
-#else
         String manufacturerData = bleDevice.getManufacturerData();
-#endif
         btDevice.manufacturerId = manufacturerData[0] | (manufacturerData[1] << 8);;
         TRACE(F("\tManufacturer: %s\n"), btDevice.getManufacturerName());
 
@@ -82,11 +78,7 @@ void BLE::onResult(BLEAdvertisedDevice bleDevice)
             _bleBeacon.setData(manufacturerData);
 
             strcpy(btDevice.name, "iBeacon");
-#if (ESP_ARDUINO_VERSION_MAJOR == 2)
-            std::string uuid = _bleBeacon.getProximityUUID().toString();
-#else
             String uuid = _bleBeacon.getProximityUUID().toString();
-#endif
             btDevice.uuid = new UUID128(uuid.c_str());
             TRACE(F("\tiBeacon: %s\n"), uuid.c_str());
 
@@ -103,7 +95,7 @@ void BLE::onResult(BLEAdvertisedDevice bleDevice)
         }
     }
 
-    esp_bd_addr_t* bdaPtr = bleDevice.getAddress().getNative();
+    uint8_t* bdaPtr = bleDevice.getAddress().getNative();
     for (int i = 0; i < _registeredDeviceCount; i++)
     {
         if (memcmp(bdaPtr, _registeredDevices[i], sizeof(esp_bd_addr_t)) == 0)

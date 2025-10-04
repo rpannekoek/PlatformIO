@@ -75,7 +75,9 @@
 			"numbers": "cpp",
 			"semaphore": "cpp",
 			"stop_token": "cpp",
-			"variant": "cpp"
+			"variant": "cpp",
+			"source_location": "cpp",
+			"text_encoding": "cpp"
 		}
 	}
 }

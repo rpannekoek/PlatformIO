@@ -231,7 +231,7 @@ int RESTClient::request(RequestMethod method, const String& urlSuffix, const Str
     int startResult = startRequest(_baseUrl + urlSuffix);
     if (startResult != HTTP_REQUEST_PENDING) return startResult;
 
-    int result;
+    int result = -1;
     switch (method)
     {
         case RequestMethod::GET:

@@ -1,7 +1,7 @@
 #ifndef BLUETOOTH_H
 #define BLUETOOTH_H
 
-#include <esp_bt_defs.h>
+#include <BLEAddress.h>
 #include <vector>
 #include "UUID.h"
 
@@ -33,7 +33,7 @@ struct BluetoothDeviceInfo
     bool isRegistered;
 
     BluetoothDeviceInfo(const BluetoothDeviceInfo& other);
-    BluetoothDeviceInfo(esp_bd_addr_t bda);
+    BluetoothDeviceInfo(uint8_t* bda);
     ~BluetoothDeviceInfo();
 
     const char* getManufacturerName() const;

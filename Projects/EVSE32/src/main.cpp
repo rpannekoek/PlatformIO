@@ -31,7 +31,9 @@
 constexpr int FTP_RETRY_INTERVAL = 15 * SECONDS_PER_MINUTE;
 constexpr int HTTP_POLL_INTERVAL = 60;
 constexpr int TEMP_POLL_INTERVAL = 10;
-constexpr int AUTO_RESUME_INTERVAL = 60;
+constexpr int AUTO_RESUME_INTERVAL = 5 * SECONDS_PER_MINUTE;
+constexpr int START_EVENING = 21 * SECONDS_PER_HOUR;
+constexpr int START_MORNING = 5 * SECONDS_PER_HOUR;
 constexpr int CHARGE_CONTROL_INTERVAL = 10;
 constexpr int CHARGE_LOG_AGGREGATIONS = 6;
 constexpr int CHARGE_STATS_SIZE = 10;
@@ -701,6 +703,11 @@ void runEVSEStateMachine()
                     else
                         WiFiSM.logEvent("SmartMeter: %s", SmartMeter.getLastError().c_str());
                     chargeControlTime = currentTime + AUTO_RESUME_INTERVAL;
+
+                    // Suspend polling during evening/night
+                    time_t startOfDay = getStartOfDay(currentTime);
+                    if (chargeControlTime > startOfDay + START_EVENING)
+                        chargeControlTime = startOfDay + SECONDS_PER_DAY + START_MORNING;
                 }
             }
             break;
@@ -1651,7 +1658,7 @@ void handleHttpRootRequest()
         Html.writeRow(L10N("Solar power"), "%0.0f W", solarPower);
         const char* solarOn = L10N("Solar on");
         if (solarPower < PersistentData.solarPowerThreshold)
-            Html.writeRow(solarOn, L10N("Pending"));
+            Html.writeRow(solarOn, "%s %s", L10N("Pending"), formatTime("%H:%M", chargeControlTime));
         else
             Html.writeRow(solarOn, "%s %s", L10N("After"), formatTime("%H:%M", autoResumeTime));
     }
