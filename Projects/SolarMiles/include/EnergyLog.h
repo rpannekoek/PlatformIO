@@ -169,6 +169,7 @@ struct InverterLog
     EnergyLog* acEnergyLogPtr;
     std::vector<EnergyLog*> dcEnergyLogPtrs;
     time_t lastEventTime;
+    int timeCalibrationCount;
     bool isReachable;
 
     // Constructor
@@ -176,6 +177,7 @@ struct InverterLog
     {
         acEnergyLogPtr = new EnergyLog();
         lastEventTime = 0;
+        timeCalibrationCount = 0;
         isReachable = false;
     }
 

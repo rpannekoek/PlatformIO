@@ -265,14 +265,23 @@ bool pollInverters()
             AlarmLogEntry_t logEntry;
             inverterEventLogPtr->getLogEntry(i, logEntry);
             time_t startTime = logEntry.StartTime + startOfDay;
-            TRACE(F("\t%s - %s\n"), formatTime("%F %H:%M:%S", startTime), logEntry.Message.c_str());
+            TRACE(
+                "\t%s - %u: %s\n",
+                formatTime("%F %H:%M:%S", startTime),
+                logEntry.MessageId,
+                logEntry.Message.c_str());
             if ((startTime > inverterLogPtr->lastEventTime) && (startTime <= currentTime))
             {
-                WiFiSM.logEvent(
-                    "%s @ %s: %s",
-                    inverterPtr->name(),
-                    formatTime("%H:%M", startTime),
-                    logEntry.Message.c_str());
+                if (logEntry.MessageId == 2)
+                    inverterLogPtr->timeCalibrationCount++;
+                else
+                {
+                    WiFiSM.logEvent(
+                        "%s @ %s: %s",
+                        inverterPtr->name(),
+                        formatTime("%H:%M", startTime),
+                        logEntry.Message.c_str());
+                }
                 lastEventTime = std::max(lastEventTime, startTime);
             }
         }
@@ -472,7 +481,6 @@ void onTimeServerSynced()
 {
     currentTime = TimeServer.getCurrentTime();
     pollInvertersTime = currentTime;
-    lastSolarStart = getStartOfDay(currentTime) + 6 * SECONDS_PER_HOUR;
 
     newPowerLogEntry.reset(Hoymiles.getNumInverters());
 
@@ -513,8 +521,14 @@ void onWiFiInitialized()
         {
             // At least one inverter is reachable
             inverterPollInterval = INV_POLL_INTERVAL_ACTIVE;
-            if (currentTime > lastSolarStart + 20 * SECONDS_PER_HOUR)
+            if ((currentTime / SECONDS_PER_DAY) > (lastSolarStart / SECONDS_PER_DAY))
+            {
+                // New day
+                WiFiSM.logEvent("Solar start");
                 lastSolarStart = currentTime;
+                for (InverterLog* inverterLogPtr : InverterLogPtrs)
+                    inverterLogPtr->timeCalibrationCount = 0;
+           }
         }
         else if (inverterPollInterval < INV_POLL_INTERVAL_INACTIVE)
         {
@@ -522,10 +536,18 @@ void onWiFiInitialized()
             inverterPollInterval *= 2;
             if (inverterPollInterval >= INV_POLL_INTERVAL_INACTIVE)
             {
-                if ((PersistentData.ftpSyncEntries != 0) && PersistentData.isFTPEnabled())
-                    syncFTPTime = currentTime; // Force FTP sync at end of day 
-                time_t nextPollTime = lastSolarStart + 23 * SECONDS_PER_HOUR;
-                inverterPollInterval = nextPollTime - currentTime;
+                time_t noon = getStartOfDay(currentTime) + 12 * SECONDS_PER_HOUR;
+                if (currentTime > noon)
+                {
+                    if ((PersistentData.ftpSyncEntries != 0) && PersistentData.isFTPEnabled())
+                        syncFTPTime = currentTime; // Force FTP sync at end of day
+
+                    // Don't poll during the night to keep the radio stats clean
+                    time_t nextPollTime = (lastSolarStart < noon)
+                        ? lastSolarStart + 23 * SECONDS_PER_HOUR
+                        : noon + 18 * SECONDS_PER_HOUR;
+                    inverterPollInterval = nextPollTime - currentTime;
+                }
             } 
         }
         else
@@ -1088,6 +1110,7 @@ void handleHttpInvertersFormRequest()
     Html.writeHeaderCell("Partial");
     Html.writeHeaderCell("No answer");
     Html.writeHeaderCell("Corrupt");
+    Html.writeHeaderCell("Time cal");
     Html.writeRowEnd();
 
     const int numDataColumns = 9;
@@ -1125,6 +1148,7 @@ void handleHttpInvertersFormRequest()
             Html.writeCell(percent * inverterPtr->RadioStats.RxFailPartialAnswer, F("%0.0f %%"));
             Html.writeCell(percent * inverterPtr->RadioStats.RxFailNoAnswer, F("%0.0f %%"));
             Html.writeCell(inverterPtr->RadioStats.RxFailCorruptData);
+            Html.writeCell(InverterLogPtrs[i]->timeCalibrationCount);
         }
         else
         {
