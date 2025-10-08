@@ -12,6 +12,8 @@
     #include <esp_wifi.h>
     #include <esp_task_wdt.h>
     constexpr int TASK_WDT_TIMEOUT = 30;
+
+    SemaphoreHandle_t WiFiStateMachine::_logMutex = xSemaphoreCreateMutex();
 #else
     #define U_SPIFFS U_FS
 #endif
@@ -191,23 +193,27 @@ void WiFiStateMachine::traceDiag()
 
 void WiFiStateMachine::logEvent(String format, ...)
 {
+    char logMessage[64];
+
     va_list args;
     va_start(args, format);
-    vsnprintf(_logMessage, sizeof(_logMessage), format.c_str(), args);
+    vsnprintf(logMessage, sizeof(logMessage), format.c_str(), args);
     va_end(args);
 
-    _logMessage[sizeof(_logMessage)-1] = 0; // Ensure the string is always null-terminated
+    logMessage[sizeof(logMessage) -1 ] = 0; // Ensure the string is always null-terminated
 
-    logEvent(_logMessage);
+    logEvent(logMessage);
 }
 
 
 void WiFiStateMachine::logEvent(const char* msg)
 {
+#ifdef ESP32
+    xSemaphoreTake(_logMutex, pdMS_TO_TICKS(100));
+#endif
     TRACE("logEvent: %s\n", msg);
 
     size_t timestamp_size = 23; // strlen("2019-01-30 12:23:34 : ") + 1;
-
     char* event = new char[timestamp_size + strlen(msg)];
 
     if (_isTimeServerAvailable)
@@ -217,7 +223,7 @@ void WiFiStateMachine::logEvent(const char* msg)
     }
     else
         snprintf(event, timestamp_size, "@ %lu ms : ", static_cast<uint32_t>(millis()));
-    
+
     strcat(event, msg);
 
     if (_eventStringLogPtr == nullptr)
@@ -227,6 +233,10 @@ void WiFiStateMachine::logEvent(const char* msg)
         _eventStringLogPtr->add(event);
         delete[] event;
     }
+
+#ifdef ESP32
+    xSemaphoreGive(_logMutex);
+#endif
 }
 
 

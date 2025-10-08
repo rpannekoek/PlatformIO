@@ -97,7 +97,6 @@ class WiFiStateMachine : public ILogger
         bool _isTimeServerAvailable = false;
         bool _isInAccessPointMode = false;
         IPAddress _ipAddress;
-        char _logMessage[64];
 
         void initializeAP();
         void initializeSTA();
@@ -114,6 +113,8 @@ class WiFiStateMachine : public ILogger
 #else
         wifi_event_id_t _staDisconnectedEvent;
         static void onStationDisconnected(arduino_event_id_t event, arduino_event_info_t info);
+
+        static SemaphoreHandle_t _logMutex;
 #endif
 };
 
