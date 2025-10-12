@@ -92,6 +92,10 @@ time_t lastSolarStart = 0;
 time_t syncFTPTime = 0;
 time_t lastFTPSyncTime = 0;
 
+uint32_t loopCount = 0;
+uint32_t startMillis = 0;
+uint32_t lastMillis = 0;
+uint32_t maxMillis = 0;
 
 bool addInverter(const char* name, uint64_t serial)
 {
@@ -1328,6 +1332,13 @@ void handleHttpDebugRequest()
     }
 
     Html.writeHeader("Debug", Nav);
+
+    Html.writeTableStart();
+    Html.writeRow("Max", "%u ms", maxMillis);
+    Html.writeRow("Avg", "%0.1f ms", float(lastMillis - startMillis) / loopCount);
+    Html.writeRow("Period", "%u s", (lastMillis - startMillis) / 1000);
+    Html.writeTableEnd();
+
     Html.writePreStart();
     HttpResponse.println(HoymilesOutput.c_str());
     Html.writePreEnd();
@@ -1534,6 +1545,19 @@ void setup()
 void loop() 
 {
     currentTime = WiFiSM.getCurrentTime();
+
+    uint32_t currentMillis = millis();
+    if ((startMillis == 0) || (currentMillis > startMillis + 300000))
+    {
+        startMillis = currentMillis;
+        maxMillis = 0;
+        loopCount = 1;
+    }
+    else
+        loopCount++;
+
+    if (lastMillis != 0) maxMillis = std::max(maxMillis, currentMillis - lastMillis);
+    lastMillis = currentMillis;
 
     if (Serial.available())
         handleSerialRequest();
