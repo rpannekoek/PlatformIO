@@ -586,7 +586,9 @@ void WiFiStateMachine::scanForBetterAccessPoint()
         {
             logEvent(F("Found better Access Point: %s (%d vs %d dBm)"), bestBSSID.c_str(), bestRSSI, currentRSSI);
             uint8_t bssid[6];
+#ifdef ESP32            
             WiFi.BSSID(bestAP, bssid);
+#endif
             _staDisconnected = false;
             forceReconnect(bssid);
             _scanAccessPointsTime = getCurrentTime() + _scanAccessPointsInterval + _switchAccessPointDelay;

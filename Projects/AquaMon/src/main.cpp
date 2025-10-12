@@ -745,6 +745,14 @@ void handleHttpTestRequest()
     Html.writeActionLink(F("defrost"), F("Test defrost (switch)"), currentTime, ButtonClass);
     Html.writeActionLink(F("solarPWM"), F("Test solar pump PWM"), currentTime, ButtonClass);
 
+    if (WiFiSM.shouldPerformAction("pump"))
+    {
+        bool success = otgwSetPump(true);
+        Html.writeParagraph("%d", success);
+    }
+    else
+        Html.writeActionLink("pump", "Pump", currentTime, ButtonClass);
+
     if (WiFiSM.shouldPerformAction(F("fillDayStats")))
     {
         for (int i = 0; i < 6; i++)
@@ -957,7 +965,7 @@ void onWiFiInitialized()
     if (!WiFiSM.isConnected())
         return;
 
-    if (OTGW.isInitialized && OTGW.isRequestPending())
+    if (OTGW.isInitialized && OTGW.isResponsePending())
     {
         int otgwResult = OTGW.requestData();
         if (otgwResult == HTTP_OK)
