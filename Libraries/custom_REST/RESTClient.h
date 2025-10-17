@@ -41,6 +41,7 @@ class RESTClient
         void setBearerToken(const String& bearerToken);
         virtual int requestData(const String& urlSuffix = "");
         int awaitData(const String& urlSuffix = "");
+        void resetTLS();
 
     protected:
         JsonDocument _filterDoc;
@@ -56,7 +57,7 @@ class RESTClient
         AsyncHTTPRequest _asyncHttpRequest;
 #else
         TaskHandle_t _taskHandle;
-        NetworkClientSecure _tlsClient;
+        NetworkClientSecure* _tlsClientPtr = nullptr;
         HTTPClient _httpClient;
         volatile int _httpResult;
 

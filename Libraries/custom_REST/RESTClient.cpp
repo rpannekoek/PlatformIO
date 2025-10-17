@@ -11,14 +11,6 @@ bool RESTClient::begin(const String& baseUrl, const char* certificate)
 #ifdef ESP8266
     isInitialized = true;
 #else
-    if (baseUrl.startsWith("https:"))
-    {
-        if (certificate == nullptr)
-            _tlsClient.setInsecure(); // Skip certificate validation
-        else
-            _tlsClient.setCACert(certificate);
-    }
-
     uint32_t timeoutMs = static_cast<uint32_t>(_timeout) * 1000;
     _httpClient.setTimeout(timeoutMs);
     _httpClient.setConnectTimeout(timeoutMs);
@@ -172,14 +164,30 @@ int RESTClient::request(RequestMethod method, const String& urlSuffix, const Str
     return HTTP_OPEN_FAILED; // TODO
 }
 
+void RESTClient::resetTLS() 
+{
+}
+
 #else
 int RESTClient::startRequest(const String& url)
 {
     TRACE("RESTClient::startRequest(\"%s\")\n", url.c_str());
 
-    bool success = url.startsWith("https:") ?
-        _httpClient.begin(_tlsClient, url) :
-        _httpClient.begin(url);
+    bool success;
+    if (url.startsWith("https:"))
+    {
+        if (!_tlsClientPtr)
+        {
+            _tlsClientPtr = new NetworkClientSecure();
+            if (_certificate == nullptr)
+                _tlsClientPtr->setInsecure(); // Skip certificate validation
+            else
+                _tlsClientPtr->setCACert(_certificate);
+        }
+        success = _httpClient.begin(*_tlsClientPtr, url); 
+    }
+    else
+        success = _httpClient.begin(url);
 
     if (!success)
     {
@@ -262,4 +270,15 @@ int RESTClient::request(RequestMethod method, const String& urlSuffix, const Str
     }
     return result;
 }
+
+void RESTClient::resetTLS() 
+{
+    if (_tlsClientPtr)
+    {
+        if (_tlsClientPtr->connected()) _tlsClientPtr->stop();
+        delete _tlsClientPtr;
+        _tlsClientPtr = nullptr;
+    }
+}
+
 #endif

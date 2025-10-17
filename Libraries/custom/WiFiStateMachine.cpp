@@ -408,10 +408,6 @@ void WiFiStateMachine::run()
                 if (!WiFi.forceSleepWake())
                     TRACE(F("forceSleepWake() failed.\n"));
 #else
-                // ESP32 doesn't reliably set status:
-#if (ESP_ARDUINO_VERSION_MAJOR == 2)
-                WiFiSTAClass::_setStatus(WL_CONNECTION_LOST);
-#endif
                 if (!WiFi.reconnect())
                     TRACE(F("reconnect() failed.\n"));
 #endif

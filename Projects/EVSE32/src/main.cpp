@@ -804,6 +804,7 @@ void test(String message)
     }
     else if (message.startsWith("b"))
     {
+        Tracer::traceFreeHeap();
         if (message.startsWith("b?"))
         {
             int httpResult = SmartMeter.awaitData("batteries");
@@ -998,6 +999,9 @@ void onWiFiInitialized()
             ftpSyncTime = currentTime + FTP_RETRY_INTERVAL;
         }
     }
+
+    if (SmartMeter.isInitialized && !WiFiSM.isConnected())
+        SmartMeter.resetTLS();
 }
 
 
