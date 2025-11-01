@@ -296,8 +296,6 @@ void WiFiStateMachine::initializeSTA()
         TRACE(F("Unable to set host name ('%s')\n"), _hostName.c_str());
     if (!WiFi.mode(WIFI_STA))
         TRACE(F("Unable to set WiFi mode (STA)\n"));
-    if (!WiFi.disconnect(false, true))
-        TRACE(F("WiFi disconnect failed\n"));
     WiFi.setScanMethod(WIFI_ALL_CHANNEL_SCAN);
     WiFi.setSortMethod(WIFI_CONNECT_AP_BY_SIGNAL);
 #endif

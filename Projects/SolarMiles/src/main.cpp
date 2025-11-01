@@ -500,7 +500,15 @@ void onTimeServerSynced()
         if (PersistentData.smartThingsPAT[0] != 0)
             SmartHome.useSmartThings(PersistentData.smartThingsPAT);
 
-        SmartHome.isHostReady = canUseWiFi;
+        if (PersistentData.onectaClientID[0] != 0)
+            SmartHome.useOnecta(
+                PersistentData.onectaClientID,
+                PersistentData.onectaClientSecret,
+                PersistentData.onectaRefreshToken,
+                [](){ PersistentData.writeToEEPROM(); }
+                );
+
+        SmartHome.isHostReady = []() { return canUseWiFi() && !P1Monitor.isResponsePending(); };
         if (!SmartHome.begin(PersistentData.powerThreshold, PersistentData.idleDelay, SMARTHOME_POLL_INTERVAL))
             WiFiSM.logEvent("Unable to initialize SmartHome");
 
@@ -560,7 +568,8 @@ void onWiFiInitialized()
         pollInvertersTime = currentTime + inverterPollInterval;
     }
 
-    if (canUseWiFi()) P1Monitor.run(currentTime);
+    if (canUseWiFi() && !SmartHome.isAwaiting())
+        P1Monitor.run(currentTime);
 
     if (!Hoymiles.isAllRadioIdle())
         BuiltinLED.setColor(LED_YELLOW);
@@ -573,7 +582,7 @@ void onWiFiInitialized()
     else
         BuiltinLED.setOff();
 
-    if (SmartHome.logEntriesToSync != 0 && syncFTPTime == 0)
+    if (SmartHome.logEntriesToSync != 0 && syncFTPTime == 0 && PersistentData.isFTPEnabled())
         syncFTPTime = currentTime + FTP_RETRY_INTERVAL; // Prevent FTP sync shortly after eachother
 
     if (P1Monitor.logEntriesToSync == PersistentData.ftpSyncEntries
@@ -1423,6 +1432,7 @@ void setup()
 
     BuiltinLED.begin();
     EventLog.begin();
+    HttpResponse.usePSRAM();
 
     PersistentData.begin();
     TimeServer.begin(PersistentData.ntpServer);

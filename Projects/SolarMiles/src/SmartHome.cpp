@@ -19,6 +19,7 @@ const char* _smartHomeStateLabels[] =
     "Connecting Fritzbox",
     "Discovering Fritz Devices",
     "Discovering SmartThings",
+    "Discovering Onecta",
     "Ready"
 };
 
@@ -57,6 +58,21 @@ bool SmartHomeClass::useSmartThings(const char* pat)
 }
 
 
+bool SmartHomeClass::useOnecta(
+    const char* clientId,
+    const char* clientSecret,
+    char* refreshToken,
+    std::function<void(void)> onTokenRefresh)
+{
+    Tracer tracer("SmartHomeClass::useOnecta", clientId);
+
+    _onectaPtr = new OnectaClient(clientId, clientSecret, refreshToken, _logger);
+    _onectaPtr->onTokenRefresh(onTokenRefresh);
+
+    return true;
+}
+
+
 bool SmartHomeClass::begin(float powerThreshold, uint32_t powerOffDelay, uint32_t pollInterval)
 {
     Tracer tracer("SmartHomeClass::begin");
@@ -70,7 +86,7 @@ bool SmartHomeClass::begin(float powerThreshold, uint32_t powerOffDelay, uint32_
     BaseType_t res = xTaskCreatePinnedToCore(
         run,
         "SmartHome",
-        8192, // Stack Size (words)
+        6144, // Stack size
         this,
         3, // Priority
         &_taskHandle,
@@ -91,6 +107,12 @@ bool SmartHomeClass::begin(float powerThreshold, uint32_t powerOffDelay, uint32_
     if (_smartThingsPtr != nullptr)
     {
         setState(SmartHomeState::DiscoveringSmartThings);
+        return true;
+    }
+
+    if (_onectaPtr != nullptr)
+    {
+        setState(SmartHomeState::DiscoveringOnectaDevices);
         return true;
     }
 
@@ -130,6 +152,14 @@ void SmartHomeClass::writeHtml(HtmlWriter& html)
         html.writeRow("Fritzbox", "%d ms", _fritzboxPtr->responseTimeMs());
     if (_smartThingsPtr != nullptr)
         html.writeRow("SmartThings", "%d ms", _smartThingsPtr->responseTimeMs());
+    if (_onectaPtr != nullptr)
+        html.writeRow(
+            "Onecta",
+            "<div>%d ms</div><div>%d / %d</div><div>%s</div>",
+            _onectaPtr->responseTimeMs(),
+            _onectaPtr->rateLimitRemaining(),
+            _onectaPtr->rateLimitPerDay(),
+            formatTime("%H:%M:%S", _onectaPtr->requestAfter()));
     html.writeRow("Free Heap", "%0.1f kB", float(ESP.getMaxAllocHeap()) / 1024);
 
     html.writeTableEnd();
@@ -259,6 +289,18 @@ void SmartHomeClass::runStateMachine()
 
         case SmartHomeState::DiscoveringSmartThings:
             if (discoverSmartThings())
+            {
+                if (_onectaPtr == nullptr)
+                    setState(SmartHomeState::Ready);
+                else
+                    setState(SmartHomeState::DiscoveringOnectaDevices);
+            }
+            else
+                _nextActionMillis = currentMillis + SH_RETRY_DELAY_MS;    
+            break;
+
+        case SmartHomeState::DiscoveringOnectaDevices:
+            if (discoverOnectaDevices())
                 setState(SmartHomeState::Ready);
             else
                 _nextActionMillis = currentMillis + SH_RETRY_DELAY_MS;    
@@ -374,6 +416,27 @@ bool SmartHomeClass::discoverSmartThings()
 
     _smartThingsPtr->cleanup();
     return true;    
+}
+
+
+bool SmartHomeClass::discoverOnectaDevices()
+{
+    Tracer tracer("SmartHomeClass::discoverOnectaDevices");
+
+   _isAwaiting = true;
+    bool success = _onectaPtr->discoverDevices();
+    _isAwaiting = false;  
+    if (!success) return false;
+
+    TRACE("%d devices found\n", _onectaPtr->deviceIds.size());
+
+    for (String deviceId : _onectaPtr->deviceIds)
+    {
+        OnectaDevice* onectaDevicePtr = new OnectaDevice(deviceId, _onectaPtr, _logger);
+        devices.push_back(onectaDevicePtr);
+    }
+
+    return true;
 }
 
 
@@ -612,7 +675,83 @@ bool SmartThingsDevice::update(time_t currentTime)
         info += jsonRemainingTime["value"].as<String>();
     }
 
+    JsonVariant jsonOperatingState = _smartThingsPtr->jsonDoc["samsungce.dishwasherOperation"]["operatingState"];
+    if (!jsonOperatingState.isNull())
+    {
+        info += " ";
+        info += jsonOperatingState["value"].as<String>();
+    }
+
     _smartThingsPtr->cleanup();
+
+    return SmartDevice::update(currentTime);
+}
+
+
+bool OnectaDevice::update(time_t currentTime)
+{
+    Tracer tracer("OnectaDevice::update", id.c_str());
+
+    if (!_onectaPtr->requestDeviceStatus(id, currentTime))
+        return false;
+
+    JsonArray mgmtPoints = _onectaPtr->jsonDoc["managementPoints"].as<JsonArray>();
+    JsonVariant climateControl;
+    for (const JsonVariant mgmtPoint : mgmtPoints)
+    {
+        String type = mgmtPoint["managementPointType"].as<String>();
+        if (type == "climateControl")
+        {
+            climateControl = mgmtPoint;
+            break;
+        }
+    }
+
+    if (!climateControl.isNull())
+    {
+        name = climateControl["name"]["value"].as<String>();
+
+        String onOffMode = climateControl["onOffMode"]["value"].as<String>();
+        TRACE("onOffMode: '%s'\n", onOffMode.c_str());
+        switchState = (onOffMode == "on") ? SmartDeviceState::On : SmartDeviceState::Off;
+
+        String operationMode = climateControl["operationMode"]["value"].as<String>(); 
+        info = operationMode;
+
+        //_deviceFilterDoc["managementPoints"][0]["temperatureControl"]["value"]["operationModes"]["heating"]["setpoints"]["roomTemperature"]["value"] = true;
+        JsonVariant temperatureControl = climateControl["temperatureControl"]["value"]["operationModes"][operationMode];
+        if (!temperatureControl.isNull())
+        {
+            float tSet = temperatureControl["setpoints"]["roomTemperature"]["value"].as<float>();
+            info += " ";
+            info += String(tSet, 1);
+        }
+
+        JsonVariant sensoryData = climateControl["sensoryData"]["value"];
+        if (!sensoryData.isNull())
+        {
+            float tRoom = sensoryData["roomTemperature"]["value"].as<float>();
+            float tOutdoor = sensoryData["outdoorTemperature"]["value"].as<float>();
+            info += " / ";
+            info += String(tRoom, 1) + " / ";
+            info += String(tOutdoor, 1) + " °C";
+        }
+
+        JsonVariant consumptionData = climateControl["consumptionData"]["value"]["electrical"];
+        if (!consumptionData.isNull())
+        {
+            energy = 0;
+            JsonArray heatingPerMonth = consumptionData["heating"]["m"].as<JsonArray>();
+            for (JsonVariant monthKWh : heatingPerMonth)
+                energy += monthKWh.as<float>();
+            JsonArray coolingPerMonth = consumptionData["cooling"]["m"].as<JsonArray>();
+            for (JsonVariant monthKWh : coolingPerMonth)
+                energy += monthKWh.as<float>();
+            energy *= 1000;
+        }
+    }
+
+    _onectaPtr->cleanup();
 
     return SmartDevice::update(currentTime);
 }

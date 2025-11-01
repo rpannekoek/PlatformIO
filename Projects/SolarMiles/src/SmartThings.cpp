@@ -1,5 +1,6 @@
 #include <Tracer.h>
 #include <HTTPClient.h>
+#include <StreamUtils.h>
 #include "SmartThings.h"
 
 const char* _rootCA = "-----BEGIN CERTIFICATE-----\n" \
@@ -27,7 +28,7 @@ SmartThingsClient::SmartThingsClient(const char* pat, ILogger& logger)
     : jsonDoc(&_spiRamAllocator), _logger(logger) 
 {
     _pat = pat;
-    _wifiClientSecure.setTimeout(5);
+
     _wifiClientSecure.setCACert(_rootCA);
 
     _devicesFilter["items"][0]["deviceId"] = true;
@@ -43,6 +44,7 @@ SmartThingsClient::SmartThingsClient(const char* pat, ILogger& logger)
     _deviceStatusFilter["powerConsumptionReport"]["powerConsumption"]["value"]["energy"] = true;
     _deviceStatusFilter["powerConsumptionReport"]["powerConsumption"]["value"]["deltaEnergy"] = true;
     _deviceStatusFilter["powerConsumptionReport"]["powerConsumption"]["timestamp"] = true;
+    _deviceStatusFilter["samsungce.dishwasherOperation"]["operatingState"]["value"] = true;
     _deviceStatusFilter["samsungce.dishwasherOperation"]["remainingTimeStr"]["value"] = true;
     _deviceStatusFilter["samsungce.dishwasherWashingCourse"]["washingCourse"]["value"] = true;
 }
@@ -56,47 +58,53 @@ bool SmartThingsClient::request(const String& urlPath, const JsonDocument& filte
     url += urlPath;
 
     HTTPClient httpClient;
+    httpClient.useHTTP10(true); // Use HTTP 1.0 => prevent chunked encoding
     if (!httpClient.begin(_wifiClientSecure, url))
     {
         _logger.logEvent("SmartThings: HTTPClient.begin failed.");
         return false;
     }
 
-    String bearerToken = "Bearer ";
-    bearerToken += _pat;
-    httpClient.addHeader("Authorization", bearerToken);
+    httpClient.setAuthorizationType("Bearer");
+    httpClient.setAuthorization(_pat.c_str());
 
     uint32_t startMillis = millis();
-    int code = httpClient.GET();
+    int httpCode = httpClient.GET();
     _responseTimeMs = millis() - startMillis;
 
-    if (code < 0)
+    if (httpCode < 0)
     {
-        _logger.logEvent("SmartThings: %s", httpClient.errorToString(code).c_str());
-        return false;
-    }
-    if (code != HTTP_CODE_OK)
-    {
-        _logger.logEvent("SmartThings: HTTP code %d", code);
+        _logger.logEvent("SmartThings: %s", httpClient.errorToString(httpCode).c_str());
         return false;
     }
 
-    TRACE("HTTP Response size: %d\n", httpClient.getSize());
+    TRACE(
+        F("HTTP %d response after %u ms. Size: %d\n"),
+        httpCode,
+        _responseTimeMs,
+        httpClient.getSize());
 
-    DeserializationError parseError = deserializeJson(
-        jsonDoc,
-        httpClient.getStream(),
-        DeserializationOption::Filter(filterDoc));
+    if (httpCode != HTTP_CODE_OK)
+    {
+        _logger.logEvent("SmartThings: HTTP %d", httpCode);
+        return false;
+    }
+
+    DeserializationError jsonError = DeserializationError::EmptyInput;
+    if (awaitDataAvailable(httpClient.getStream(), 1000))
+    {
+        jsonError = deserializeJson(
+            jsonDoc,
+            httpClient.getStream(),
+            DeserializationOption::Filter(filterDoc));
+    }
 
     httpClient.end();
 
-    if (parseError != DeserializationError::Ok)
-    {
-        _logger.logEvent("SmartThings: JSON error %s", parseError.c_str());
-        return false;
-    }
+    if (jsonError != DeserializationError::Ok)
+        _logger.logEvent("SmartThings: JSON error %s", jsonError.c_str());
 
-    return true;
+    return (jsonError == DeserializationError::Ok);
 }
 
 

@@ -22,7 +22,7 @@ void PersistentDataBase::begin()
 {
     Tracer tracer(F("PersistentDataBase::begin"));
 
-    EEPROM.begin(512);
+    EEPROM.begin(1024);
 
     if (readFromEEPROM())
     {
@@ -205,7 +205,7 @@ void PersistentDataBase::parseHtmlFormData(std::function<String(const String&)> 
         String fieldId = "f";
         fieldId += i++;
         String fieldValue = formDataById(fieldId);
-        TRACE(F("'%s' = '%s'\n"), fieldLabel.c_str(), fieldValue.c_str());
+        TRACE(F("'%s' = '%s'\n"), fieldLabel.c_str(), fieldValue.substring(0, 64).c_str());
         fieldPtr->parse(fieldValue);
     }
 }

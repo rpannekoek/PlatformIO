@@ -30,7 +30,7 @@ bool P1MonitorClass::run(time_t time)
 {
     if (!_p1Client.isInitialized) return false;
 
-    if (_p1Client.isRequestPending())
+    if (_p1Client.isResponsePending())
     {
         int httpResult = _p1Client.requestData();
         if (httpResult == HTTP_REQUEST_PENDING) return false;

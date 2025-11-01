@@ -91,8 +91,8 @@ bool HomeWizardP1V2Client::begin(const char* host)
     baseUrl += "/api/";
 
     bool success = RESTClient::begin(baseUrl);
-    addHeader("X-Api-Version", "2");
-    addHeader("Content-Type", "application/json");
+    setHeader("X-Api-Version", "2");
+    setContentType("application/json");
   
     return success;
 }
@@ -102,24 +102,13 @@ String HomeWizardP1V2Client::getBearerToken(const String& name)
 {
     Tracer tracer("HomeWizardP1V2Client::getBearerToken", name.c_str());
 
-//#ifdef ESP32    
     char payloadJson[64];
     snprintf(payloadJson, sizeof(payloadJson), "{ \"name\": \"local/%s\" }", name.c_str());
 
-    String response;
-    if (request(RequestMethod::POST, "user", payloadJson, response) != HTTP_OK) return "";
-
     JsonDocument responseDoc;
-    if (deserializeJson(responseDoc, response) != DeserializationError::Ok)
-    {
-        setLastError("Invalid response");
-        return "";
-    }
+    if (request(RequestMethod::POST, "user", payloadJson, responseDoc) != HTTP_OK) return "";
 
     return responseDoc["token"].as<String>();
-//#else
-//    return "";
-//#endif
 }
 
 
@@ -130,16 +119,10 @@ bool HomeWizardP1V2Client::setBatteryMode(bool enable)
     char payloadJson[64];
     snprintf(payloadJson, sizeof(payloadJson), "{ \"mode\": \"%s\" }", newMode);
 
-    String response;
-    if (request(RequestMethod::PUT, "batteries", payloadJson, response) != HTTP_OK) 
+    JsonDocument responseDoc;
+    if (request(RequestMethod::PUT, "batteries", payloadJson, responseDoc) != HTTP_OK) 
         return false;
 
-    JsonDocument responseDoc;
-    if (deserializeJson(responseDoc, response) != DeserializationError::Ok)
-    {
-        setLastError("Invalid response");
-        return false;    
-    }
     parseResponse(responseDoc);
 
     if (batteries.mode != newMode)

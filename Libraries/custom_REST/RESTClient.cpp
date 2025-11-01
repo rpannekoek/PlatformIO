@@ -1,12 +1,14 @@
 #include <RESTClient.h>
 #include <Tracer.h>
+#include <StreamUtils.h>
 
 
-bool RESTClient::begin(const String& baseUrl, const char* certificate)
+bool RESTClient::begin(const String& baseUrl, const char* certificate, bool usePSRAM)
 {
     _baseUrl = baseUrl;
     _certificate = certificate;
     _requestMillis = 0;
+    _usePSRAM = usePSRAM;
 
 #ifdef ESP8266
     isInitialized = true;
@@ -18,7 +20,7 @@ bool RESTClient::begin(const String& baseUrl, const char* certificate)
     BaseType_t res = xTaskCreate(
         run,
         "RESTClient",
-        4096, // Stack Size (words)
+        3072, // Stack size
         this,
         tskIDLE_PRIORITY, // Minimal priority
         &_taskHandle);
@@ -39,7 +41,7 @@ void RESTClient::setBearerToken(const String& bearerToken)
 
     if (bearerToken.length() > 0)
     {
-#ifdef ESP32        
+#ifndef ESP8266     
         _httpClient.setAuthorizationType("Bearer");
         _httpClient.setAuthorization(bearerToken.c_str());
 #endif
@@ -47,7 +49,7 @@ void RESTClient::setBearerToken(const String& bearerToken)
 }
 
 
-void RESTClient::addHeader(const String& name, const String& value)
+void RESTClient::setHeader(const String& name, const String& value)
 {
 #ifdef ESP8266
     _asyncHttpRequest.setReqHeader(name.c_str(), value.c_str());
@@ -70,11 +72,12 @@ int RESTClient::requestData(const String& urlSuffix)
     if (!isResponseAvailable()) return HTTP_REQUEST_PENDING;
 
     int httpCode = getResponse();
+    int responseSize = _responsePtr ? _responsePtr->size() : -1; 
     TRACE(
         F("HTTP %d response after %u ms. Size: %d\n"),
         httpCode,
         _responseTimeMs,
-        _response.length());
+        responseSize);
     _requestMillis = 0;
 
     if (httpCode < 0) return httpCode;
@@ -89,15 +92,21 @@ int RESTClient::requestData(const String& urlSuffix)
     TRACE(F("_filterDoc.size()=%d\n"), _filterDoc.size());
 
     JsonDocument jsonDoc;
-    DeserializationError parseError = (_filterDoc.size() == 0)
-        ? deserializeJson(jsonDoc, _response)
-        : deserializeJson(jsonDoc, _response, DeserializationOption::Filter(_filterDoc));
-    _response.clear();
+    DeserializationError jsonError = DeserializationError::EmptyInput;
+    if (_responsePtr)
+    {
+        jsonError = (_filterDoc.size() == 0)
+            ? deserializeJson(jsonDoc, _responsePtr->c_str())
+            : deserializeJson(jsonDoc, _responsePtr->c_str(), DeserializationOption::Filter(_filterDoc));
 
-    if (parseError != DeserializationError::Ok)
+        delete _responsePtr;
+        _responsePtr = nullptr;
+    }
+        
+    if (jsonError != DeserializationError::Ok)
     {
         _lastError = F("JSON error: "); 
-        _lastError += parseError.c_str();
+        _lastError += jsonError.c_str();
         return RESPONSE_PARSING_FAILED;
     }
 
@@ -118,6 +127,23 @@ int RESTClient::awaitData(const String& urlSuffix)
             return result;
         delay(10);
     }
+}
+
+
+int RESTClient::request(RequestMethod method, const String& urlSuffix, const String& payload, JsonDocument& response)
+{
+    String responseStr;
+    int rc = request(method, urlSuffix, payload, responseStr);
+    if (rc != HTTP_OK) return rc;
+
+    DeserializationError parseError = deserializeJson(response, responseStr);
+    if (parseError != DeserializationError::Ok)
+    {
+        setLastError(String("JSON error: ") + parseError.c_str());
+        return RESPONSE_PARSING_FAILED;
+    }
+
+    return HTTP_OK;
 }
 
 
@@ -152,7 +178,7 @@ int RESTClient::getResponse()
     _responseTimeMs = millis() - _requestMillis;
     int result = _asyncHttpRequest.responseHTTPcode();
     if (result == HTTP_OK)
-        _response = _asyncHttpRequest.responseText();
+        _responsePtr = new MemoryStream(_asyncHttpRequest.responseText());
     else if (result < 0)
         _lastError = _asyncHttpRequest.responseHTTPString();
     return result;
@@ -221,7 +247,12 @@ void RESTClient::runHttpRequests()
             int httpResult = _httpClient.GET();
             _responseTimeMs = millis() - _requestMillis; 
             if (httpResult == HTTP_OK)
-                _response = _httpClient.getString();
+            {
+                int size = _httpClient.getSize();
+                if (size < 0) size = 4095;
+                _responsePtr = new MemoryStream(size, _usePSRAM);
+                _httpClient.writeToStream(_responsePtr);
+            }
             else if (httpResult < 0)
                 _lastError = HTTPClient::errorToString(httpResult);
             _httpClient.end();
@@ -234,9 +265,10 @@ void RESTClient::runHttpRequests()
 
 int RESTClient::request(RequestMethod method, const String& urlSuffix, const String& payload, String& response)
 {
-    Tracer tracer(F("RESTClient::request"), payload.c_str());
+    Tracer tracer(F("RESTClient::request"), urlSuffix.c_str());
 
-    int startResult = startRequest(_baseUrl + urlSuffix);
+    String url = urlSuffix.startsWith("http") ? urlSuffix : _baseUrl + urlSuffix;
+    int startResult = startRequest(url);
     if (startResult != HTTP_REQUEST_PENDING) return startResult;
 
     int result = -1;
@@ -251,6 +283,9 @@ int RESTClient::request(RequestMethod method, const String& urlSuffix, const Str
         case RequestMethod::PUT:
             result = _httpClient.PUT(payload);
             break;
+        default:
+            TRACE("Unexpected Request method");
+            return false;
     }
     response = _httpClient.getString();
     _httpClient.end();

@@ -94,6 +94,7 @@ class P1MonitorClass
 
         bool isInitialized() { return _p1Client.isInitialized; }
         bool isRequestPending() { return _p1Client.isRequestPending(); }
+        bool isResponsePending() { return _p1Client.isResponsePending(); }
 
         // Constructor
         P1MonitorClass(ILogger& logger, uint16_t logSize) 

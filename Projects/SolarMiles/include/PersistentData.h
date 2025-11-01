@@ -27,6 +27,9 @@ struct Settings : public WiFiSettingsWithFTP
     int idleDelay;
     char p1MonitorHost[32];
     uint8_t inverterPhase[MAX_REGISTERED_INVERTERS];
+    char onectaClientID[32];
+    char onectaClientSecret[96];
+    char onectaRefreshToken[256];
 
     Settings() : WiFiSettingsWithFTP(
         PSTR("SolarMiles"),
@@ -40,6 +43,9 @@ struct Settings : public WiFiSettingsWithFTP
         addIntegerField(powerThreshold, "Power threshold", 0, 100, 5);
         addTimeSpanField(idleDelay, "Idle delay", 0, 3600, 5 * 60);
         addStringField(p1MonitorHost, sizeof(p1MonitorHost), "P1 Monitor");
+        addStringField(onectaClientID, sizeof(onectaClientID), "Onecta Client ID");
+        addStringField(onectaClientSecret, sizeof(onectaClientSecret), "Onecta Secret");
+        addStringField(onectaRefreshToken, sizeof(onectaRefreshToken), "Onecta Refresh");
     }
 
     void initialize() override

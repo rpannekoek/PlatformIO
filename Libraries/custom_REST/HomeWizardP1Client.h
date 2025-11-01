@@ -52,7 +52,7 @@ class HomeWizardP1V2Client : public RESTClient
         String getBearerToken(const String& name);
         bool setBatteryMode(bool enable);
 
-        virtual int requestData(const String& urlSuffix = "") override
+        int requestData(const String& urlSuffix = "") override
         {
             if (urlSuffix.isEmpty())
                 return RESTClient::requestData("measurement");
@@ -61,7 +61,7 @@ class HomeWizardP1V2Client : public RESTClient
         }
 
     protected:
-        virtual bool parseResponse(const JsonDocument& response) override;
+        bool parseResponse(const JsonDocument& response) override;
 };
 
 #endif

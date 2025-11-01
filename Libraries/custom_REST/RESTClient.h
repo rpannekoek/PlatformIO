@@ -2,6 +2,7 @@
 #define REST_CLIENT_H
 
 #include <ArduinoJson.h>
+#include <StreamUtils.h>
 
 #ifdef ESP8266
 #include <AsyncHTTPRequest_Generic.hpp>
@@ -46,11 +47,13 @@ class RESTClient
     protected:
         JsonDocument _filterDoc;
 
-        bool begin(const String& baseUrl, const char* certificate = nullptr);
-        void addHeader(const String& name, const String& value);
+        bool begin(const String& baseUrl, const char* certificate = nullptr, bool usePSRAM = true);
+        void setHeader(const String& name, const String& value);
+        void setContentType(const String& contentType) { setHeader("Content-Type", contentType); }
         virtual bool parseResponse(const JsonDocument& response) = 0;
         void setLastError(const String& message) { _lastError = message; }
         int request(RequestMethod method, const String& urlSuffix, const String& payload, String& response);
+        int request(RequestMethod method, const String& urlSuffix, const String& payload, JsonDocument& response);
 
     private:
 #ifdef ESP8266    
@@ -75,7 +78,8 @@ class RESTClient
         uint16_t _timeout;
         volatile uint32_t _requestMillis = 0;
         uint32_t _responseTimeMs = 0;
-        String _response;
+        MemoryStream* _responsePtr = nullptr;
+        bool _usePSRAM;
 
         int startRequest(const String& url);
         bool isResponseAvailable();

@@ -4,6 +4,7 @@
 #include <Logger.h>
 #include <HtmlWriter.h>
 #include "SmartThings.h"
+#include "OnectaClient.h"
 
 constexpr uint32_t SH_RETRY_DELAY_MS = 5000;
 
@@ -110,6 +111,21 @@ class SmartThingsDevice : public SmartDevice
         String _powerConsumptionTimestamp;
 };
 
+class OnectaDevice : public SmartDevice
+{
+    public:
+        OnectaDevice(const String& id, OnectaClient* onectaClientPtr, ILogger& logger)
+            : SmartDevice(id, "Unknown", logger)
+        {
+            _onectaPtr = onectaClientPtr;
+        }
+
+        bool update(time_t currentTime) override;
+        
+    private:
+        OnectaClient* _onectaPtr;
+};
+
 enum struct SmartHomeState
 {
     Uninitialized = 0,
@@ -117,6 +133,7 @@ enum struct SmartHomeState
     ConnectingFritzbox,
     DiscoveringFritzDevices,
     DiscoveringSmartThings,
+    DiscoveringOnectaDevices,
     Ready
 };
 
@@ -141,6 +158,7 @@ class SmartHomeClass
         bool begin(float powerThreshold, uint32_t powerOffDelay, uint32_t pollInterval);
         bool useFritzbox(const char* host, const char* user, const char* password);
         bool useSmartThings(const char* pat);
+        bool useOnecta(const char* clientId, const char* clientSecret, char* refreshToken, std::function<void(void)> onTokenRefresh);
         bool startDiscovery();
         void writeHtml(HtmlWriter& html);
         void writeEnergyLogCsv(Print& output, bool onlyEntriesToSync = true);
@@ -151,6 +169,7 @@ class SmartHomeClass
         volatile SmartHomeState _state = SmartHomeState::Uninitialized;
         TR064* _fritzboxPtr = nullptr;
         SmartThingsClient* _smartThingsPtr = nullptr;
+        OnectaClient* _onectaPtr = nullptr;
         bool _isAwaiting = false;
         float _powerThreshold;
         uint32_t _powerOffDelay;
@@ -161,6 +180,7 @@ class SmartHomeClass
         void setState(SmartHomeState newState);
         bool discoverFritzSmartPlug(int index);
         bool discoverSmartThings();
+        bool discoverOnectaDevices();
         bool updateDevice();
         void runStateMachine();
         static void run(void* taskParam);
