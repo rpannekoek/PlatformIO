@@ -20,7 +20,7 @@ bool RESTClient::begin(const String& baseUrl, const char* certificate, bool useP
     BaseType_t res = xTaskCreate(
         run,
         "RESTClient",
-        3072, // Stack size
+        4096, // Stack size
         this,
         tskIDLE_PRIORITY, // Minimal priority
         &_taskHandle);
