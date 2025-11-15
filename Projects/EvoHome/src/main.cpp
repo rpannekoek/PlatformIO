@@ -133,12 +133,8 @@ bool trySyncFTP(Print* printTo)
     {
         auto packetLogWriter = [](Print& output)
         {
-            const RAMSES2Packet* packetPtr = PacketLog.getFirstEntry();
-            while (packetPtr != nullptr)
-            {
+            for (const RAMSES2Packet* packetPtr : PacketLog)
                 packetPtr->print(output, "%F %T");
-                packetPtr = PacketLog.getNextEntry();
-            }
             packetLogEntriesToSync = 0;
         };
 
@@ -232,12 +228,8 @@ void handleHttpEventLogRequest()
         WiFiSM.logEvent("Event log cleared.");
     }
 
-    const char* event = EventLog.getFirstEntry();
-    while (event != nullptr)
-    {
+    for (const char* event : EventLog)
         Html.writeDiv("%s", event);
-        event = EventLog.getNextEntry();
-    }
 
     Html.writeActionLink("clear", "Clear event log", currentTime, ButtonClass);
 
@@ -321,21 +313,16 @@ void handleHttpZoneDataLogRequest()
     }
     Html.writeRowEnd();
 
-    ZoneDataLogEntry* logEntryPtr = EvoHome.zoneDataLog.getFirstEntry();
-    for (int i = 0; (i < (currentPage * PAGE_SIZE)) && (logEntryPtr != nullptr); i++)
+    int n = 0;
+    for (auto i = EvoHome.zoneDataLog.at(currentPage * PAGE_SIZE); i != EvoHome.zoneDataLog.end(); ++i)
     {
-        logEntryPtr = EvoHome.zoneDataLog.getNextEntry();
-    }
-
-    for (int i = 0; (i < PAGE_SIZE) && (logEntryPtr != nullptr); i++)
-    {
-        logEntryPtr->writeRow(Html, EvoHome.zoneCount);
+        i->writeRow(Html, EvoHome.zoneCount);
         if (HttpResponse.length() >= HTTP_CHUNK_SIZE)
         {
             WebServer.sendContent(HttpResponse.c_str(), HttpResponse.length());
             HttpResponse.clear();
         }
-        logEntryPtr = EvoHome.zoneDataLog.getNextEntry();
+        if (++n == PAGE_SIZE) break;
     }
 
     Html.writeTableEnd();
@@ -379,8 +366,7 @@ void handleHttpPacketLogRequest()
 
     Html.writePreStart();
 
-    const RAMSES2Packet* packetPtr = PacketLog.getFirstEntry();
-    while (packetPtr != nullptr)
+    for (const RAMSES2Packet* packetPtr : PacketLog)
     {
         packetPtr->print(HttpResponse, "%T");
         if (HttpResponse.length() >= HTTP_CHUNK_SIZE)
@@ -388,7 +374,6 @@ void handleHttpPacketLogRequest()
             WebServer.sendContent(HttpResponse.c_str(), HttpResponse.length());
             HttpResponse.clear();
         }
-        packetPtr = PacketLog.getNextEntry();
     }
 
     Html.writePreEnd();
@@ -410,15 +395,13 @@ void handleHttpPacketLogJsonRequest()
     HttpResponse.clear();
     HttpResponse.print("[ ");
 
-    const RAMSES2Packet* packetPtr = PacketLog.getFirstEntry();
-    while (packetPtr != nullptr)
+    bool first = true;
+    for (const RAMSES2Packet* packetPtr : PacketLog)
     {
+        if (first) first = false;
+        else HttpResponse.print(", ");
+
         packetPtr->printJson(HttpResponse);
-        packetPtr = PacketLog.getNextEntry();
-        if (packetPtr != nullptr)
-        {
-            HttpResponse.print(", ");    
-        }
 
         if (HttpResponse.length() >= HTTP_CHUNK_SIZE)
         {
@@ -873,9 +856,6 @@ void setup()
     #endif
 
     BuiltinLED.begin();
-    EventLog.begin();
-    if (HttpResponse.usePSRAM())
-        WiFiSM.logEvent("Using PSRAM for HTTP responses");
 
     PersistentData.begin();
     TimeServer.begin(PersistentData.ntpServer);

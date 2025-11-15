@@ -17,11 +17,9 @@ bool awaitDataAvailable(Stream& stream, int amount, int timeoutMs)
 }
 
 
-MemoryStream::MemoryStream(size_t size, bool usePSRAM)
+MemoryStream::MemoryStream(size_t size, MemoryType memoryType)
+    : _memoryType(memoryType)
 {
-#ifdef BOARD_HAS_PSRAM
-    _usePSRAM = usePSRAM;
-#endif
     allocateBuffer(size + 1); // Keep room for string terminator
 }
 
@@ -44,9 +42,7 @@ MemoryStream::~MemoryStream()
 
 void MemoryStream::allocateBuffer(size_t size)
 {
-    TRACE(F("MemoryStream::allocateBuffer(%u) %s\n"), size, _usePSRAM ? "PSRAM" : "");
-
-    _buffer = (uint8_t*)(_usePSRAM ? ESP_MALLOC(size) : malloc(size));
+    _buffer = Memory::allocate<uint8_t>(size, _memoryType);
     _bufferSize = size;
 }
 
@@ -71,8 +67,6 @@ int MemoryStream::read()
 
 size_t MemoryStream::write(const uint8_t* buffer, size_t size)
 {
-    TRACE(F("MemoryStream::write(%u)\n"), size);
-
     if (_writePos + size >= _bufferSize)
     {
         uint8_t* oldBuffer = _buffer;

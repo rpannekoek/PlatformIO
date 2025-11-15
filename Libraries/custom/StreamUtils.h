@@ -2,13 +2,14 @@
 #define STREAM_UTILS_H
 
 #include <Stream.h>
+#include <PSRAM.h>
 
 extern bool awaitDataAvailable(Stream& stream, int amount, int timeoutMs = 0);
 
 class MemoryStream : public Stream
 {
     public:
-        MemoryStream(size_t size, bool usePSRAM = true);
+        MemoryStream(size_t size, MemoryType memoryType = MemoryType::Auto);
         MemoryStream(const String& str);
         ~MemoryStream();
 
@@ -22,7 +23,7 @@ class MemoryStream : public Stream
         size_t write(uint8_t data) override { return write(&data, 1); }
 
     private:
-        bool _usePSRAM = false;
+        MemoryType _memoryType;
         uint8_t* _buffer;
         size_t _bufferSize;
         size_t _readPos = 0;

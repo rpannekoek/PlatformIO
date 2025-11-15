@@ -40,4 +40,26 @@ struct ChargeStatsEntry
         temperatureSum += temperature;
         count++;
     }
+
+    void writeCsv(Print& destination)
+    {
+        destination.printf(
+            "%s;%0.1f;%0.1f;%0.1f;%0.1f\r\n",
+            formatTime("%F %H:%M", startTime),
+            getDurationHours(),
+            getAvgTemperature(),
+            getAvgPower() / 1000,
+            energy / 1000);
+    }
+
+    void writeRow(HtmlWriter& html)
+    {
+        html.writeRowStart();
+        html.writeCell(formatTime("%d %b %H:%M", startTime));
+        html.writeCell(getDurationHours(), F("%0.1f h"));
+        html.writeCell(getAvgTemperature(), F("%0.1f °C"));
+        html.writeCell(getAvgPower(), F("%0.0f W"));
+        html.writeCell(energy / 1000, F("%0.1f kWh"));
+        html.writeRowEnd();
+    }
 };

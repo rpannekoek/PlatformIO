@@ -18,8 +18,8 @@ class EvoHomeClient : public RESTClient
     public:
         std::vector<ZoneInfo> zones;
 
-        // Constructor
-        EvoHomeClient(uint16_t timeout = 10) : RESTClient(timeout) {}
+        EvoHomeClient(uint16_t timeout = 10, MemoryType memoryType = MemoryType::Internal)
+            : RESTClient(timeout, memoryType) {}
 
         bool begin(const char* host);
 

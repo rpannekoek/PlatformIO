@@ -133,6 +133,9 @@ const char* LogHeaders[] PROGMEM =
     "Error"
 };
 
+// ESP32 C3 has no PSRAM. For a best approximation on boards that do have PSRAM, force use of internal memory.
+constexpr MemoryType MEMORY_TYPE = MemoryType::Internal;
+
 OpenThermGateway OTGW(OTGW_SERIAL, OTGW_RESET_PIN);
 ESPWebServer WebServer(80); // Default HTTP port
 WiFiNTP TimeServer;
@@ -140,11 +143,11 @@ WiFiFTPClient FTPClient(3000); // 3s timeout
 HeatMonClient HeatMon;
 EvoHomeClient EvoHome;
 WeatherAPI WeatherService;
-StringBuilder HttpResponse(12 * 1024); // 12KB HTTP response buffer
+StringBuilder HttpResponse(12 * 1024, MEMORY_TYPE); // 12KB HTTP response buffer
 HtmlWriter Html(HttpResponse, Files[FileId::Logo], Files[FileId::Styles], 40);
-StringLog EventLog(EVENT_LOG_LENGTH, 128);
-StaticLog<OpenThermLogEntry> OpenThermLog(OT_LOG_LENGTH);
-StaticLog<StatusLogEntry> StatusLog(7); // 7 days
+StringLog EventLog(EVENT_LOG_LENGTH, 128, MEMORY_TYPE);
+StaticLog<OpenThermLogEntry> OpenThermLog(OT_LOG_LENGTH, MEMORY_TYPE);
+StaticLog<StatusLogEntry> StatusLog(7, MEMORY_TYPE); // 7 days
 WiFiStateMachine WiFiSM(BuiltinLED, TimeServer, WebServer, EventLog);
 Navigation Nav;
 
@@ -406,46 +409,48 @@ void logOpenThermValues(bool forceCreate)
 }
 
 
-void writeCsvDataLine(OpenThermLogEntry* otLogEntryPtr, time_t time, Print& destination)
+void writeCsvDataLine(const OpenThermLogEntry& otLogEntry, time_t time, Print& destination)
 {
-    int masterStatus = otLogEntryPtr->boilerStatus >> 8;
-    int slaveStatus = otLogEntryPtr->boilerStatus & 0xFF;
+    int masterStatus = otLogEntry.boilerStatus >> 8;
+    int slaveStatus = otLogEntry.boilerStatus & 0xFF;
 
     destination.print(formatTime("%F %H:%M:%S", time));
     destination.printf(";%d;%d", masterStatus, slaveStatus);
-    destination.printf(";%d", OpenThermGateway::getInteger(otLogEntryPtr->thermostatMaxRelModulation));
-    destination.printf(";%d", OpenThermGateway::getInteger(otLogEntryPtr->thermostatTSet));
-    destination.printf(";%d", OpenThermGateway::getInteger(otLogEntryPtr->boilerTSet));
-    destination.printf(";%0.1f", OpenThermGateway::getDecimal(otLogEntryPtr->tBoiler));
-    destination.printf(";%0.1f", OpenThermGateway::getDecimal(otLogEntryPtr->tReturn));
-    destination.printf(";%0.1f", OpenThermGateway::getDecimal(otLogEntryPtr->tBuffer));
-    destination.printf(";%0.1f", OpenThermGateway::getDecimal(otLogEntryPtr->tOutside));
-    destination.printf(";%0.2f", OpenThermGateway::getDecimal(otLogEntryPtr->pHeatPump));
-    destination.printf(";%0.2f", OpenThermGateway::getDecimal(otLogEntryPtr->pressure));
-    destination.printf(";%d", OpenThermGateway::getInteger(otLogEntryPtr->boilerRelModulation));
-    destination.printf(";%0.1f", OpenThermGateway::getDecimal(otLogEntryPtr->flowRate));
-    destination.printf(";%0.1f", OpenThermGateway::getDecimal(otLogEntryPtr->tRoom));
-    destination.printf(";%0.2f", otLogEntryPtr->deviationHours);
+    destination.printf(";%d", OpenThermGateway::getInteger(otLogEntry.thermostatMaxRelModulation));
+    destination.printf(";%d", OpenThermGateway::getInteger(otLogEntry.thermostatTSet));
+    destination.printf(";%d", OpenThermGateway::getInteger(otLogEntry.boilerTSet));
+    destination.printf(";%0.1f", OpenThermGateway::getDecimal(otLogEntry.tBoiler));
+    destination.printf(";%0.1f", OpenThermGateway::getDecimal(otLogEntry.tReturn));
+    destination.printf(";%0.1f", OpenThermGateway::getDecimal(otLogEntry.tBuffer));
+    destination.printf(";%0.1f", OpenThermGateway::getDecimal(otLogEntry.tOutside));
+    destination.printf(";%0.2f", OpenThermGateway::getDecimal(otLogEntry.pHeatPump));
+    destination.printf(";%0.2f", OpenThermGateway::getDecimal(otLogEntry.pressure));
+    destination.printf(";%d", OpenThermGateway::getInteger(otLogEntry.boilerRelModulation));
+    destination.printf(";%0.1f", OpenThermGateway::getDecimal(otLogEntry.flowRate));
+    destination.printf(";%0.1f", OpenThermGateway::getDecimal(otLogEntry.tRoom));
+    destination.printf(";%0.2f", otLogEntry.deviationHours);
     destination.println();
 }
 
 
-void writeCsvDataLines(OpenThermLogEntry* otLogEntryPtr, OpenThermLogEntry* prevLogEntryPtr, Print& destination)
+void writeCsvDataLines(uint16_t count, Print& destination)
 {
-    while (otLogEntryPtr != nullptr)
+    OpenThermLogEntry& prevLogEntry = *OpenThermLog.at(-count - 1);
+
+    for (auto i = OpenThermLog.at(-count); i != OpenThermLog.end(); ++i)
     {
-        time_t otLogEntryTime = otLogEntryPtr->time;
+        OpenThermLogEntry& logEntry = *i;
+        time_t otLogEntryTime = logEntry.time;
         time_t oneSecEarlier = otLogEntryTime - 1;
-        if ((prevLogEntryPtr != nullptr) && (prevLogEntryPtr->time < oneSecEarlier))
+        if ((prevLogEntry.time < oneSecEarlier))
         {
             // Repeat previous log entry, but one second before this one.
             // This enforces steep step transitions.
-            writeCsvDataLine(prevLogEntryPtr, oneSecEarlier, destination);
+            writeCsvDataLine(prevLogEntry, oneSecEarlier, destination);
         }
-        writeCsvDataLine(otLogEntryPtr, otLogEntryTime, destination);
-        
-        prevLogEntryPtr = otLogEntryPtr;
-        otLogEntryPtr = OpenThermLog.getNextEntry();
+        writeCsvDataLine(logEntry, otLogEntryTime, destination);
+
+        prevLogEntry = logEntry;
     }
 }
 
@@ -465,9 +470,7 @@ bool trySyncFTP(Print* printTo)
     {
         if (otLogEntriesToSync > 0)
         {
-            OpenThermLogEntry* prevLogEntryPtr = OpenThermLog.getEntryFromEnd(otLogEntriesToSync + 1);
-            OpenThermLogEntry* otLogEntryPtr = OpenThermLog.getEntryFromEnd(otLogEntriesToSync);
-            writeCsvDataLines(otLogEntryPtr, prevLogEntryPtr, output);
+            writeCsvDataLines(otLogEntriesToSync, output);
             otLogEntriesToSync = 0;
         }
         else if (printTo != nullptr)
@@ -931,12 +934,8 @@ void writeCurrentValues()
 uint32_t getMaxFlameSeconds()
 {
     uint32_t result = 0;
-    StatusLogEntry* logEntryPtr = StatusLog.getFirstEntry();
-    while (logEntryPtr != nullptr)
-    {
-        result = std::max(result, logEntryPtr->flameSeconds);
-        logEntryPtr = StatusLog.getNextEntry();
-    }
+    for (StatusLogEntry& logEntry : StatusLog)
+        result = std::max(result, logEntry.flameSeconds);
     return result;
 }
 
@@ -957,21 +956,18 @@ void writeStatisticsPerDay()
     Html.writeRowEnd();
 
     uint32_t maxFlameSeconds = getMaxFlameSeconds() + 1; // Prevent division by zero
-    StatusLogEntry* logEntryPtr = StatusLog.getFirstEntry();
-    while (logEntryPtr != nullptr)
+    for (StatusLogEntry& logEntry : StatusLog)
     {
         Html.writeRowStart();
-        Html.writeCell(formatTime("%a", logEntryPtr->startTime));
-        Html.writeCell(formatTime("%H:%M", logEntryPtr->startTime));
-        Html.writeCell(formatTime("%H:%M", logEntryPtr->stopTime));
-        Html.writeCell(formatTimeSpan(logEntryPtr->overrideSeconds));
-        Html.writeCell(formatTimeSpan(logEntryPtr->chSeconds));
-        Html.writeCell(formatTimeSpan(logEntryPtr->dhwSeconds));
-        Html.writeCell(formatTimeSpan(logEntryPtr->flameSeconds));
-        Html.writeGraphCell(logEntryPtr->flameSeconds, 0, maxFlameSeconds, F("flameBar"), false);
+        Html.writeCell(formatTime("%a", logEntry.startTime));
+        Html.writeCell(formatTime("%H:%M", logEntry.startTime));
+        Html.writeCell(formatTime("%H:%M", logEntry.stopTime));
+        Html.writeCell(formatTimeSpan(logEntry.overrideSeconds));
+        Html.writeCell(formatTimeSpan(logEntry.chSeconds));
+        Html.writeCell(formatTimeSpan(logEntry.dhwSeconds));
+        Html.writeCell(formatTimeSpan(logEntry.flameSeconds));
+        Html.writeGraphCell(logEntry.flameSeconds, 0, maxFlameSeconds, F("flameBar"), false);
         Html.writeRowEnd();
-
-        logEntryPtr = StatusLog.getNextEntry();
     }
 
     Html.writeTableEnd();
@@ -1206,33 +1202,31 @@ void handleHttpOpenThermLogRequest()
     }
     Html.writeRowEnd();
 
-    OpenThermLogEntry* otLogEntryPtr = OpenThermLog.getFirstEntry();
-    for (int i = 0; i < (currentPage * OT_LOG_PAGE_SIZE) && otLogEntryPtr != nullptr; i++)
+    int n = 0;
+    for (auto i = OpenThermLog.at(currentPage * OT_LOG_PAGE_SIZE); i != OpenThermLog.end(); ++i)
     {
-        otLogEntryPtr = OpenThermLog.getNextEntry();
-    }
-    for (int j = 0; j < OT_LOG_PAGE_SIZE && otLogEntryPtr != nullptr; j++)
-    {
+        OpenThermLogEntry& otLogEntry = *i;
+
         Html.writeRowStart();
-        Html.writeCell(formatTime("%H:%M:%S", otLogEntryPtr->time));
-        Html.writeCell(OTGW.getMasterStatus(otLogEntryPtr->boilerStatus));
-        Html.writeCell(OTGW.getSlaveStatus(otLogEntryPtr->boilerStatus));
-        Html.writeCell(OpenThermGateway::getInteger(otLogEntryPtr->thermostatMaxRelModulation));
-        Html.writeCell(OpenThermGateway::getInteger(otLogEntryPtr->thermostatTSet));
-        Html.writeCell(OpenThermGateway::getInteger(otLogEntryPtr->boilerTSet));
-        Html.writeCell(OpenThermGateway::getDecimal(otLogEntryPtr->tBoiler));
-        Html.writeCell(OpenThermGateway::getDecimal(otLogEntryPtr->tReturn));
-        Html.writeCell(OpenThermGateway::getDecimal(otLogEntryPtr->tBuffer));
-        Html.writeCell(OpenThermGateway::getDecimal(otLogEntryPtr->tOutside));
-        Html.writeCell(OpenThermGateway::getDecimal(otLogEntryPtr->pHeatPump), F("%0.2f"));
-        Html.writeCell(OpenThermGateway::getDecimal(otLogEntryPtr->pressure), F("%0.2f"));
-        Html.writeCell(OpenThermGateway::getInteger(otLogEntryPtr->boilerRelModulation));
-        Html.writeCell(OpenThermGateway::getDecimal(otLogEntryPtr->flowRate));
-        Html.writeCell(OpenThermGateway::getDecimal(otLogEntryPtr->tRoom));
-        Html.writeCell(otLogEntryPtr->deviationHours, F("%0.2f"));
+        Html.writeCell(formatTime("%H:%M:%S", otLogEntry.time));
+        Html.writeCell(OTGW.getMasterStatus(otLogEntry.boilerStatus));
+        Html.writeCell(OTGW.getSlaveStatus(otLogEntry.boilerStatus));
+        Html.writeCell(OpenThermGateway::getInteger(otLogEntry.thermostatMaxRelModulation));
+        Html.writeCell(OpenThermGateway::getInteger(otLogEntry.thermostatTSet));
+        Html.writeCell(OpenThermGateway::getInteger(otLogEntry.boilerTSet));
+        Html.writeCell(OpenThermGateway::getDecimal(otLogEntry.tBoiler));
+        Html.writeCell(OpenThermGateway::getDecimal(otLogEntry.tReturn));
+        Html.writeCell(OpenThermGateway::getDecimal(otLogEntry.tBuffer));
+        Html.writeCell(OpenThermGateway::getDecimal(otLogEntry.tOutside));
+        Html.writeCell(OpenThermGateway::getDecimal(otLogEntry.pHeatPump), F("%0.2f"));
+        Html.writeCell(OpenThermGateway::getDecimal(otLogEntry.pressure), F("%0.2f"));
+        Html.writeCell(OpenThermGateway::getInteger(otLogEntry.boilerRelModulation));
+        Html.writeCell(OpenThermGateway::getDecimal(otLogEntry.flowRate));
+        Html.writeCell(OpenThermGateway::getDecimal(otLogEntry.tRoom));
+        Html.writeCell(otLogEntry.deviationHours, F("%0.2f"));
         Html.writeRowEnd();
 
-        otLogEntryPtr = OpenThermLog.getNextEntry();
+        if (++n == OT_LOG_PAGE_SIZE) break;
     }
 
     Html.writeTableEnd();
@@ -1286,12 +1280,8 @@ void handleHttpOTGWMessageLogRequest()
 
     HttpResponse.clear();
 
-    const char* otgwMessage = OTGW.MessageLog.getFirstEntry();
-    while (otgwMessage != nullptr)
-    {
-        HttpResponse.println(otgwMessage);
-        otgwMessage = OTGW.MessageLog.getNextEntry();
-    }
+    for (const char* msg : OTGW.MessageLog)
+        HttpResponse.println(msg);
 
     OTGW.MessageLog.clear();
 
@@ -1311,12 +1301,8 @@ void handleHttpEventLogRequest()
 
     Html.writeHeader(F("Event log"), Nav);
 
-    const char* event = EventLog.getFirstEntry();
-    while (event != nullptr)
-    {
+    for (const char* event : EventLog)
         Html.writeDiv(F("%s"), event);
-        event = EventLog.getNextEntry();
-    }
 
     Html.writeActionLink(F("clear"), F("Clear event log"), currentTime, ButtonClass);
 
@@ -1589,7 +1575,6 @@ void setup()
 #endif
 
     BuiltinLED.begin();
-    EventLog.begin(true);
 
     OTGW.onMessageReceived(onMessageReceived);
     OTGW.begin(OTGW_RESPONSE_TIMEOUT_MS, OTGW_SETPOINT_OVERRIDE_TIMEOUT);

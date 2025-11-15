@@ -23,23 +23,12 @@ constexpr uint32_t MIN_RETRY_INTERVAL_MS = 5000;
 constexpr uint32_t MAX_RETRY_INTERVAL_MS = 300000;
 
 bool WiFiStateMachine::_staDisconnected = false;
-StringBuilder _coreDumpBuilder(256);
+StringBuilder _responseBuilder(256);
 
-// Constructor
-WiFiStateMachine::WiFiStateMachine(LED& led, WiFiNTP& timeServer, ESPWebServer& webServer, Log<const char>& eventLog)
-    : _led(led), _timeServer(timeServer), _webServer(webServer)
-{
-    _eventLogPtr = &eventLog;
-    _eventStringLogPtr = nullptr;
-    memset(_handlers, 0, sizeof(_handlers));
-}
 
-// Constructor
 WiFiStateMachine::WiFiStateMachine(LED& led, WiFiNTP& timeServer, ESPWebServer& webServer, StringLog& eventLog)
-    : _led(led), _timeServer(timeServer), _webServer(webServer)
+    : _led(led), _timeServer(timeServer), _webServer(webServer), _eventLog(eventLog)
 {
-    _eventStringLogPtr = &eventLog;
-    _eventLogPtr = nullptr;
     memset(_handlers, 0, sizeof(_handlers));
 }
 
@@ -131,6 +120,7 @@ void WiFiStateMachine::begin(String ssid, String password, String hostName, uint
 #endif
 
     _webServer.on("/coredump", std::bind(&WiFiStateMachine::handleHttpCoreDump, this));
+    _webServer.on("/memory", std::bind(&WiFiStateMachine::handleHttpMemory, this));
     _webServer.onNotFound(std::bind(&WiFiStateMachine::handleHttpNotFound, this));
 
     setState(WiFiInitState::Initializing);
@@ -226,13 +216,8 @@ void WiFiStateMachine::logEvent(const char* msg)
 
     strcat(event, msg);
 
-    if (_eventStringLogPtr == nullptr)
-        _eventLogPtr->add(event);
-    else
-    {
-        _eventStringLogPtr->add(event);
-        delete[] event;
-    }
+    _eventLog.add(event);
+    delete[] event;
 
 #ifdef ESP32
     xSemaphoreGive(_logMutex);
@@ -669,9 +654,30 @@ void WiFiStateMachine::handleHttpCoreDump()
 {
     Tracer tracer("WiFiStateMachine::handleHttpCoreDump");
 
-    _coreDumpBuilder.clear();
-    writeCoreDump(_coreDumpBuilder);
-    _webServer.send(200, "text/plain", _coreDumpBuilder.c_str());
+    _responseBuilder.clear();
+    writeCoreDump(_responseBuilder);
+    _webServer.send(200, "text/plain", _responseBuilder.c_str());
+}
+
+void WiFiStateMachine::handleHttpMemory()
+{
+    Tracer tracer("WiFiStateMachine::handleHttpMemory");
+
+    _responseBuilder.clear();
+    _responseBuilder.println(F("Internal"));
+    _responseBuilder.printf(F("Size: %u\n"), ESP.getHeapSize());
+    _responseBuilder.printf(F("Free: %u\n"), ESP.getFreeHeap());
+    _responseBuilder.printf(F("Min free: %u\n"), ESP.getMinFreeHeap());
+    _responseBuilder.printf(F("Max alloc: %u\n"), ESP.getMaxAllocHeap());
+    if (ESP.getPsramSize() != 0)
+    {
+        _responseBuilder.println(F("External"));
+        _responseBuilder.printf(F("Size: %u\n"), ESP.getPsramSize());
+        _responseBuilder.printf(F("Free: %u\n"), ESP.getFreePsram());
+        _responseBuilder.printf(F("Min free: %u\n"), ESP.getMinFreePsram());
+        _responseBuilder.printf(F("Max alloc: %u\n"), ESP.getMaxAllocPsram());
+    }
+    _webServer.send(200, "text/plain", _responseBuilder.c_str());
 }
 
 void WiFiStateMachine::handleHttpNotFound()

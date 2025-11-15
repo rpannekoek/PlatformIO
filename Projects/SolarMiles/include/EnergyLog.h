@@ -64,21 +64,22 @@ class EnergyLog
             }
         }
 
-        EnergyLogEntry* getYesterdayLogEntry()
+        bool hasYesterdayLogEntry()
         {
-            return perDayLog.getEntryFromEnd(2);
+            return perDayLog.count() >= 2;
+        }
+
+        EnergyLogEntry& getYesterdayLogEntry()
+        {
+            return *perDayLog.at(-2);
         }
 
         float getMaxEnergy(EnergyLogType logType)
         {
             float result = 0;
             StaticLog<EnergyLogEntry>& log = getLog(logType);
-            EnergyLogEntry* energyLogEntryPtr = log.getFirstEntry();
-            while (energyLogEntryPtr != nullptr)
-            {
-                result = std::max(result, energyLogEntryPtr->energy);
-                energyLogEntryPtr = log.getNextEntry();
-            }
+            for (EnergyLogEntry& energyLogEntry : log)
+                result = std::max(result, energyLogEntry.energy);
             return result;
         }
 
@@ -86,12 +87,8 @@ class EnergyLog
         {
             float result = 0;
             StaticLog<EnergyLogEntry>& log = getLog(logType);
-            EnergyLogEntry* energyLogEntryPtr = log.getFirstEntry();
-            while (energyLogEntryPtr != nullptr)
-            {
-                result += energyLogEntryPtr->energy;
-                energyLogEntryPtr = log.getNextEntry();
-            }
+            for (EnergyLogEntry& energyLogEntry : log)
+                result += energyLogEntry.energy;
             return result;
         }
 

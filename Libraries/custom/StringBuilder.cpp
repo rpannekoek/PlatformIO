@@ -1,35 +1,11 @@
 #include <Arduino.h>
 #include "StringBuilder.h"
 
-// Constructor
-StringBuilder::StringBuilder(size_t size)
-{
-    _buffer = static_cast<char*>(malloc(size));
-    _capacity = size;
-    clear();
-}
-
-// Destructor
-StringBuilder::~StringBuilder()
-{
-    free(_buffer);
-}
-
-
-bool StringBuilder::usePSRAM()
-{
-#ifdef BOARD_HAS_PSRAM
-    free(_buffer);
-    _buffer = static_cast<char*>(ps_malloc(_capacity));
-    return true;
-#else
-    return false;
-#endif    
-}
-
 
 void StringBuilder::clear()
 {
+    if (!_buffer) _buffer = Memory::allocate<char>(_capacity, _memoryType);
+
     _buffer[0] = 0;
     _length = 0;
     _space = _capacity;
@@ -38,8 +14,9 @@ void StringBuilder::clear()
 
 void StringBuilder::printf(const __FlashStringHelper* fformat, ...)
 {
-    if (_space == 0)
-        return;
+    if (!_buffer) clear();
+
+    if (_space == 0) return;
 
     char* end = _buffer + _length;
 
@@ -60,11 +37,11 @@ size_t StringBuilder::write(uint8_t data)
 
 size_t StringBuilder::write(const uint8_t* dataPtr, size_t size)
 {
-    if (_space <= 1) 
-        return 0;
+    if (!_buffer) clear();
+
+    if (_space <= 1) return 0;
  
-    if (size >= _space)
-        size = (_space - 1);
+    if (size >= _space) size = (_space - 1);
 
     char* end = _buffer + _length;
     memcpy(end, dataPtr, size);

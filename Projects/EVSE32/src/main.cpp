@@ -111,7 +111,7 @@ WiFiFTPClient FTPClient(2000); // 2s timeout
 BLE Bluetooth;
 StringBuilder HttpResponse(8192); // 8KB HTTP response buffer
 HtmlWriter Html(HttpResponse, Files[Logo], Files[Styles], 60);
-Log<const char> EventLog(EVENT_LOG_LENGTH);
+StringLog EventLog(EVENT_LOG_LENGTH, 128);
 StatusLED StateLED(STATUS_LED_PIN);
 WiFiStateMachine WiFiSM(StateLED, TimeServer, WebServer, EventLog);
 CurrentSensor OutputCurrentSensor(CURRENT_SENSE_PIN);
@@ -837,34 +837,6 @@ void test(String message)
 }
 
 
-void writeCsvChargeStatsEntry(ChargeStatsEntry* chargeStatsPtr, Print& destination)
-{
-    destination.printf(
-        "%s;%0.1f;%0.1f;%0.1f;%0.1f\r\n",
-        formatTime("%F %H:%M", chargeStatsPtr->startTime),
-        chargeStatsPtr->getDurationHours(),
-        chargeStatsPtr->getAvgTemperature(),
-        chargeStatsPtr->getAvgPower() / 1000,
-        chargeStatsPtr->energy / 1000);
-}
-
-
-void writeCsvChangeLogEntries(ChargeLogEntry* logEntryPtr, Print& destination)
-{
-    while (logEntryPtr != nullptr)
-    {
-        destination.printf(
-            "%s;%0.1f;%0.1f;%0.1f\r\n",
-            formatTime("%F %H:%M:%S", logEntryPtr->time),
-            logEntryPtr->currentLimit,
-            logEntryPtr->outputCurrent,
-            logEntryPtr->temperature);
-
-        logEntryPtr = ChargeLog.getNextEntry();
-    }
-}
-
-
 bool trySyncFTP(Print* printTo)
 {
     Tracer tracer(F(__func__));
@@ -888,8 +860,8 @@ bool trySyncFTP(Print* printTo)
     {
         if (logEntriesToSync > 0)
         {
-            ChargeLogEntry* firstLogEntryPtr = ChargeLog.getEntryFromEnd(logEntriesToSync);
-            writeCsvChangeLogEntries(firstLogEntryPtr, dataClient);
+            for (auto i = ChargeLog.at(-logEntriesToSync); i != ChargeLog.end(); ++i)
+                i->writeCsv(dataClient);
             logEntriesToSync = 0;
         }
         else if (printTo != nullptr)
@@ -913,7 +885,7 @@ bool trySyncFTP(Print* printTo)
             WiFiClient& dataClient = FTPClient.append(filename);
             if (dataClient.connected())
             {
-                writeCsvChargeStatsEntry(lastChargeStatsPtr, dataClient);
+                if (lastChargeStatsPtr) lastChargeStatsPtr->writeCsv(dataClient);
                 dataClient.stop();
             }
 
@@ -1166,21 +1138,11 @@ void handleHttpChargeLogRequest()
     Html.writeHeaderCell("T (°C)");
     Html.writeRowEnd();
 
-    ChargeLogEntry* logEntryPtr = ChargeLog.getFirstEntry();
-    for (int i = 0; i < (currentPage * CHARGE_LOG_PAGE_SIZE) && logEntryPtr != nullptr; i++)
+    int n = 0;
+    for (auto i = ChargeLog.at(currentPage * CHARGE_LOG_PAGE_SIZE); i != ChargeLog.end(); ++i)
     {
-        logEntryPtr = ChargeLog.getNextEntry();
-    }
-    for (int i = 0; i < CHARGE_LOG_PAGE_SIZE && logEntryPtr != nullptr; i++)
-    {
-        Html.writeRowStart();
-        Html.writeCell(formatTime("%d %b %H:%M", logEntryPtr->time));
-        Html.writeCell(logEntryPtr->currentLimit);
-        Html.writeCell(logEntryPtr->outputCurrent);
-        Html.writeCell(logEntryPtr->temperature);
-        Html.writeRowEnd();
-
-        logEntryPtr = ChargeLog.getNextEntry();
+        i->writeRow(Html);
+        if (++n == CHARGE_LOG_PAGE_SIZE) break;
     }
 
     Html.writeTableEnd();
@@ -1202,11 +1164,9 @@ void handleHttpEventLogRequest()
 
     Html.writeHeader(L10N("Event log"), Nav);
 
-    const char* event = EventLog.getFirstEntry();
-    while (event != nullptr)
+    for (const char* event : EventLog)
     {
         Html.writeDiv("%s", event);
-        event = EventLog.getNextEntry();
     }
 
     Html.writeActionLink("clear", "Clear event log", currentTime, ButtonClass);
@@ -1584,19 +1544,8 @@ void writeChargingSessions()
     Html.writeHeaderCell(L10N("Energy"));
     Html.writeRowEnd();
 
-    ChargeStatsEntry* chargeStatsPtr = ChargeStats.getFirstEntry();
-    while (chargeStatsPtr != nullptr)
-    {
-        Html.writeRowStart();
-        Html.writeCell(formatTime("%d %b %H:%M", chargeStatsPtr->startTime));
-        Html.writeCell(chargeStatsPtr->getDurationHours(), F("%0.1f h"));
-        Html.writeCell(chargeStatsPtr->getAvgTemperature(), F("%0.1f °C"));
-        Html.writeCell(chargeStatsPtr->getAvgPower(), F("%0.0f W"));
-        Html.writeCell(chargeStatsPtr->energy / 1000, F("%0.1f kWh"));
-        Html.writeRowEnd();
-
-        chargeStatsPtr = ChargeStats.getNextEntry();
-    }
+    for (ChargeStatsEntry& chargeStatsEntry : ChargeStats)
+        chargeStatsEntry.writeRow(Html);
 
     Html.writeTableEnd();
     Html.writeSectionEnd();

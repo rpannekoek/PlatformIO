@@ -73,7 +73,7 @@ WiFiFTPClient FTPClient(WIFI_TIMEOUT_MS);
 OTGWClient OTGW;
 StringBuilder HttpResponse(4 * 1024); // 4 kB HTTP response buffer (we're using chunked responses)
 HtmlWriter Html(HttpResponse, Files[Logo], Files[Styles], DEFAULT_BAR_LENGTH);
-Log<const char> EventLog(EVENT_LOG_LENGTH);
+StringLog EventLog(EVENT_LOG_LENGTH, 96);
 StaticLog<TopicLogEntry> TopicLog(TOPIC_LOG_SIZE);
 StaticLog<DayStatsEntry> DayStats(7);
 SimpleLED BuiltinLED(LED_BUILTIN, true);
@@ -296,20 +296,19 @@ void handleNewAquareaData()
 }
 
 
-void writeTopicLogCsv(TopicLogEntry* logEntryPtr, Print& destination)
+void writeTopicLogCsv(uint16_t count, Print& destination)
 {
-    while (logEntryPtr != nullptr)
+    for (auto i = TopicLog.at(-count); i != TopicLog.end(); ++i)
     {
-        destination.print(formatTime("%F %H:%M", logEntryPtr->time));
+        TopicLogEntry& logEntry = *i;
 
-        for (int i = 0; i < NUMBER_OF_MONITORED_TOPICS; i++)
+        destination.print(formatTime("%F %H:%M", logEntry.time));
+        for (int t = 0; t < NUMBER_OF_MONITORED_TOPICS; t++)
         {
             destination.print(";");
-            destination.print(MonitoredTopics[i].formatValue(logEntryPtr->topicValues[i], false, 1));
+            destination.print(MonitoredTopics[t].formatValue(logEntry.topicValues[t], false, 1));
         }
         destination.println();
-
-        logEntryPtr = TopicLog.getNextEntry();
     }
 }
 
@@ -337,8 +336,7 @@ bool trySyncFTP(Print* printTo)
     {
         if (ftpSyncEntries > 0)
         {
-            TopicLogEntry* firstEntryPtr = TopicLog.getEntryFromEnd(ftpSyncEntries);
-            writeTopicLogCsv(firstEntryPtr, dataClient);
+            writeTopicLogCsv(ftpSyncEntries, dataClient);
             ftpSyncEntries = 0;
         }
         else if (printTo != nullptr)
@@ -401,12 +399,8 @@ void writeStatisticsPerDay()
 {
     // Auto-ranging: determine max energy
     float maxEnergy = 1.0; // Prevent division by zero
-    DayStatsEntry* dayStatsEntryPtr = DayStats.getFirstEntry();
-    while (dayStatsEntryPtr != nullptr)
-    {
-        maxEnergy = std::max(maxEnergy, dayStatsEntryPtr->energyOut);
-        dayStatsEntryPtr = DayStats.getNextEntry();
-    }
+    for (DayStatsEntry& dayStatsEntry : DayStats)
+        maxEnergy = std::max(maxEnergy, dayStatsEntry.energyOut);
 
     Html.writeSectionStart(F("Statistics per day"));
     Html.writeTableStart();
@@ -425,26 +419,25 @@ void writeStatisticsPerDay()
     Html.writeHeaderCell(F("COP"));
     Html.writeRowEnd();
 
-    dayStatsEntryPtr = DayStats.getFirstEntry();
-    while (dayStatsEntryPtr != nullptr)
+    for (DayStatsEntry& dayStatsEntry : DayStats)
     {
         Html.writeRowStart();
-        Html.writeCell(formatTime("%a", dayStatsEntryPtr->startTime));
-        Html.writeCell(formatTime("%H:%M", dayStatsEntryPtr->startTime));
-        Html.writeCell(formatTime("%H:%M", dayStatsEntryPtr->stopTime));
-        Html.writeCell(formatTimeSpan(dayStatsEntryPtr->onSeconds));
-        Html.writeCell(formatTimeSpan(dayStatsEntryPtr->getAvgOnSeconds()));
-        Html.writeCell(dayStatsEntryPtr->onCount);
-        Html.writeCell(dayStatsEntryPtr->defrosts);
-        Html.writeCell(formatTimeSpan(dayStatsEntryPtr->antiFreezeSeconds, false));
-        Html.writeCell(dayStatsEntryPtr->energyIn, F("%0.2f"));
-        Html.writeCell(dayStatsEntryPtr->energyOut, F("%0.2f"));
-        Html.writeCell(dayStatsEntryPtr->getCOP());
+        Html.writeCell(formatTime("%a", dayStatsEntry.startTime));
+        Html.writeCell(formatTime("%H:%M", dayStatsEntry.startTime));
+        Html.writeCell(formatTime("%H:%M", dayStatsEntry.stopTime));
+        Html.writeCell(formatTimeSpan(dayStatsEntry.onSeconds));
+        Html.writeCell(formatTimeSpan(dayStatsEntry.getAvgOnSeconds()));
+        Html.writeCell(dayStatsEntry.onCount);
+        Html.writeCell(dayStatsEntry.defrosts);
+        Html.writeCell(formatTimeSpan(dayStatsEntry.antiFreezeSeconds, false));
+        Html.writeCell(dayStatsEntry.energyIn, F("%0.2f"));
+        Html.writeCell(dayStatsEntry.energyOut, F("%0.2f"));
+        Html.writeCell(dayStatsEntry.getCOP());
 
         Html.writeCellStart(F("graph"));
         Html.writeStackedBar(
-            dayStatsEntryPtr->energyIn / maxEnergy,
-            (dayStatsEntryPtr->energyOut - dayStatsEntryPtr->energyIn) / maxEnergy,
+            dayStatsEntry.energyIn / maxEnergy,
+            (dayStatsEntry.energyOut - dayStatsEntry.energyIn) / maxEnergy,
             F("inBar"),
             F("outBar"),
             false,
@@ -452,8 +445,6 @@ void writeStatisticsPerDay()
         Html.writeCellEnd();
 
         Html.writeRowEnd();
-
-        dayStatsEntryPtr = DayStats.getNextEntry();
     }
 
     Html.writeTableEnd();
@@ -576,25 +567,20 @@ void handleHttpTopicLogRequest()
     }
     Html.writeRowEnd();
 
-    TopicLogEntry* logEntryPtr = TopicLog.getFirstEntry();
-    for (int i = 0; i < (currentPage * TOPIC_LOG_PAGE_SIZE) && logEntryPtr != nullptr; i++)
+    int n = 0;
+    for (auto i = TopicLog.at(currentPage * TOPIC_LOG_PAGE_SIZE); i != TopicLog.end(); ++i)
     {
-        logEntryPtr = TopicLog.getNextEntry();
-    }
-    for (int i = 0; i < TOPIC_LOG_PAGE_SIZE && logEntryPtr != nullptr; i++)
-    {
+        TopicLogEntry& entry = *i;
+
         Html.writeRowStart();
-        Html.writeCell(formatTime("%H:%M", logEntryPtr->time));
+        Html.writeCell(formatTime("%H:%M", entry.time));
         for (int k = 0; k < NUMBER_OF_MONITORED_TOPICS; k++)
-        {
-            Html.writeCell(MonitoredTopics[k].formatValue(logEntryPtr->topicValues[k], false, 1));
-        }
+            Html.writeCell(MonitoredTopics[k].formatValue(entry.topicValues[k], false, 1));
         Html.writeRowEnd();
 
-        if (i % 10 == 0)
-            sendChunk();
+        if (n % 10 == 0) sendChunk();
 
-        logEntryPtr = TopicLog.getNextEntry();
+        if (++n == TOPIC_LOG_PAGE_SIZE) break;
     }
 
     Html.writeTableEnd();
@@ -619,14 +605,13 @@ void handleHttpSolarLogRequest()
     Html.writeHeaderCell(F("Target"));
     Html.writeRowEnd();
 
-    SolarLogEntry* logEntryPtr = SolarPump.Log.getFirstEntry();
-    while (logEntryPtr != nullptr)
+    for (SolarLogEntry& logEntry : SolarPump.Log)
     {
         Html.writeRowStart();
-        Html.writeCell(formatTime("%H:%M:%S", logEntryPtr->time));
-        Html.writeCell(logEntryPtr->deltaT);
-        Html.writeCell(F("%0.0f %%"), logEntryPtr->dutyCycle * 100);
-        Html.writeCell(F("%0.0f %%"), logEntryPtr->targetDutyCycle * 100);
+        Html.writeCell(formatTime("%H:%M:%S", logEntry.time));
+        Html.writeCell(logEntry.deltaT);
+        Html.writeCell(F("%0.0f %%"), logEntry.dutyCycle * 100);
+        Html.writeCell(F("%0.0f %%"), logEntry.targetDutyCycle * 100);
         Html.writeRowEnd();
 
         if (HttpResponse.length() > 4000)
@@ -634,8 +619,6 @@ void handleHttpSolarLogRequest()
             sendChunk(false);
             HttpResponse.clear();
         }
-
-        logEntryPtr = SolarPump.Log.getNextEntry();
     }
 
     Html.writeTableEnd();
@@ -872,13 +855,10 @@ void handleHttpEventLogRequest()
     }
 
     int i = 0;
-    const char* event = EventLog.getFirstEntry();
-    while (event != nullptr)
+    for (const char* event : EventLog)
     {
         Html.writeDiv(F("%s"), event);
-        event = EventLog.getNextEntry();
-        if (i++ % 20 == 0)
-            sendChunk();
+        if (i++ % 20 == 0) sendChunk();
     }
 
     Html.writeActionLink(F("clear"), F("Clear event log"), currentTime, ButtonClass);

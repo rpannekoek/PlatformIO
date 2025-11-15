@@ -30,8 +30,8 @@ class RESTClient
     public:
         bool isInitialized = false;
 
-        // Constructor
-        RESTClient(uint16_t timeout) { _timeout = timeout; }
+        RESTClient(uint16_t timeout, MemoryType memoryType = MemoryType::Auto)
+         : _memoryType(memoryType), _timeout(timeout) {}
 
         String getBaseUrl() { return _baseUrl; }
         String getLastError() { return _lastError; }
@@ -47,7 +47,7 @@ class RESTClient
     protected:
         JsonDocument _filterDoc;
 
-        bool begin(const String& baseUrl, const char* certificate = nullptr, bool usePSRAM = true);
+        bool begin(const String& baseUrl, const char* certificate = nullptr);
         void setHeader(const String& name, const String& value);
         void setContentType(const String& contentType) { setHeader("Content-Type", contentType); }
         virtual bool parseResponse(const JsonDocument& response) = 0;
@@ -75,11 +75,11 @@ class RESTClient
         String _baseUrl;
         String _bearerToken;
         String _lastError;
+        MemoryType _memoryType;
         uint16_t _timeout;
         volatile uint32_t _requestMillis = 0;
         uint32_t _responseTimeMs = 0;
         MemoryStream* _responsePtr = nullptr;
-        bool _usePSRAM;
 
         int startRequest(const String& url);
         bool isResponseAvailable();

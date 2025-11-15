@@ -209,21 +209,18 @@ void SmartHomeClass::writeHtml(HtmlWriter& html)
     html.writeHeaderCell("P<sub>avg</sub> (W)");
     html.writeHeaderCell("E (Wh)");
     html.writeRowEnd();
-    SmartDeviceEnergyLogEntry* logEntryPtr = energyLog.getFirstEntry();
-    while (logEntryPtr != nullptr)
+    for (SmartDeviceEnergyLogEntry& logEntry : energyLog)
     {
-        float avgPower = logEntryPtr->energyDelta * SECONDS_PER_HOUR / logEntryPtr->getDuration();
+        float avgPower = logEntry.energyDelta * SECONDS_PER_HOUR / logEntry.getDuration();
 
         html.writeRowStart();
-        html.writeCell(logEntryPtr->devicePtr->name);
-        html.writeCell(formatTime("%a %H:%M", logEntryPtr->start));
-        html.writeCell(formatTimeSpan(logEntryPtr->getDuration()));
-        html.writeCell(logEntryPtr->maxPower, F("%0.0f"));
+        html.writeCell(logEntry.devicePtr->name);
+        html.writeCell(formatTime("%a %H:%M", logEntry.start));
+        html.writeCell(formatTimeSpan(logEntry.getDuration()));
+        html.writeCell(logEntry.maxPower, F("%0.0f"));
         html.writeCell(avgPower, F("%0.0f"));
-        html.writeCell(logEntryPtr->energyDelta, F("%0.0f"));
+        html.writeCell(logEntry.energyDelta, F("%0.0f"));
         html.writeRowEnd();
-
-        logEntryPtr = energyLog.getNextEntry();
     }
     html.writeTableEnd();
     html.writeSectionEnd();
@@ -235,14 +232,15 @@ void SmartHomeClass::writeHtml(HtmlWriter& html)
 
 void SmartHomeClass::writeEnergyLogCsv(Print& output, bool onlyEntriesToSync)
 {
-    SmartDeviceEnergyLogEntry* logEntryPtr = onlyEntriesToSync
-        ? energyLog.getEntryFromEnd(logEntriesToSync)
-        : energyLog.getFirstEntry();
-        
-    while (logEntryPtr != nullptr)
+    if (onlyEntriesToSync)
     {
-        logEntryPtr->writeCsv(output);
-        logEntryPtr = energyLog.getNextEntry();
+        for (auto i = energyLog.at(-logEntriesToSync); i != energyLog.end(); ++i)
+            i->writeCsv(output);
+    }
+    else
+    {
+        for (SmartDeviceEnergyLogEntry& logEntry : energyLog)
+            logEntry.writeCsv(output);
     }
 }
 

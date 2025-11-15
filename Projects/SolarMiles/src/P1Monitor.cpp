@@ -195,12 +195,8 @@ void P1MonitorClass::writeDayStats(HtmlWriter& html)
     html.writeTableStart();
     html.writeRowStart();
     html.writeHeaderCell("Day", 2);
-    P1MonitorDayStatsEntry* dayStatsEntryPtr = DayStats.getFirstEntry();
-    while (dayStatsEntryPtr != nullptr)
-    {
-        html.writeHeaderCell(formatTime("%a", dayStatsEntryPtr->day));
-        dayStatsEntryPtr = DayStats.getNextEntry();
-    }
+    for (P1MonitorDayStatsEntry& dayStatsEntry : DayStats)
+        html.writeHeaderCell(formatTime("%a", dayStatsEntry.day));
     html.writeRowEnd();
 
     int phase = 0;
@@ -250,10 +246,9 @@ void P1MonitorClass::writeDayStats(HtmlWriter& html)
 
 void P1MonitorClass::writeDayStats(HtmlWriter& html, int phase, int property)
 {
-    P1MonitorDayStatsEntry* dayStatsEntryPtr = DayStats.getFirstEntry();
-    while (dayStatsEntryPtr != nullptr)
+    for (P1MonitorDayStatsEntry& dayStatsEntry : DayStats)
     {
-        PhaseDayStats& phaseStats = dayStatsEntryPtr->phase[phase];
+        PhaseDayStats& phaseStats = dayStatsEntry.phase[phase];
 
         switch (property)
         {
@@ -289,7 +284,6 @@ void P1MonitorClass::writeDayStats(HtmlWriter& html, int phase, int property)
                 html.writeCell(phaseStats.grossEnergy, F("%0.0f Wh"));
                 break;
         }
-        dayStatsEntryPtr = DayStats.getNextEntry();
     }
 }
 
@@ -303,9 +297,6 @@ void P1MonitorClass::writeLog(HtmlWriter& html, int page, int pageSize)
     int totalPages = (Log.count() - 1) / pageSize + 1;
     html.writePager(totalPages, page);
 
-    P1MonitorLogEntry* logEntryPtr = Log.getFirstEntry();
-    for (int i = 0; (i < page * pageSize) && (logEntryPtr != nullptr); i++)
-        logEntryPtr = Log.getNextEntry();
 
     html.writeTableStart();
     html.writeRowStart();
@@ -323,11 +314,13 @@ void P1MonitorClass::writeLog(HtmlWriter& html, int page, int pageSize)
     html.writeHeaderCell("Power");
     html.writeRowEnd();
 
-    for (int i = 0; i < pageSize && (logEntryPtr != nullptr); i++)
+    int n = 0;
+    for (auto i = Log.at(page * pageSize); i != Log.end(); ++i)
     {
-        logEntryPtr->writeTableRow(html);
-        logEntryPtr = Log.getNextEntry();        
+        i->writeTableRow(html);
+        if (++n == pageSize) break;
     }
+
     html.writeTableEnd();
     html.writeSectionEnd();
 }
@@ -335,12 +328,8 @@ void P1MonitorClass::writeLog(HtmlWriter& html, int page, int pageSize)
 
 void P1MonitorClass::writeLogCsv(Print& output, int entries)
 {
-    P1MonitorLogEntry* logEntryPtr = Log.getEntryFromEnd(entries);
-    while (logEntryPtr != nullptr)
-    {
-        logEntryPtr->writeCsv(output);
-        logEntryPtr = Log.getNextEntry();
-    }
+    for (auto i = Log.at(-entries); i != Log.end(); ++i)
+        i->writeCsv(output);
 }
 
 

@@ -4,17 +4,22 @@
 #include <stdlib.h>
 #include <WString.h>
 #include <Print.h>
+#include <PSRAM.h>
 
 class StringBuilder : public Print
 {
   public:
-    // Constructor
-    StringBuilder(size_t size);
+    StringBuilder(size_t size, MemoryType memoryType = MemoryType::Auto)
+        :  _memoryType(memoryType), _capacity(size) {}
 
-    // Destructor
-    ~StringBuilder();
+    ~StringBuilder()
+    {
+        if (_buffer) free(_buffer);
+    }
 
-    bool usePSRAM();
+    [[deprecated("Specify memory type in constructor")]]
+    bool usePSRAM() { _memoryType = MemoryType::External; return true; }
+
     void clear();
     void printf(const __FlashStringHelper* fformat, ...);
 
@@ -22,36 +27,16 @@ class StringBuilder : public Print
     virtual size_t write(uint8_t);
     virtual size_t write(const uint8_t *buffer, size_t size);
 
-    inline size_t length()
-    {
-        return _length;
-    }
-
-    const char* c_str() const
-    {
-        return _buffer;
-    }
-
-    operator const char*() const
-    {
-        return _buffer;
-    }
-
-#ifdef ESP32
-    // WebServer.send for ESP32 only accepts String references, so we provide a String cast operator here.
-    // The String constructor copies the contents of the buffer, which partially defeats the purpose of StringBuilder.
-    // However, an ESP32 typically has plenty of RAM, so this is not so much of an issue.
-    operator String() const
-    {
-        return String(_buffer);
-    }
-#endif
+    size_t length() const { return _length; }
+    const char* c_str() const { return _buffer ? _buffer : ""; }
+    operator const char*() const { return c_str(); }
 
   protected:
-    char* _buffer;
+    MemoryType _memoryType;
     size_t _capacity;
-    size_t _space;
-    size_t _length;
+    size_t _space = 0;
+    size_t _length = 0;
+    char* _buffer = nullptr;
     
     void update_length(size_t additional);
 };

@@ -13,8 +13,8 @@ class HeatMonClient : public RESTClient
         float pIn;
         bool valve;
 
-        // Constructor
-        HeatMonClient(uint16_t timeout = 10) : RESTClient(timeout) {}
+        HeatMonClient(uint16_t timeout = 10, MemoryType memoryType = MemoryType::Internal)
+            : RESTClient(timeout, memoryType) {}
 
         bool begin(const char* host);
 

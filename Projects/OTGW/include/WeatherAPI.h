@@ -8,8 +8,8 @@ class WeatherAPI : public RESTClient
     public:
         float temperature;
 
-        // Constructor
-        WeatherAPI(uint16_t timeout = 15) : RESTClient(timeout) {}
+        WeatherAPI(uint16_t timeout = 15, MemoryType memoryType = MemoryType::Internal)
+            : RESTClient(timeout, memoryType) {}
 
         bool begin(const char* apiKey, const char* location);
 

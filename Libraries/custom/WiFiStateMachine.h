@@ -35,10 +35,6 @@ class WiFiStateMachine : public ILogger
         uint32_t activeDelay = 10; // ms
         uint32_t inactiveDelay = 100; // ms
 
-        // Constructor
-        WiFiStateMachine(LED& led, WiFiNTP& timeServer, ESPWebServer& webServer, Log<const char>& eventLog);
-
-        // Constructor
         WiFiStateMachine(LED& led, WiFiNTP& timeServer, ESPWebServer& webServer, StringLog& eventLog);
 
         void on(WiFiInitState state, void (*handler)(void));
@@ -91,8 +87,7 @@ class WiFiStateMachine : public ILogger
         LED& _led;
         WiFiNTP& _timeServer;
         ESPWebServer& _webServer;
-        Log<const char>* _eventLogPtr;
-        StringLog* _eventStringLogPtr;
+        StringLog& _eventLog;
         void (*_handlers[static_cast<int>(WiFiInitState::Updating) + 1])(void); // function pointers indexed by state
         bool _isTimeServerAvailable = false;
         bool _isInAccessPointMode = false;
@@ -105,6 +100,7 @@ class WiFiStateMachine : public ILogger
         String getResetReason();
         void scanForBetterAccessPoint();
         void handleHttpCoreDump();
+        void handleHttpMemory();
         void handleHttpNotFound();
         
 #ifdef ESP8266

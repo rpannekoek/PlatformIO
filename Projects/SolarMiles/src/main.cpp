@@ -372,21 +372,22 @@ void writePowerLogEntriesCsv(Print& output)
         dcChannels.push_back(dcChannelCount);
     }
 
-    PowerLogEntry* powerLogEntryPtr = PowerLog.getEntryFromEnd(powerLogEntriesToSync);
-    while (powerLogEntryPtr != nullptr)
+    if (powerLogEntriesToSync != 0)
     {
-        output.print(formatTime("%F %H:%M", powerLogEntryPtr->time));
-        for (int i = 0; i < dcChannels.size(); i++)
+        for (auto i = PowerLog.at(-powerLogEntriesToSync); i != PowerLog.end(); ++i)
         {
-            int dcChannelCount = dcChannels[i];
-            for (int ch = 0; ch < dcChannelCount; ch++)
-                output.printf(";%0.1f", powerLogEntryPtr->dcPower[i][ch]);
-            output.printf(";%0.1f", powerLogEntryPtr->acPower[i]);
-            output.printf(";%0.1f", powerLogEntryPtr->acVoltage[i]);
+            PowerLogEntry& powerLogEntry = *i;
+            output.print(formatTime("%F %H:%M", powerLogEntry.time));
+            for (int inv = 0; inv < dcChannels.size(); inv++)
+            {
+                int dcChannelCount = dcChannels[inv];
+                for (int ch = 0; ch < dcChannelCount; ch++)
+                    output.printf(";%0.1f", powerLogEntry.dcPower[inv][ch]);
+                output.printf(";%0.1f", powerLogEntry.acPower[inv]);
+                output.printf(";%0.1f", powerLogEntry.acVoltage[inv]);
+            }
+            output.println();
         }
-        output.println();
-
-        powerLogEntryPtr = PowerLog.getNextEntry();
     }
 }
 
@@ -419,17 +420,17 @@ bool trySyncFTP(Print* printTo)
 
     if (ftpSyncEnergy)
     {
-        EnergyLogEntry* energyLogEntryPtr = TotalEnergyLog.getYesterdayLogEntry();
-        if (energyLogEntryPtr != nullptr)
+        if (TotalEnergyLog.hasYesterdayLogEntry())
         {
-            auto energyLogWriter = [energyLogEntryPtr](Print& output)
+            EnergyLogEntry& yesterdayLogEntry = TotalEnergyLog.getYesterdayLogEntry();
+            auto energyLogWriter = [yesterdayLogEntry](Print& output)
             {
                 output.printf(
                     "\"%s\",%0.1f,%0.0f,%0.2f\r\n",
-                    formatTime("%F", energyLogEntryPtr->time),
-                    float(energyLogEntryPtr->onDuration) / SECONDS_PER_HOUR,
-                    energyLogEntryPtr->maxPower,
-                    energyLogEntryPtr->energy / 1000
+                    formatTime("%F", yesterdayLogEntry.time),
+                    float(yesterdayLogEntry.onDuration) / SECONDS_PER_HOUR,
+                    yesterdayLogEntry.maxPower,
+                    yesterdayLogEntry.energy / 1000
                     );
                 ftpSyncEnergy = false;
             };
@@ -739,7 +740,7 @@ void writeInverterData()
 
 
 void writeGraphRow(
-    std::vector<EnergyLogEntry*> energyLogEntryPtrs,
+    std::vector<StaticLog<EnergyLogEntry>::iterator> energyLogIterators,
     time_t time,
     const char* timeFormat,
     int energyDivisor,
@@ -749,21 +750,24 @@ void writeGraphRow(
     String maxPowerHtml;
     String energyHtml;
     char buffer[256];
-    for (EnergyLogEntry* logEntryPtr : energyLogEntryPtrs)
+    for (auto energyLogIterator : energyLogIterators)
     {
         uint32_t onDuration = 0;
         float maxPower = 0;
         float energy = 0;
-        if (logEntryPtr == nullptr)
-            TRACE("null, ");
-        else
-            TRACE(F("%c%s, "), (logEntryPtr->time == time) ? '+' : '-', formatTime("%F %H:%M:%S", logEntryPtr->time));
-        if ((logEntryPtr != nullptr) && (logEntryPtr->time == time))
+        if (energyLogIterator.remaining())
         {
-            onDuration = logEntryPtr->onDuration;
-            maxPower = logEntryPtr->maxPower;
-            energy = logEntryPtr->energy / energyDivisor;
+            EnergyLogEntry& logEntry = *energyLogIterator; 
+            TRACE(F("%c%s, "), (logEntry.time == time) ? '+' : '-', formatTime("%F %H:%M:%S", logEntry.time));
+            if (logEntry.time == time)
+            {
+                onDuration = logEntry.onDuration;
+                maxPower = logEntry.maxPower;
+                energy = logEntry.energy / energyDivisor;
+            }
         }
+        else
+            TRACE("null, ");
         snprintf(buffer, sizeof(buffer), "<div>%s</div>", formatTimeSpan(onDuration));
         onDurationHtml += buffer;
         snprintf(buffer, sizeof(buffer), "<div>%0.0f</div>", maxPower);
@@ -780,9 +784,15 @@ void writeGraphRow(
     Html.writeCell(energyHtml);
 
     Html.writeCellStart("graph fill");
-    for (EnergyLogEntry* logEntryPtr : energyLogEntryPtrs)
+    for (auto energyLogIterator : energyLogIterators)
     {
-        float value = (logEntryPtr != nullptr && logEntryPtr->time == time) ? logEntryPtr->energy : 0.0F;
+        float value = 0;
+        if (energyLogIterator.remaining())
+        {
+            EnergyLogEntry& logEntry = *energyLogIterator;
+            if (logEntry.time == time)
+                value = logEntry.energy;
+        } 
         Html.writeMeterDiv(value, 0, maxValue, "energyBar");
     }
     Html.writeCellEnd();
@@ -890,36 +900,32 @@ void writeEnergyLogs(int inverter, ChannelType_t channel,  EnergyLogType logType
     Html.writeRowEnd();
 
     bool moreEntries = false;
-    std::vector<EnergyLogEntry*> logEntryPtrs;
+    std::vector<StaticLog<EnergyLogEntry>::iterator> logIterators;
     for (EnergyLog* energyLogPtr : energyLogPtrs)
     {
-        EnergyLogEntry* logEntryPtr = energyLogPtr->getLog(logType).getFirstEntry(); 
-        logEntryPtrs.push_back(logEntryPtr);
-        if (logEntryPtr != nullptr) moreEntries = true;
+        auto logIterator = energyLogPtr->getLog(logType).begin();
+        logIterators.push_back(logIterator);
+        if (logIterator.remaining()) moreEntries = true;
     }
 
     while (moreEntries)
     {
         // Determine timeslot for the current row
         time_t time = currentTime + 400 * SECONDS_PER_DAY;
-        for (EnergyLogEntry* logEntryPtr : logEntryPtrs)
+        for (auto& logIterator : logIterators)
         {
-            if (logEntryPtr != nullptr)
-                time = std::min(time, logEntryPtr->time);
+            if (logIterator.remaining())
+                time = std::min(time, logIterator->time);
         }
 
-        writeGraphRow(logEntryPtrs, time, timeFormat, energyDivisor, maxValue);
+        writeGraphRow(logIterators, time, timeFormat, energyDivisor, maxValue);
 
         moreEntries = false;
-        for (int i = 0; i < energyLogPtrs.size(); i++)
+        for (auto& logIterator : logIterators)
         {
-            EnergyLogEntry* logEntryPtr = logEntryPtrs[i];
-            if ((logEntryPtr != nullptr) && (logEntryPtr->time == time))
-            {
-                logEntryPtr = energyLogPtrs[i]->getLog(logType).getNextEntry(); 
-                logEntryPtrs[i] = logEntryPtr;
-            }
-            if (logEntryPtr != nullptr) moreEntries = true;
+            if (logIterator.remaining() && (logIterator->time == time))
+                ++logIterator;
+            if (logIterator.remaining()) moreEntries = true;
         }
     }
 
@@ -1007,27 +1013,24 @@ void handleHttpPowerLogRequest()
     }
     Html.writeRowEnd();
 
-    PowerLogEntry* powerLogEntryPtr = PowerLog.getFirstEntry();
-    for (int i = 0; i < (currentPage * POWER_LOG_PAGE_SIZE) && powerLogEntryPtr != nullptr; i++)
+    int n = 0;
+    for (auto i = PowerLog.at(currentPage * POWER_LOG_PAGE_SIZE); i != PowerLog.end(); ++i)
     {
-        powerLogEntryPtr = PowerLog.getNextEntry();
-    }
+        PowerLogEntry& powerLogEntry = *i;
 
-    for (int j = 0; j < POWER_LOG_PAGE_SIZE && powerLogEntryPtr != nullptr; j++)
-    {
         Html.writeRowStart();
-        Html.writeCell(formatTime("%a %H:%M", powerLogEntryPtr->time));
-        for (int i = 0; i < dcChannels.size(); i++)
+        Html.writeCell(formatTime("%a %H:%M", powerLogEntry.time));
+        for (int inv = 0; inv < dcChannels.size(); inv++)
         {
-            int dcChannelCount = dcChannels[i];
+            int dcChannelCount = dcChannels[inv];
             for (int ch = 0; ch < dcChannelCount; ch++)
-                Html.writeCell(powerLogEntryPtr->dcPower[i][ch]);
-            Html.writeCell(powerLogEntryPtr->acPower[i]);
-            Html.writeCell(powerLogEntryPtr->acVoltage[i]);
+                Html.writeCell(powerLogEntry.dcPower[inv][ch]);
+            Html.writeCell(powerLogEntry.acPower[inv]);
+            Html.writeCell(powerLogEntry.acVoltage[inv]);
         }
         Html.writeRowEnd();
 
-        powerLogEntryPtr = PowerLog.getNextEntry();
+        if (++n == POWER_LOG_PAGE_SIZE) break;
     }
 
     Html.writeTableEnd();
@@ -1049,11 +1052,9 @@ void handleHttpEventLogRequest()
         WiFiSM.logEvent("Event log cleared.");
     }
 
-    const char* event = EventLog.getFirstEntry();
-    while (event != nullptr)
+    for (const char* event : EventLog)
     {
         Html.writeDiv("%s", event);
-        event = EventLog.getNextEntry();
     }
 
     Html.writeActionLink("clear", "Clear event log", currentTime, ButtonClass);
@@ -1431,8 +1432,6 @@ void setup()
     #endif
 
     BuiltinLED.begin();
-    EventLog.begin();
-    HttpResponse.usePSRAM();
 
     PersistentData.begin();
     TimeServer.begin(PersistentData.ntpServer);

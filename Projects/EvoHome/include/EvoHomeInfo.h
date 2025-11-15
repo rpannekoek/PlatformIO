@@ -408,12 +408,8 @@ class EvoHomeInfo
         {
             if (zoneDataLogEntriesToSync == 0) return false;
 
-            ZoneDataLogEntry* logEntryPtr = zoneDataLog.getEntryFromEnd(zoneDataLogEntriesToSync);
-            while (logEntryPtr != nullptr)
-            {
-                logEntryPtr->writeCsv(output, zoneCount);
-                logEntryPtr = zoneDataLog.getNextEntry();
-            }
+            for (auto i = zoneDataLog.at(-zoneDataLogEntriesToSync); i != zoneDataLog.end(); ++i)
+                i->writeCsv(output, zoneCount);
 
             zoneDataLogEntriesToSync = 0;
             return true;

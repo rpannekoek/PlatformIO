@@ -65,7 +65,7 @@ WiFiNTP TimeServer;
 WiFiFTPClient FTPClient(WIFI_TIMEOUT_MS);
 StringBuilder HttpResponse(16384); // 16KB HTTP response buffer
 HtmlWriter Html(HttpResponse, Files[Logo], Files[Styles], BAR_LENGTH);
-Log<const char> EventLog(EVENT_LOG_LENGTH);
+StringLog EventLog(EVENT_LOG_LENGTH, 96);
 StaticLog<HeatLogEntry> HeatLog(24 * 2); // 24 hrs
 StaticLog<DayStatsEntry> DayStats(31); // 31 days
 SimpleLED BuiltinLED(LED_BUILTIN, true);
@@ -199,16 +199,13 @@ bool trySyncFTP(Print* printTo)
     {
         if (DayStats.count() > 1)
         {
-            DayStatsEntry* energyLogEntryPtr = DayStats.getEntryFromEnd(2);
-            if (energyLogEntryPtr != nullptr)
-            {
-                dataClient.printf(
-                    "%s;%0.1f;%0.1f\r\n",
-                    formatTime("%F", energyLogEntryPtr->time),
-                    energyLogEntryPtr->energyIn,
-                    energyLogEntryPtr->energyOut
-                    );
-            }
+            DayStatsEntry& yesterdayStats = *DayStats.at(-2);
+            dataClient.printf(
+                "%s;%0.1f;%0.1f\r\n",
+                formatTime("%F", yesterdayStats.time),
+                yesterdayStats.energyIn,
+                yesterdayStats.energyOut
+                );
         }
         else if (printTo != nullptr)
             printTo->println("Nothing to sync.");
@@ -365,12 +362,10 @@ float getBarValue(float t, float tMin = 20, float tMax = 60)
 float getMaxPower()
 {
     float result = 0;
-    HeatLogEntry* logEntryPtr = HeatLog.getFirstEntry();
-    while (logEntryPtr != nullptr)
+    for (HeatLogEntry& logEntry : HeatLog)
     {
-        result = std::max(result, logEntryPtr->getAverage(TopicId::PIn));
-        result = std::max(result, logEntryPtr->getAverage(TopicId::POut));
-        logEntryPtr = HeatLog.getNextEntry();
+        result = std::max(result, logEntry.getAverage(TopicId::PIn));
+        result = std::max(result, logEntry.getAverage(TopicId::POut));
     }
     return result;
 }
@@ -379,12 +374,10 @@ float getMaxPower()
 float getMaxEnergy()
 {
     float result = 0;
-    DayStatsEntry* logEntryPtr = DayStats.getFirstEntry();
-    while (logEntryPtr != nullptr)
+    for (DayStatsEntry& dayStatsEntry : DayStats)
     {
-        result = std::max(result, logEntryPtr->energyIn);
-        result = std::max(result, logEntryPtr->energyOut);
-        logEntryPtr = DayStats.getNextEntry();
+        result = std::max(result, dayStatsEntry.energyIn);
+        result = std::max(result, dayStatsEntry.energyOut);
     }
     return result;
 }
@@ -477,19 +470,18 @@ void handleHttpHeatLogRequest()
 
     writeMinMaxAvgHeader(4);
 
-    HeatLogEntry* logEntryPtr = HeatLog.getFirstEntry();
-    while (logEntryPtr != nullptr)
+    for (HeatLogEntry& logEntry : HeatLog)
     {
-        float avgPIn = logEntryPtr->getAverage(TopicId::PIn);
-        float avgPOut = logEntryPtr->getAverage(TopicId::POut); 
+        float avgPIn = logEntry.getAverage(TopicId::PIn);
+        float avgPOut = logEntry.getAverage(TopicId::POut);
 
-        Html.writeCell(formatTime("%H:%M", logEntryPtr->time));
+        Html.writeCell(formatTime("%H:%M", logEntry.time));
         for (TopicId topicId : showTopicsIds)
         {
-            TopicStats topicStats = logEntryPtr->topicStats[topicId];
+            TopicStats topicStats = logEntry.topicStats[topicId];
             Html.writeCell(topicStats.min);
             Html.writeCell(topicStats.max);
-            Html.writeCell(logEntryPtr->getAverage(topicId), F("%0.2f"));
+            Html.writeCell(logEntry.getAverage(topicId), F("%0.2f"));
         }
         Html.writeGraphCell(
             avgPIn / maxPower,
@@ -499,8 +491,6 @@ void handleHttpHeatLogRequest()
             false
             );
         Html.writeRowEnd();
-
-        logEntryPtr = HeatLog.getNextEntry();
     }
     Html.writeTableEnd();
     Html.writeFooter();
@@ -532,20 +522,19 @@ void handleHttpTempLogRequest()
 
     writeMinMaxAvgHeader(2);
 
-    HeatLogEntry* logEntryPtr = HeatLog.getFirstEntry();
-    while (logEntryPtr != nullptr)
+    for (auto logEntryPtr : HeatLog)
     {
-        float avgTInput = logEntryPtr->getAverage(TopicId::TInput);
-        float avgTOutput = logEntryPtr->getAverage(TopicId::TOutput);
+        float avgTInput = logEntryPtr.getAverage(TopicId::TInput);
+        float avgTOutput = logEntryPtr.getAverage(TopicId::TOutput);
 
         Html.writeRowStart();
-        Html.writeCell(formatTime("%H:%M", logEntryPtr->time));
+        Html.writeCell(formatTime("%H:%M", logEntryPtr.time));
         for (TopicId topicId : showTopicsIds)
         {
-            TopicStats topicStats = logEntryPtr->topicStats[topicId];
+            TopicStats topicStats = logEntryPtr.topicStats[topicId];
             Html.writeCell(topicStats.min);
             Html.writeCell(topicStats.max);
-            Html.writeCell(logEntryPtr->getAverage(topicId));
+            Html.writeCell(logEntryPtr.getAverage(topicId));
         }
         Html.writeGraphCell(
             getBarValue(avgTOutput),
@@ -555,8 +544,6 @@ void handleHttpTempLogRequest()
             false
             );
         Html.writeRowEnd();
-
-        logEntryPtr = HeatLog.getNextEntry();
     }
     Html.writeTableEnd();
 
@@ -573,13 +560,11 @@ void handleHttpBufferLogRequest()
     // Auto-ranging: determine min & max buffer temp
     float tMin = 666;
     float tMax = 0;
-    HeatLogEntry* logEntryPtr = HeatLog.getFirstEntry();
-    while (logEntryPtr != nullptr)
+    for (HeatLogEntry& logEntry : HeatLog)
     {
-        float avg = logEntryPtr->getAverage(TopicId::TBuffer);
+        float avg = logEntry.getAverage(TopicId::TBuffer);
         tMin = std::min(tMin, avg);
-        tMax = std::max(tMax, avg);    
-        logEntryPtr = HeatLog.getNextEntry();
+        tMax = std::max(tMax, avg);
     }
     tMax = std::max(tMax, tMin + 1); // Prevent division by zero
 
@@ -600,23 +585,20 @@ void handleHttpBufferLogRequest()
 
     writeMinMaxAvgHeader(1);
 
-    logEntryPtr = HeatLog.getFirstEntry();
-    while (logEntryPtr != nullptr)
+    for (HeatLogEntry& logEntry : HeatLog)
     {
-        TopicStats topicStats = logEntryPtr->topicStats[TopicId::TBuffer];
-        float avgTBuffer = logEntryPtr->getAverage(TopicId::TBuffer);
+        TopicStats topicStats = logEntry.topicStats[TopicId::TBuffer];
+        float avgTBuffer = logEntry.getAverage(TopicId::TBuffer);
         float barValue = getBarValue(avgTBuffer, tMin, tMax);
 
         Html.writeRowStart();
-        Html.writeCell(formatTime("%H:%M", logEntryPtr->time));
-        Html.writeCell(formatTimeSpan(logEntryPtr->valveActivatedSeconds));
+        Html.writeCell(formatTime("%H:%M", logEntry.time));
+        Html.writeCell(formatTimeSpan(logEntry.valveActivatedSeconds));
         Html.writeCell(topicStats.min);
         Html.writeCell(topicStats.max);
         Html.writeCell(avgTBuffer);
         Html.writeGraphCell(barValue, F("waterBar"), false);
         Html.writeRowEnd();
-
-        logEntryPtr = HeatLog.getNextEntry();
     }
 
     Html.writeTableEnd();
@@ -734,12 +716,8 @@ void handleHttpEventLogRequest()
 
     Html.writeHeader(F("Event log"), Nav);
 
-    const char* event = EventLog.getFirstEntry();
-    while (event != nullptr)
-    {
-        HttpResponse.printf(F("<div>%s</div>\r\n"), event);
-        event = EventLog.getNextEntry();
-    }
+    for (const char* event : EventLog)
+        Html.writeDiv(F("%s"), event);
 
     Html.writeActionLink(F("clear"), F("Clear event log"), currentTime, ButtonClass);
 
@@ -839,26 +817,23 @@ void writeDayStats()
     Html.writeRowEnd();
 
     float maxEnergy = std::max(getMaxEnergy(), 0.1F); // Prevent division by zero
-    DayStatsEntry* logEntryPtr = DayStats.getFirstEntry();
-    while (logEntryPtr != nullptr)
+    for (DayStatsEntry& dayStatsEntry : DayStats)
     {
         Html.writeRowStart();
-        Html.writeCell(formatTime("%d %b", logEntryPtr->time));
+        Html.writeCell(formatTime("%d %b", dayStatsEntry.time));
         if (PersistentData.isBufferEnabled())
-            Html.writeCell(formatTimeSpan(logEntryPtr->valveActivatedSeconds, false));
-        Html.writeCell(logEntryPtr->energyOut, F("%0.2f"));
-        Html.writeCell(logEntryPtr->energyIn, F("%0.2f"));
-        Html.writeCell(logEntryPtr->getCOP());
+            Html.writeCell(formatTimeSpan(dayStatsEntry.valveActivatedSeconds, false));
+        Html.writeCell(dayStatsEntry.energyOut, F("%0.2f"));
+        Html.writeCell(dayStatsEntry.energyIn, F("%0.2f"));
+        Html.writeCell(dayStatsEntry.getCOP());
         Html.writeGraphCell(
-            logEntryPtr->energyIn / maxEnergy,
-            (logEntryPtr->energyOut - logEntryPtr->energyIn) / maxEnergy,
+            dayStatsEntry.energyIn / maxEnergy,
+            (dayStatsEntry.energyOut - dayStatsEntry.energyIn) / maxEnergy,
             F("eInBar"),
             F("energyBar"),
             false
             );
         Html.writeRowEnd();
-
-        logEntryPtr = DayStats.getNextEntry();
     }
 
     Html.writeTableEnd();

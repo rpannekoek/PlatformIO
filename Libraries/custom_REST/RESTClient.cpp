@@ -3,12 +3,10 @@
 #include <StreamUtils.h>
 
 
-bool RESTClient::begin(const String& baseUrl, const char* certificate, bool usePSRAM)
+bool RESTClient::begin(const String& baseUrl, const char* certificate)
 {
     _baseUrl = baseUrl;
     _certificate = certificate;
-    _requestMillis = 0;
-    _usePSRAM = usePSRAM;
 
 #ifdef ESP8266
     isInitialized = true;
@@ -250,7 +248,7 @@ void RESTClient::runHttpRequests()
             {
                 int size = _httpClient.getSize();
                 if (size < 0) size = 4095;
-                _responsePtr = new MemoryStream(size, _usePSRAM);
+                _responsePtr = new MemoryStream(size, _memoryType);
                 _httpClient.writeToStream(_responsePtr);
             }
             else if (httpResult < 0)
