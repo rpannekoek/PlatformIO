@@ -664,6 +664,7 @@ void WiFiStateMachine::handleHttpMemory()
     Tracer tracer("WiFiStateMachine::handleHttpMemory");
 
     _responseBuilder.clear();
+#ifdef ESP32
     _responseBuilder.println(F("Internal"));
     _responseBuilder.printf(F("Size: %u\n"), ESP.getHeapSize());
     _responseBuilder.printf(F("Free: %u\n"), ESP.getFreeHeap());
@@ -677,6 +678,11 @@ void WiFiStateMachine::handleHttpMemory()
         _responseBuilder.printf(F("Min free: %u\n"), ESP.getMinFreePsram());
         _responseBuilder.printf(F("Max alloc: %u\n"), ESP.getMaxAllocPsram());
     }
+#else
+    _responseBuilder.printf(F("Free: %u\n"), ESP.getFreeHeap());
+    _responseBuilder.printf(F("Max alloc: %u\n"), ESP.getMaxFreeBlockSize());
+#endif
+
     _webServer.send(200, "text/plain", _responseBuilder.c_str());
 }
 
