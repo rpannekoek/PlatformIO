@@ -50,7 +50,7 @@ class HtmlWriter
         void writeRowStart();
         void writeRowStart(const String& cssClass);
         void writeRowEnd();
-        void writeCellStart(const String& cssClass);
+        void writeCellStart(const String& cssClass = String());
         void writeCellEnd();
         void writeHeaderCell(const String& value, int colspan = 0, int rowspan = 0);
         void writeCell(const String& format, ...);

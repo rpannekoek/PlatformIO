@@ -232,6 +232,7 @@ void HtmlWriter::writeSubmitButton(const String& label, const String& cssClass)
 
 void HtmlWriter::writeLabel(const String& label, const String& forId)
 {
+    if (label.length() == 0) return;
     _output.printf(
         F("<label for=\"%s\">%s</label>"), 
         forId.c_str(),
@@ -351,7 +352,7 @@ void HtmlWriter::writeSlider(const String& name, const String& label, const Stri
 void HtmlWriter::writeDropdown(const String& name, const String& label, const char** values, int numValues, int index)
 {
     writeLabel(label, name);
-    writeDivStart();
+    //writeDivStart();
     _output.printf(F("<select name=\"%s\">"), name.c_str());
 
     for (int i = 0; i < numValues; i++)
@@ -362,7 +363,7 @@ void HtmlWriter::writeDropdown(const String& name, const String& label, const ch
             values[i]);
 
     _output.print(F("</select>"));
-    writeDivEnd();
+    //writeDivEnd();
 }
 
 
