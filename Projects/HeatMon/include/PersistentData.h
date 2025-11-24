@@ -8,10 +8,7 @@ struct Settings : WiFiSettingsWithFTP
     DeviceAddress tempSensorAddress[3];
     float tempSensorOffset[3];
 
-    bool inline isBufferEnabled()
-    {
-        return tBufferMax != 0;
-    }
+    bool isBufferEnabled() { return tBufferMax != 0; }
 
     Settings()
         : WiFiSettingsWithFTP(PSTR("HeatMon"), sizeof(tempSensorAddress) + sizeof(tempSensorOffset))

@@ -183,13 +183,40 @@ td.graph
     text-align: left;
 }
 
-@media screen and (max-width: 700px)
+@media screen and (max-width: 1000px)
 {
     td.graph
     {
         display: none;
     }
 }
+
+.meter 
+{
+    border: none;
+    width: 30em;
+    height: 1em;
+    display: flex;
+}
+
+.wide .meter
+{
+    width: 49em;
+}
+
+.fill .meter
+{
+    background-color: #C0C0C0;
+}
+
+.meter span 
+{
+  height: inherit;  
+  background-size: 100% 100%;
+  display: block;
+  text-indent: -9999px;
+}
+
 
 .deltatBar
 {
@@ -238,16 +265,4 @@ td.graph
 	background-color: green;
     color: green;
 }
-
-.barFill
-{
-	background-color: gray;
-    color: gray;
-}
-
-.emptyBar
-{
-    opacity: 0;
-}
-
 

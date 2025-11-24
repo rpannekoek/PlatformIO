@@ -104,6 +104,34 @@ void HtmlWriter::writeMeterDiv(float value, float minValue, float maxValue, cons
 }
 
 
+void HtmlWriter::writeMeterDiv(
+    float value1,
+    float value2,
+    float minValue,
+    float maxValue,
+    const String& cssClass1,
+    const String& cssClass2)
+{
+    float percentage1 = std::min(std::max((value1 - minValue) / (maxValue - minValue), 0.0F), 1.0F) * 100;
+
+    writeDivStart("meter");
+    _output.printf(
+        F("<span class=\"%s\" style=\"width: %0.0f%%;\"></span>"),
+        cssClass1.c_str(),
+        roundf(percentage1));
+
+    if (value2 > value1)
+    {
+        float percentage2 = std::min(100.0F * (value2 - value1) / (maxValue - minValue), (100.0F - percentage1));
+        _output.printf(
+            F("<span class=\"%s\" style=\"width: %0.0f%%;\"></span>"),
+            cssClass2.c_str(),
+            roundf(percentage2));
+    }
+    writeDivEnd();
+}
+
+
 void HtmlWriter::writeBar(float value, const String& cssClass, bool fill, bool useDiv, size_t maxBarLength)
 {
     char* bar = _strBuffer;
@@ -173,9 +201,15 @@ void HtmlWriter::writeStackedBar(float value1, float value2, const String& cssCl
 }
 
 
+const char* getGraphCssClass(bool fill)
+{
+    return fill ? "graph fill" : "graph";
+}
+
+
 void HtmlWriter::writeGraphCell(float value, const String& barCssClass, bool fill, size_t maxBarLength)
 {
-    writeCellStart(F("graph"));
+    writeCellStart(getGraphCssClass(false));
     writeBar(value, barCssClass, fill, false, maxBarLength);
     writeCellEnd();
 }
@@ -183,7 +217,7 @@ void HtmlWriter::writeGraphCell(float value, const String& barCssClass, bool fil
 
 void HtmlWriter::writeGraphCell(float value1, float value2, const String& barCssClass1, const String& barCssClass2, bool fill)
 {
-    writeCellStart(F("graph"));
+    writeCellStart(getGraphCssClass(false));
     writeStackedBar(value1, value2, barCssClass1, barCssClass2, fill, false);
     writeCellEnd();
 }
@@ -191,11 +225,22 @@ void HtmlWriter::writeGraphCell(float value1, float value2, const String& barCss
 
 void HtmlWriter::writeGraphCell(float value, float minValue, float maxValue, const String& cssClass, bool fill)
 {
-    if (fill)
-        writeCellStart(F("graph fill"));
-    else
-        writeCellStart(F("graph"));
+    writeCellStart(getGraphCssClass(fill));
     writeMeterDiv(value, minValue, maxValue, cssClass);
+    writeCellEnd();
+}
+
+void HtmlWriter::writeGraphCell(
+    float value1,
+    float value2,
+    float minValue,
+    float maxValue,
+    const String& cssClass1,
+    const String& cssClass2,
+    bool fill)
+{
+    writeCellStart(getGraphCssClass(fill));
+    writeMeterDiv(value1, value2, minValue, maxValue, cssClass1, cssClass2);
     writeCellEnd();
 }
 

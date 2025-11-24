@@ -21,10 +21,9 @@
 #include "DayStatsEntry.h"
 
 constexpr float SPECIFIC_HEAT_CAP_H2O = 4.186;
-constexpr int HTTP_POLL_INTERVAL = 60;
+constexpr uint16_t HTTP_RESPONSE_BUFFER_SIZE = 8 * 1024;
 constexpr int EVENT_LOG_LENGTH = 50;
-constexpr int BAR_LENGTH = 40;
-constexpr int WIFI_TIMEOUT_MS = 2000;
+constexpr int FTP_TIMEOUT_MS = 2000;
 constexpr uint32_t FTP_RETRY_INTERVAL = 15 * SECONDS_PER_MINUTE;
 constexpr uint32_t HEAT_LOG_INTERVAL = 30 * SECONDS_PER_MINUTE;
 constexpr float DS18_INIT_VALUE_C = 85.0;
@@ -62,9 +61,9 @@ const char* Files[] PROGMEM =
 
 ESPWebServer WebServer(80); // Default HTTP port
 WiFiNTP TimeServer;
-WiFiFTPClient FTPClient(WIFI_TIMEOUT_MS);
-StringBuilder HttpResponse(16384); // 16KB HTTP response buffer
-HtmlWriter Html(HttpResponse, Files[Logo], Files[Styles], BAR_LENGTH);
+WiFiFTPClient FTPClient(FTP_TIMEOUT_MS);
+StringBuilder HttpResponse(HTTP_RESPONSE_BUFFER_SIZE);
+HtmlWriter Html(HttpResponse, Files[Logo], Files[Styles]);
 StringLog EventLog(EVENT_LOG_LENGTH, 96);
 StaticLog<HeatLogEntry> HeatLog(24 * 2); // 24 hrs
 StaticLog<DayStatsEntry> DayStats(31); // 31 days
@@ -353,35 +352,6 @@ void test(String message)
 }
 
 
-float getBarValue(float t, float tMin = 20, float tMax = 60)
-{
-    return std::max(t - tMin, 0.0F) / (tMax - tMin);
-}
-
-
-float getMaxPower()
-{
-    float result = 0;
-    for (HeatLogEntry& logEntry : HeatLog)
-    {
-        result = std::max(result, logEntry.getAverage(TopicId::PIn));
-        result = std::max(result, logEntry.getAverage(TopicId::POut));
-    }
-    return result;
-}
-
-
-float getMaxEnergy()
-{
-    float result = 0;
-    for (DayStatsEntry& dayStatsEntry : DayStats)
-    {
-        result = std::max(result, dayStatsEntry.energyIn);
-        result = std::max(result, dayStatsEntry.energyOut);
-    }
-    return result;
-}
-
 void writeJsonFloat(String name, float value)
 {
     HttpResponse.printf(F("\"%s\": %0.1f,"), name.c_str(), value);
@@ -411,6 +381,7 @@ void handleHttpJsonRequest()
 void handleHttpFtpSyncRequest()
 {
     Tracer tracer(F("handleHttpFtpSyncRequest"));
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     Html.writeHeader(F("FTP Sync"), Nav);
 
@@ -427,8 +398,6 @@ void handleHttpFtpSyncRequest()
         Html.writeParagraph(F("Failed: %s"), FTPClient.getLastError());
  
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse);
 }
 
 
@@ -448,15 +417,21 @@ void writeMinMaxAvgHeader(int repeat)
 void handleHttpHeatLogRequest()
 {
     Tracer tracer(F("handleHttpHeatLogRequest"));
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     TopicId showTopicsIds[] = { TopicId::DeltaT, TopicId::FlowRate, TopicId::POut, TopicId::PIn };
-    float maxPower = std::max(getMaxPower(), 0.01F); // Prevent division by zero
+
+    float maxPower = 0.01F; // Prevent division by zero
+    for (HeatLogEntry& logEntry : HeatLog)
+    {
+        maxPower = std::max(maxPower, logEntry.getAverage(TopicId::PIn));
+        maxPower = std::max(maxPower, logEntry.getAverage(TopicId::POut));
+    }
+    TRACE(F("maxPower: %0.1f\n"), maxPower);
 
     Html.writeHeader(F("Heat log"), Nav);
 
-    HttpResponse.printf(
-        F("<p>Max: %0.2f kW</p>\r\n"),
-        maxPower);
+    HttpResponse.printf(F("<p>Max: %0.2f kW</p>\r\n"), maxPower);
 
     Html.writeTableStart();
 
@@ -484,8 +459,10 @@ void handleHttpHeatLogRequest()
             Html.writeCell(logEntry.getAverage(topicId), F("%0.2f"));
         }
         Html.writeGraphCell(
-            avgPIn / maxPower,
-            (avgPOut - avgPIn) / maxPower,
+            avgPIn,
+            avgPOut,
+            0,
+            maxPower,
             F("pInBar"),
             F("powerBar"),
             false
@@ -494,23 +471,21 @@ void handleHttpHeatLogRequest()
     }
     Html.writeTableEnd();
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse);
 }
 
 
 void handleHttpTempLogRequest()
 {
     Tracer tracer(F("handleHttpTempLogRequest"));
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     TopicId showTopicsIds[] = { TopicId::TInput, TopicId::TOutput };
 
     Html.writeHeader(F("Temperature log"), Nav);
 
-    HttpResponse.printf(
-        F("<p>Min: %0.1f °C. Max: %0.1f °C.</p>\r\n"),
-        20.0F,
-        60.0F);
+    float tMin = 20.0F;
+    float tMax = 60.0F;
+    HttpResponse.printf(F("<p>Min: %0.1f °C. Max: %0.1f °C.</p>\r\n"), tMin, tMax);
 
     Html.writeTableStart();
 
@@ -522,23 +497,25 @@ void handleHttpTempLogRequest()
 
     writeMinMaxAvgHeader(2);
 
-    for (auto logEntryPtr : HeatLog)
+    for (HeatLogEntry& logEntry : HeatLog)
     {
-        float avgTInput = logEntryPtr.getAverage(TopicId::TInput);
-        float avgTOutput = logEntryPtr.getAverage(TopicId::TOutput);
+        float avgTInput = logEntry.getAverage(TopicId::TInput);
+        float avgTOutput = logEntry.getAverage(TopicId::TOutput);
 
         Html.writeRowStart();
-        Html.writeCell(formatTime("%H:%M", logEntryPtr.time));
+        Html.writeCell(formatTime("%H:%M", logEntry.time));
         for (TopicId topicId : showTopicsIds)
         {
-            TopicStats topicStats = logEntryPtr.topicStats[topicId];
+            TopicStats topicStats = logEntry.topicStats[topicId];
             Html.writeCell(topicStats.min);
             Html.writeCell(topicStats.max);
-            Html.writeCell(logEntryPtr.getAverage(topicId));
+            Html.writeCell(logEntry.getAverage(topicId));
         }
         Html.writeGraphCell(
-            getBarValue(avgTOutput),
-            getBarValue(avgTInput) - getBarValue(avgTOutput),
+            avgTOutput,
+            avgTInput,
+            tMin,
+            tMax,
             F("tOutBar"),
             F("waterBar"),
             false
@@ -546,16 +523,14 @@ void handleHttpTempLogRequest()
         Html.writeRowEnd();
     }
     Html.writeTableEnd();
-
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse);
 }
 
 
 void handleHttpBufferLogRequest()
 {
     Tracer tracer(F("handleHttpBufferLogRequest"));
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     // Auto-ranging: determine min & max buffer temp
     float tMin = 666;
@@ -570,26 +545,20 @@ void handleHttpBufferLogRequest()
 
     Html.writeHeader(F("Buffer log"), Nav);
     
-    HttpResponse.printf(
-        F("<p>Min: %0.1f °C. Max: %0.1f °C.</p>\r\n"),
-        tMin,
-        tMax);
+    HttpResponse.printf(F("<p>Min: %0.1f °C. Max: %0.1f °C.</p>\r\n"), tMin, tMax);
 
     Html.writeTableStart();
-
     Html.writeRowStart();
     Html.writeHeaderCell(F("Time"), 0, 2);
     Html.writeHeaderCell(F("Valve on"), 0, 2);
     Html.writeHeaderCell(F("T<sub>buffer</sub> (°C)"), 3);
     Html.writeRowEnd();
-
     writeMinMaxAvgHeader(1);
 
     for (HeatLogEntry& logEntry : HeatLog)
     {
         TopicStats topicStats = logEntry.topicStats[TopicId::TBuffer];
         float avgTBuffer = logEntry.getAverage(TopicId::TBuffer);
-        float barValue = getBarValue(avgTBuffer, tMin, tMax);
 
         Html.writeRowStart();
         Html.writeCell(formatTime("%H:%M", logEntry.time));
@@ -597,21 +566,19 @@ void handleHttpBufferLogRequest()
         Html.writeCell(topicStats.min);
         Html.writeCell(topicStats.max);
         Html.writeCell(avgTBuffer);
-        Html.writeGraphCell(barValue, F("waterBar"), false);
+        Html.writeGraphCell(avgTBuffer, tMin, tMax, F("waterBar"), false);
         Html.writeRowEnd();
     }
 
     Html.writeTableEnd();
-
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse);
 }
 
 
 void handleHttpCalibrateFormRequest()
 {
     Tracer tracer(F("handleHttpCalibrateFormRequest"));
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     Html.writeHeader(F("Calibrate sensors"), Nav);
 
@@ -662,8 +629,6 @@ void handleHttpCalibrateFormRequest()
     }
 
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse);
 }
 
 
@@ -707,6 +672,7 @@ void handleHttpCalibrateFormPost()
 void handleHttpEventLogRequest()
 {
     Tracer tracer(F("handleHttpEventLogRequest"));
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     if (WiFiSM.shouldPerformAction(F("clear")))
     {
@@ -722,14 +688,13 @@ void handleHttpEventLogRequest()
     Html.writeActionLink(F("clear"), F("Clear event log"), currentTime, ButtonClass);
 
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse);
 }
 
 
 void handleHttpConfigFormRequest()
 {
     Tracer tracer(F("handleHttpConfigFormRequest"));
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     Html.writeHeader(F("Settings"), Nav);
 
@@ -750,8 +715,6 @@ void handleHttpConfigFormRequest()
         Html.writeActionLink(F("reset"), F("Reset ESP"), currentTime, ButtonClass);
 
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse);
 }
 
 
@@ -775,25 +738,25 @@ void writeCurrentValues()
     for (int i = 0; i < NUMBER_OF_TOPICS; i++)
     {
         MonitoredTopic topic = MonitoredTopics[i];
+        float topicValue = currentValues[topic.id];
 
-        size_t maxBarLength = 0; // Use default bar length
+        String barCssClass = String(topic.style) + "Bar";
+        String graphCssClass = String(F("graph fill"));
+
         if (topic.id == TopicId::TBuffer)
         {
             if (!PersistentData.isBufferEnabled()) continue;
 
             topic.maxValue = PersistentData.tBufferMax;
-            maxBarLength = round(PersistentData.tBufferMax - 20); // Ensure 1 °C resolution 
+            graphCssClass += F(" wide");
         }
-
-        float topicValue = currentValues[topic.id];
-        float barValue = getBarValue(topicValue, topic.minValue, topic.maxValue);
-        String barCssClass = topic.style;
-        barCssClass += "Bar";
 
         Html.writeRowStart();
         Html.writeHeaderCell(topic.htmlLabel);
         Html.writeCell(topic.formatValue(topicValue, true));
-        Html.writeGraphCell(barValue, barCssClass, true, maxBarLength);
+        Html.writeCellStart(graphCssClass);
+        Html.writeMeterDiv(topicValue, topic.minValue, topic.maxValue, barCssClass);
+        Html.writeCellEnd();
         Html.writeRowEnd();
     }
 
@@ -807,34 +770,18 @@ void writeDayStats()
     Html.writeSectionStart(F("Statistics per day"));
 
     Html.writeTableStart();
-    Html.writeRowStart();
-    Html.writeHeaderCell(F("Day"));
-    if (PersistentData.isBufferEnabled())
-        Html.writeHeaderCell(F("Valve on"));
-    Html.writeHeaderCell(F("E<sub>out</sub> (kWh)"));
-    Html.writeHeaderCell(F("E<sub>in</sub> (kWh)"));
-    Html.writeHeaderCell(F("COP"));
-    Html.writeRowEnd();
+    DayStatsEntry::writeHeader(Html, PersistentData.isBufferEnabled());
 
-    float maxEnergy = std::max(getMaxEnergy(), 0.1F); // Prevent division by zero
+    float maxEnergy = 0.1F; // Prevent division by zero
     for (DayStatsEntry& dayStatsEntry : DayStats)
     {
-        Html.writeRowStart();
-        Html.writeCell(formatTime("%d %b", dayStatsEntry.time));
-        if (PersistentData.isBufferEnabled())
-            Html.writeCell(formatTimeSpan(dayStatsEntry.valveActivatedSeconds, false));
-        Html.writeCell(dayStatsEntry.energyOut, F("%0.2f"));
-        Html.writeCell(dayStatsEntry.energyIn, F("%0.2f"));
-        Html.writeCell(dayStatsEntry.getCOP());
-        Html.writeGraphCell(
-            dayStatsEntry.energyIn / maxEnergy,
-            (dayStatsEntry.energyOut - dayStatsEntry.energyIn) / maxEnergy,
-            F("eInBar"),
-            F("energyBar"),
-            false
-            );
-        Html.writeRowEnd();
+        maxEnergy = std::max(maxEnergy, dayStatsEntry.energyIn);
+        maxEnergy = std::max(maxEnergy, dayStatsEntry.energyOut);
     }
+    TRACE(F("maxEnergy: %0.1f\n"), maxEnergy);
+
+    for (DayStatsEntry& dayStatsEntry : DayStats)
+        dayStatsEntry.writeRow(Html, maxEnergy, PersistentData.isBufferEnabled());
 
     Html.writeTableEnd();
     Html.writeSectionEnd();
@@ -872,7 +819,8 @@ void handleHttpRootRequest()
     else
         ftpSync = formatTime("%H:%M", lastFTPSyncTime);
 
-    Html.writeHeader(F("Home"), Nav, HTTP_POLL_INTERVAL);
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
+    Html.writeHeader(F("Home"), Nav);
 
     Html.writeDivStart(F("flex-container"));
 
@@ -899,8 +847,6 @@ void handleHttpRootRequest()
 
     Html.writeDivEnd();
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse);
 }
 
 

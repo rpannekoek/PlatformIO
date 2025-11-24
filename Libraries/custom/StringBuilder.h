@@ -9,27 +9,26 @@
 class StringBuilder : public Print
 {
   public:
-    StringBuilder(size_t size, MemoryType memoryType = MemoryType::Auto)
-        :  _memoryType(memoryType), _capacity(size) {}
+    StringBuilder(size_t capacity, MemoryType memoryType = MemoryType::Auto)
+        :  _memoryType(memoryType), _capacity(capacity) {}
 
     ~StringBuilder()
     {
         if (_buffer) free(_buffer);
     }
 
-    [[deprecated("Specify memory type in constructor")]]
-    bool usePSRAM() { _memoryType = MemoryType::External; return true; }
-
-    void clear();
-    void printf(const __FlashStringHelper* fformat, ...);
-
-    // Overrides for virtual Print methods
-    virtual size_t write(uint8_t);
-    virtual size_t write(const uint8_t *buffer, size_t size);
-
+    size_t capacity() const { return _capacity; }
     size_t length() const { return _length; }
     const char* c_str() const { return _buffer ? _buffer : ""; }
     operator const char*() const { return c_str(); }
+    void onLowSpace(std::function<void(size_t)> fn) { _lowSpaceFn = fn; }
+
+    void clear();
+    void printf(const __FlashStringHelper* fformat, ...);
+    
+    // Overrides for virtual Print methods:
+    size_t write(uint8_t) override;
+    size_t write(const uint8_t *buffer, size_t size) override;
 
   protected:
     MemoryType _memoryType;
@@ -37,8 +36,9 @@ class StringBuilder : public Print
     size_t _space = 0;
     size_t _length = 0;
     char* _buffer = nullptr;
+    std::function<void(size_t)> _lowSpaceFn = nullptr;
     
-    void update_length(size_t additional);
+    void adjustLength(size_t additional);
 };
 
 #endif

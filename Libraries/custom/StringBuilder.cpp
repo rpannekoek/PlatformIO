@@ -25,7 +25,7 @@ void StringBuilder::printf(const __FlashStringHelper* fformat, ...)
     size_t additional = vsnprintf_P(end, _space, (PGM_P) fformat, args);
     va_end(args);
 
-    update_length(additional);
+    adjustLength(additional);
 }
 
 
@@ -47,14 +47,17 @@ size_t StringBuilder::write(const uint8_t* dataPtr, size_t size)
     memcpy(end, dataPtr, size);
     end[size] = 0; 
 
-    update_length(size);
+    adjustLength(size);
 
     return size;
 }
 
 
-void StringBuilder::update_length(size_t additional)
+void StringBuilder::adjustLength(size_t additional)
 {
     _length += additional;
     _space -= additional;
+
+    if ((_space < 256) && _lowSpaceFn)
+        _lowSpaceFn(_space);
 }

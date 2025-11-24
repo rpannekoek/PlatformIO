@@ -17,11 +17,13 @@ class HtmlWriter
         void writeFooter();
 
         void writeMeterDiv(float value, float minValue, float maxValue, const String& cssClass);
+        void writeMeterDiv(float value1, float value2, float minValue, float maxValue, const String& cssClass1, const String& cssClass2);
         void writeBar(float value, const String& cssClass, bool fill, bool useDiv = true, size_t maxBarLength = 0);
         void writeStackedBar(float value1, float value2, const String& cssClass1, const String& cssClass2, bool fill, bool useDiv = true);
         void writeGraphCell(float value, const String& barCssClass, bool fill, size_t maxBarLength = 0);
         void writeGraphCell(float value1, float value2, const String& barCssClass1, const String& barCssClass2, bool fill);
         void writeGraphCell(float value, float minValue, float maxValue, const String& cssClass, bool fill);
+        void writeGraphCell(float value1, float value2, float minValue, float maxValue, const String& cssClass1, const String& cssClass2, bool fill);
 
         void writeFormStart(const String& action, const String& cssClass = String());
         void writeFormEnd();
