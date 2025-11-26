@@ -22,18 +22,17 @@
 constexpr uint8_t SOLAR_PUMP_PWM_PIN = 16;
 constexpr uint16_t SOLAR_LOG_SIZE = 50;
 
-#define HTTP_POLL_INTERVAL 60
-#define EVENT_LOG_LENGTH 50
-#define TOPIC_LOG_SIZE 200
-#define TOPIC_LOG_PAGE_SIZE 50
-#define DEFAULT_BAR_LENGTH 60
-#define WIFI_TIMEOUT_MS 2000
-#define FTP_RETRY_INTERVAL (15 * 60)
-#define QUERY_AQUAREA_INTERVAL 6
-#define AGGREGATION_INTERVAL 60
-#define ANTI_FREEZE_DELTA_T 5
-#define HP_ON_THRESHOLD 10
-#define PUMP_FLOW_THRESHOLD 7
+constexpr uint16_t HTTP_POLL_INTERVAL = SECONDS_PER_MINUTE;
+constexpr uint16_t EVENT_LOG_LENGTH = 50;
+constexpr uint16_t TOPIC_LOG_SIZE = 200;
+constexpr int TOPIC_LOG_PAGE_SIZE = 50;
+constexpr int FTP_TIMEOUT_MS = 2000;
+constexpr uint32_t FTP_RETRY_INTERVAL = 15 * SECONDS_PER_MINUTE;
+constexpr uint32_t QUERY_AQUAREA_INTERVAL = 6; // seconds
+constexpr uint32_t AGGREGATION_INTERVAL = SECONDS_PER_MINUTE;
+constexpr int ANTI_FREEZE_DELTA_T = 5;
+constexpr uint16_t HP_ON_THRESHOLD = 10;
+constexpr float PUMP_FLOW_THRESHOLD = 7.0F;
 
 const char* ContentTypeHtml = "text/html;charset=UTF-8";
 const char* ContentTypeText = "text/plain";
@@ -69,10 +68,10 @@ const char* Files[] PROGMEM =
 
 ESPWebServer WebServer(80); // Default HTTP port
 WiFiNTP TimeServer;
-WiFiFTPClient FTPClient(WIFI_TIMEOUT_MS);
+WiFiFTPClient FTPClient(FTP_TIMEOUT_MS);
 OTGWClient OTGW;
 StringBuilder HttpResponse(4 * 1024); // 4 kB HTTP response buffer (we're using chunked responses)
-HtmlWriter Html(HttpResponse, Files[Logo], Files[Styles], DEFAULT_BAR_LENGTH);
+HtmlWriter Html(HttpResponse, Files[Logo], Files[Styles]);
 StringLog EventLog(EVENT_LOG_LENGTH, 96);
 StaticLog<TopicLogEntry> TopicLog(TOPIC_LOG_SIZE);
 StaticLog<DayStatsEntry> DayStats(7);
@@ -221,11 +220,9 @@ void updateDayStats(uint32_t secondsSinceLastUpdate, float powerInKW, float powe
 
 void updateTopicLog()
 {
-    for (int i = 0; i < NUMBER_OF_MONITORED_TOPICS; i++)
-    {
-        TopicId topicId = MonitoredTopics[i].id;
-        newTopicLogEntry.topicValues[i] += HeatPump.getTopic(topicId).getValue().toFloat();
-    }
+    int i = 0;
+    for (MonitoredTopic& topic : MonitoredTopics)
+        newTopicLogEntry.topicValues[i++] += HeatPump.getTopic(topic.id).getValue().toFloat();
 
     topicLogAggregations++;
     if (currentTime < topicLogAggregationTime) return; 
@@ -240,7 +237,7 @@ void updateTopicLog()
 
         newTopicLogEntry.time = currentTime;
 
-        ftpSyncEntries = std::min(ftpSyncEntries + 1, TOPIC_LOG_SIZE);
+        ftpSyncEntries = std::min(uint16_t(ftpSyncEntries + 1), TOPIC_LOG_SIZE);
         if (PersistentData.isFTPEnabled() && ftpSyncEntries == PersistentData.ftpSyncEntries)
             syncFTPTime = currentTime;
     }
@@ -303,10 +300,11 @@ void writeTopicLogCsv(uint16_t count, Print& destination)
         TopicLogEntry& logEntry = *i;
 
         destination.print(formatTime("%F %H:%M", logEntry.time));
-        for (int t = 0; t < NUMBER_OF_MONITORED_TOPICS; t++)
+        int t = 0;
+        for (MonitoredTopic& topic : MonitoredTopics)
         {
             destination.print(";");
-            destination.print(MonitoredTopics[t].formatValue(logEntry.topicValues[t], false, 1));
+            destination.print(topic.formatValue(logEntry.topicValues[t++], false, 1));
         }
         destination.println();
     }
@@ -358,22 +356,12 @@ bool trySyncFTP(Print* printTo)
 }
 
 
-void sendChunk(bool isLast = false)
-{
-    TRACE(F("Chunk size: %d\n"), HttpResponse.length());
-    WebServer.sendContent(HttpResponse);
-    HttpResponse.clear();
-    if (isLast)
-        WebServer.chunkedResponseFinalize();
-}
-
 void writeCurrentValues()
 {
     Html.writeSectionStart(F("Current values"));
     Html.writeTableStart();
-    for (int i = 0; i < NUMBER_OF_MONITORED_TOPICS; i++)
+    for (MonitoredTopic& topic: MonitoredTopics)
     {
-        MonitoredTopic topic = MonitoredTopics[i];
         float topicValue = HeatPump.getTopic(topic.id).getValue().toFloat();
 
         String barCssClass = topic.style;
@@ -382,9 +370,7 @@ void writeCurrentValues()
         Html.writeRowStart();
         Html.writeHeaderCell(FPSTR(topic.htmlLabel));
         Html.writeCell(topic.formatValue(topicValue, true));
-        Html.writeCellStart(F("graph fill"));
-        Html.writeMeterDiv(topicValue, topic.minValue, topic.maxValue, barCssClass);
-        Html.writeCellEnd();
+        Html.writeGraphCell(topicValue, topic.minValue, topic.maxValue, barCssClass, true);
         Html.writeRowEnd();
     }
 
@@ -398,55 +384,15 @@ void writeCurrentValues()
 void writeStatisticsPerDay()
 {
     // Auto-ranging: determine max energy
-    float maxEnergy = 1.0; // Prevent division by zero
+    float maxEnergy = 0.1; // Prevent division by zero
     for (DayStatsEntry& dayStatsEntry : DayStats)
         maxEnergy = std::max(maxEnergy, dayStatsEntry.energyOut);
 
     Html.writeSectionStart(F("Statistics per day"));
     Html.writeTableStart();
-
-    Html.writeRowStart();
-    Html.writeHeaderCell(F("Day"));
-    Html.writeHeaderCell(F("Start"));
-    Html.writeHeaderCell(F("Stop"));
-    Html.writeHeaderCell(F("On time"));
-    Html.writeHeaderCell(F("Avg on"));
-    Html.writeHeaderCell(F("Runs"));
-    Html.writeHeaderCell(F("&#10054;")); // Defrosts
-    Html.writeHeaderCell(F("Anti-freeze"));
-    Html.writeHeaderCell(F("E<sub>in</sub> (kWh)"));
-    Html.writeHeaderCell(F("E<sub>out</sub> (kWh)"));
-    Html.writeHeaderCell(F("COP"));
-    Html.writeRowEnd();
-
+    DayStatsEntry::writeHeader(Html);
     for (DayStatsEntry& dayStatsEntry : DayStats)
-    {
-        Html.writeRowStart();
-        Html.writeCell(formatTime("%a", dayStatsEntry.startTime));
-        Html.writeCell(formatTime("%H:%M", dayStatsEntry.startTime));
-        Html.writeCell(formatTime("%H:%M", dayStatsEntry.stopTime));
-        Html.writeCell(formatTimeSpan(dayStatsEntry.onSeconds));
-        Html.writeCell(formatTimeSpan(dayStatsEntry.getAvgOnSeconds()));
-        Html.writeCell(dayStatsEntry.onCount);
-        Html.writeCell(dayStatsEntry.defrosts);
-        Html.writeCell(formatTimeSpan(dayStatsEntry.antiFreezeSeconds, false));
-        Html.writeCell(dayStatsEntry.energyIn, F("%0.2f"));
-        Html.writeCell(dayStatsEntry.energyOut, F("%0.2f"));
-        Html.writeCell(dayStatsEntry.getCOP());
-
-        Html.writeCellStart(F("graph"));
-        Html.writeStackedBar(
-            dayStatsEntry.energyIn / maxEnergy,
-            (dayStatsEntry.energyOut - dayStatsEntry.energyIn) / maxEnergy,
-            F("inBar"),
-            F("outBar"),
-            false,
-            false);
-        Html.writeCellEnd();
-
-        Html.writeRowEnd();
-    }
-
+        dayStatsEntry.writeRow(Html, maxEnergy);
     Html.writeTableEnd();
     Html.writeSectionEnd();
 }
@@ -474,7 +420,7 @@ void handleHttpRootRequest()
         ? "Not yet"
         : formatTime("%H:%M:%S", lastPacketReceivedTime);
 
-    WebServer.chunkedResponseModeStart(200, ContentTypeHtml);
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
     Html.writeHeader(F("Home"), Nav, HTTP_POLL_INTERVAL);
 
     Html.writeDivStart(F("flex-container"));
@@ -492,27 +438,21 @@ void handleHttpRootRequest()
     Html.writeTableEnd();
     Html.writeSectionEnd();
 
-    sendChunk();
-
     if (lastPacketReceivedTime != 0)
         writeCurrentValues();
     
-    sendChunk();
-
     writeStatisticsPerDay();
 
     Html.writeDivEnd();
     Html.writeFooter();
-
-    sendChunk(true);
 }
 
 
 void handleHttpTopicsRequest()
 {
     Tracer tracer(F("handleHttpTopicsRequest"));
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
-    WebServer.chunkedResponseModeStart(200, ContentTypeHtml);
     Html.writeHeader(F("Topics"), Nav);
 
     if (lastPacketReceivedTime != 0)
@@ -523,7 +463,6 @@ void handleHttpTopicsRequest()
 
         Html.writeTableStart();
 
-        int i = 0;
         for (TopicId topicId : HeatPump.getAllTopicIds())
         {
             Topic topic = HeatPump.getTopic(topicId);
@@ -533,27 +472,22 @@ void handleHttpTopicsRequest()
             Html.writeCell(topic.getValue());
             Html.writeCell(topic.getDescription());
             Html.writeRowEnd();
-
-            if (i++ % 20 == 0)
-                sendChunk();
         }
 
         Html.writeTableEnd();
     }
 
     Html.writeFooter();
-    sendChunk(true);
 }
 
 
 void handleHttpTopicLogRequest()
 {
     Tracer tracer(F("handleHttpTopicLogRequest"));
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     int currentPage = WebServer.hasArg("page") ? WebServer.arg("page").toInt() : 0;
     int totalPages = ((TopicLog.count() - 1) / TOPIC_LOG_PAGE_SIZE) + 1;
-
-    WebServer.chunkedResponseModeStart(200, ContentTypeHtml);
 
     Html.writeHeader(F("Aquarea log"), Nav);
     Html.writePager(totalPages, currentPage);
@@ -561,10 +495,8 @@ void handleHttpTopicLogRequest()
 
     Html.writeRowStart();
     Html.writeHeaderCell(F("Time"));
-    for (int i = 0; i < NUMBER_OF_MONITORED_TOPICS; i++)
-    {
-        Html.writeHeaderCell(FPSTR(MonitoredTopics[i].htmlLabel));
-    }
+    for (MonitoredTopic& topic: MonitoredTopics)
+        Html.writeHeaderCell(FPSTR(topic.htmlLabel));
     Html.writeRowEnd();
 
     int n = 0;
@@ -574,27 +506,24 @@ void handleHttpTopicLogRequest()
 
         Html.writeRowStart();
         Html.writeCell(formatTime("%H:%M", entry.time));
-        for (int k = 0; k < NUMBER_OF_MONITORED_TOPICS; k++)
-            Html.writeCell(MonitoredTopics[k].formatValue(entry.topicValues[k], false, 1));
+        int t = 0;
+        for (MonitoredTopic& topic : MonitoredTopics)
+            Html.writeCell(topic.formatValue(entry.topicValues[t++], false, 1));
         Html.writeRowEnd();
-
-        if (n % 10 == 0) sendChunk();
 
         if (++n == TOPIC_LOG_PAGE_SIZE) break;
     }
 
     Html.writeTableEnd();
     Html.writeFooter();
-
-    sendChunk(true);
 }
 
 
 void handleHttpSolarLogRequest()
 {
     Tracer tracer(F("handleHttpSolarLogRequest"));
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
-    WebServer.chunkedResponseModeStart(200, ContentTypeHtml);
     Html.writeHeader(F("Solar log"), Nav);
 
     Html.writeTableStart();
@@ -613,18 +542,10 @@ void handleHttpSolarLogRequest()
         Html.writeCell(F("%0.0f %%"), logEntry.dutyCycle * 100);
         Html.writeCell(F("%0.0f %%"), logEntry.targetDutyCycle * 100);
         Html.writeRowEnd();
-
-        if (HttpResponse.length() > 4000)
-        {
-            sendChunk(false);
-            HttpResponse.clear();
-        }
     }
 
     Html.writeTableEnd();
     Html.writeFooter();
-
-    sendChunk(true);
 }
 
 
@@ -641,6 +562,7 @@ void handleHttpHexDumpRequest()
     }
     else
     {
+        ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
         Html.writeHeader(F("Hex dump"), Nav);
 
         Html.writeParagraph(
@@ -674,8 +596,6 @@ void handleHttpHexDumpRequest()
         Html.writePreEnd();
 
         Html.writeFooter();
-
-        WebServer.send(200, ContentTypeHtml, HttpResponse);
     }
 }
 
@@ -683,6 +603,7 @@ void handleHttpHexDumpRequest()
 void handleHttpTestRequest()
 {
     Tracer tracer(F("handleHttpTestRequest"));
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     Html.writeHeader(F("Test"), Nav);
 
@@ -774,8 +695,6 @@ void handleHttpTestRequest()
         Html.writeActionLink(F("fillEventLog"), F("Fill Event Log"), currentTime, ButtonClass);
 
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse);
 }
 
 
@@ -786,13 +705,16 @@ void handleHttpAquaMonJsonRequest()
     HttpResponse.clear();
     HttpResponse.print(F("{ "));
 
-    for (int i = 0; i < NUMBER_OF_MONITORED_TOPICS; i++)
+    bool first = false;
+    for (MonitoredTopic& topic : MonitoredTopics)
     {
-        MonitoredTopic topic = MonitoredTopics[i];
         String label = FPSTR(topic.label);
         float topicValue = HeatPump.getTopic(topic.id).getValue().toFloat();
 
-        if (i > 0) HttpResponse.print(F(", "));
+        if (first)
+            first = false;
+        else
+            HttpResponse.print(F(", "));
         HttpResponse.printf(
             F(" \"%s\": %s"),
             label.c_str(),
@@ -808,6 +730,7 @@ void handleHttpAquaMonJsonRequest()
 void handleHttpFtpSyncRequest()
 {
     Tracer tracer(F("handleHttpFtpSyncRequest"));
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     Html.writeHeader(F("FTP Sync"), Nav);
 
@@ -826,26 +749,23 @@ void handleHttpFtpSyncRequest()
     Html.writeHeading(F("CSV header"), 2);
     Html.writePreStart();
     HttpResponse.print("Time");
-    for (int i = 0; i < NUMBER_OF_MONITORED_TOPICS; i++)
+    for (MonitoredTopic& topic : MonitoredTopics)
     {
 
         HttpResponse.print(";");
-        HttpResponse.print(FPSTR(MonitoredTopics[i].label));
+        HttpResponse.print(topic.label);
     }
     Html.writePreEnd();
 
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse);
-
 }
 
 
 void handleHttpEventLogRequest()
 {
     Tracer tracer(F("handleHttpEventLogRequest"));
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
-    WebServer.chunkedResponseModeStart(200, ContentTypeHtml);
     Html.writeHeader(F("Event log"), Nav);
 
     if (WiFiSM.shouldPerformAction(F("clear")))
@@ -854,23 +774,19 @@ void handleHttpEventLogRequest()
         WiFiSM.logEvent(F("Event log cleared."));
     }
 
-    int i = 0;
     for (const char* event : EventLog)
-    {
         Html.writeDiv(F("%s"), event);
-        if (i++ % 20 == 0) sendChunk();
-    }
 
     Html.writeActionLink(F("clear"), F("Clear event log"), currentTime, ButtonClass);
 
     Html.writeFooter();
-    sendChunk(true);
 }
 
 
 void handleHttpConfigFormRequest()
 {
     Tracer tracer(F("handleHttpConfigFormRequest"));
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     Html.writeHeader(F("Settings"), Nav);
 
@@ -888,8 +804,6 @@ void handleHttpConfigFormRequest()
         Html.writeActionLink(F("reset"), F("Reset ESP"), currentTime, ButtonClass);
 
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse);
 }
 
 
@@ -972,7 +886,6 @@ void onWiFiInitialized()
         }
     }
 }
-
 
 // Boot code
 void setup() 

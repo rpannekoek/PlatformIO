@@ -1,6 +1,6 @@
 #include "Aquarea.h"
 
-#define NUMBER_OF_MONITORED_TOPICS 15
+constexpr int NUMBER_OF_MONITORED_TOPICS = 15;
 
 struct MonitoredTopic
 {
