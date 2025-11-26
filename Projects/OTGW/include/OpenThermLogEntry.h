@@ -1,4 +1,6 @@
-struct __attribute__ ((packed)) OpenThermLogEntry
+#include <OTGW.h>
+
+struct OpenThermLogEntry
 {
     time_t time;
     uint16_t thermostatTSet;
@@ -37,5 +39,50 @@ struct __attribute__ ((packed)) OpenThermLogEntry
     static bool isSimilar(int lhs, int rhs, int maxDiff = 32)
     {
         return abs(rhs - lhs) < maxDiff;
+    }
+
+    void writeCsv(time_t time, Print& destination)
+    {
+        int masterStatus = boilerStatus >> 8;
+        int slaveStatus = boilerStatus & 0xFF;
+
+        destination.print(formatTime("%F %H:%M:%S", time));
+        destination.printf(";%d;%d", masterStatus, slaveStatus);
+        destination.printf(";%d", OpenThermGateway::getInteger(thermostatMaxRelModulation));
+        destination.printf(";%d", OpenThermGateway::getInteger(thermostatTSet));
+        destination.printf(";%d", OpenThermGateway::getInteger(boilerTSet));
+        destination.printf(";%0.1f", OpenThermGateway::getDecimal(tBoiler));
+        destination.printf(";%0.1f", OpenThermGateway::getDecimal(tReturn));
+        destination.printf(";%0.1f", OpenThermGateway::getDecimal(tBuffer));
+        destination.printf(";%0.1f", OpenThermGateway::getDecimal(tOutside));
+        destination.printf(";%0.2f", OpenThermGateway::getDecimal(pHeatPump));
+        destination.printf(";%0.2f", OpenThermGateway::getDecimal(pressure));
+        destination.printf(";%d", OpenThermGateway::getInteger(boilerRelModulation));
+        destination.printf(";%0.1f", OpenThermGateway::getDecimal(flowRate));
+        destination.printf(";%0.1f", OpenThermGateway::getDecimal(tRoom));
+        destination.printf(";%0.2f", deviationHours);
+        destination.println();
+    }
+
+    void writeRow(HtmlWriter& html)
+    {
+        html.writeRowStart();
+        html.writeCell(formatTime("%H:%M:%S", time));
+        html.writeCell(OpenThermGateway::getMasterStatus(boilerStatus));
+        html.writeCell(OpenThermGateway::getSlaveStatus(boilerStatus));
+        html.writeCell(OpenThermGateway::getInteger(thermostatMaxRelModulation));
+        html.writeCell(OpenThermGateway::getInteger(thermostatTSet));
+        html.writeCell(OpenThermGateway::getInteger(boilerTSet));
+        html.writeCell(OpenThermGateway::getDecimal(tBoiler));
+        html.writeCell(OpenThermGateway::getDecimal(tReturn));
+        html.writeCell(OpenThermGateway::getDecimal(tBuffer));
+        html.writeCell(OpenThermGateway::getDecimal(tOutside));
+        html.writeCell(OpenThermGateway::getDecimal(pHeatPump), F("%0.2f"));
+        html.writeCell(OpenThermGateway::getDecimal(pressure), F("%0.2f"));
+        html.writeCell(OpenThermGateway::getInteger(boilerRelModulation));
+        html.writeCell(OpenThermGateway::getDecimal(flowRate));
+        html.writeCell(OpenThermGateway::getDecimal(tRoom));
+        html.writeCell(deviationHours, F("%0.2f"));
+        html.writeRowEnd();
     }
 };

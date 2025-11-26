@@ -143,9 +143,9 @@ WiFiFTPClient FTPClient(3000); // 3s timeout
 HeatMonClient HeatMon;
 EvoHomeClient EvoHome;
 WeatherAPI WeatherService;
-StringBuilder HttpResponse(12 * 1024, MEMORY_TYPE); // 12KB HTTP response buffer
+StringBuilder HttpResponse(8 * 1024, MEMORY_TYPE); // 8KB HTTP response buffer
 HtmlWriter Html(HttpResponse, Files[FileId::Logo], Files[FileId::Styles], 40);
-StringLog EventLog(EVENT_LOG_LENGTH, 128, MEMORY_TYPE);
+StringLog EventLog(EVENT_LOG_LENGTH, 96, MEMORY_TYPE);
 StaticLog<OpenThermLogEntry> OpenThermLog(OT_LOG_LENGTH, MEMORY_TYPE);
 StaticLog<StatusLogEntry> StatusLog(7, MEMORY_TYPE); // 7 days
 WiFiStateMachine WiFiSM(BuiltinLED, TimeServer, WebServer, EventLog);
@@ -409,30 +409,6 @@ void logOpenThermValues(bool forceCreate)
 }
 
 
-void writeCsvDataLine(const OpenThermLogEntry& otLogEntry, time_t time, Print& destination)
-{
-    int masterStatus = otLogEntry.boilerStatus >> 8;
-    int slaveStatus = otLogEntry.boilerStatus & 0xFF;
-
-    destination.print(formatTime("%F %H:%M:%S", time));
-    destination.printf(";%d;%d", masterStatus, slaveStatus);
-    destination.printf(";%d", OpenThermGateway::getInteger(otLogEntry.thermostatMaxRelModulation));
-    destination.printf(";%d", OpenThermGateway::getInteger(otLogEntry.thermostatTSet));
-    destination.printf(";%d", OpenThermGateway::getInteger(otLogEntry.boilerTSet));
-    destination.printf(";%0.1f", OpenThermGateway::getDecimal(otLogEntry.tBoiler));
-    destination.printf(";%0.1f", OpenThermGateway::getDecimal(otLogEntry.tReturn));
-    destination.printf(";%0.1f", OpenThermGateway::getDecimal(otLogEntry.tBuffer));
-    destination.printf(";%0.1f", OpenThermGateway::getDecimal(otLogEntry.tOutside));
-    destination.printf(";%0.2f", OpenThermGateway::getDecimal(otLogEntry.pHeatPump));
-    destination.printf(";%0.2f", OpenThermGateway::getDecimal(otLogEntry.pressure));
-    destination.printf(";%d", OpenThermGateway::getInteger(otLogEntry.boilerRelModulation));
-    destination.printf(";%0.1f", OpenThermGateway::getDecimal(otLogEntry.flowRate));
-    destination.printf(";%0.1f", OpenThermGateway::getDecimal(otLogEntry.tRoom));
-    destination.printf(";%0.2f", otLogEntry.deviationHours);
-    destination.println();
-}
-
-
 void writeCsvDataLines(uint16_t count, Print& destination)
 {
     OpenThermLogEntry& prevLogEntry = *OpenThermLog.at(-count - 1);
@@ -446,9 +422,9 @@ void writeCsvDataLines(uint16_t count, Print& destination)
         {
             // Repeat previous log entry, but one second before this one.
             // This enforces steep step transitions.
-            writeCsvDataLine(prevLogEntry, oneSecEarlier, destination);
+            prevLogEntry.writeCsv(oneSecEarlier, destination);
         }
-        writeCsvDataLine(logEntry, otLogEntryTime, destination);
+        logEntry.writeCsv(otLogEntryTime, destination);
 
         prevLogEntry = logEntry;
     }
@@ -931,44 +907,19 @@ void writeCurrentValues()
 }
 
 
-uint32_t getMaxFlameSeconds()
-{
-    uint32_t result = 0;
-    for (StatusLogEntry& logEntry : StatusLog)
-        result = std::max(result, logEntry.flameSeconds);
-    return result;
-}
-
-
 void writeStatisticsPerDay()
 {
     Html.writeSectionStart(F("Statistics per day"));
 
     Html.writeTableStart();
-    Html.writeRowStart();
-    Html.writeHeaderCell(F("Day"));
-    Html.writeHeaderCell(F("CH start"));
-    Html.writeHeaderCell(F("CH stop"));
-    Html.writeHeaderCell(F("Override"));
-    Html.writeHeaderCell(F("CH on"));
-    Html.writeHeaderCell(F("DHW on"));
-    Html.writeHeaderCell(F("Flame"));
-    Html.writeRowEnd();
+    StatusLogEntry::writeHeader(Html);
 
-    uint32_t maxFlameSeconds = getMaxFlameSeconds() + 1; // Prevent division by zero
+    uint32_t maxFlameSeconds = 1; // Prevent division by zero
     for (StatusLogEntry& logEntry : StatusLog)
-    {
-        Html.writeRowStart();
-        Html.writeCell(formatTime("%a", logEntry.startTime));
-        Html.writeCell(formatTime("%H:%M", logEntry.startTime));
-        Html.writeCell(formatTime("%H:%M", logEntry.stopTime));
-        Html.writeCell(formatTimeSpan(logEntry.overrideSeconds));
-        Html.writeCell(formatTimeSpan(logEntry.chSeconds));
-        Html.writeCell(formatTimeSpan(logEntry.dhwSeconds));
-        Html.writeCell(formatTimeSpan(logEntry.flameSeconds));
-        Html.writeGraphCell(logEntry.flameSeconds, 0, maxFlameSeconds, F("flameBar"), false);
-        Html.writeRowEnd();
-    }
+        maxFlameSeconds = std::max(maxFlameSeconds, logEntry.flameSeconds);
+
+    for (StatusLogEntry& logEntry : StatusLog)
+        logEntry.writeRow(Html, maxFlameSeconds);
 
     Html.writeTableEnd();
     Html.writeSectionEnd();
@@ -997,6 +948,7 @@ void handleHttpRootRequest()
     else
         ftpSyncTime = formatTime("%H:%M", lastFTPSyncTime);
 
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
     Html.writeHeader(F("Home"), Nav, HTTP_POLL_INTERVAL);
 
     Html.writeDivStart(F("flex-container"));
@@ -1024,14 +976,13 @@ void handleHttpRootRequest()
 
     Html.writeDivEnd();
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 
 void handleHttpOpenThermRequest()
 {
     Tracer tracer(F("handleHttpOpenThermRequest"));
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     uint16_t burnerStarts = boilerResponses[OpenThermDataId::BoilerBurnerStarts];
     float avgBurnerOnTime;
@@ -1104,8 +1055,6 @@ void handleHttpOpenThermRequest()
     Html.writeLink(F("/traffic"), F("View all OpenTherm traffic"), ButtonClass);
 
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 
@@ -1167,6 +1116,7 @@ void handleHttpPumpRequest()
 void handleHttpOpenThermTrafficRequest()
 {
     Tracer tracer(F("handleHttpOpenThermTrafficRequest"));
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     Html.writeHeader(F("OpenTherm traffic"), Nav);
     
@@ -1179,14 +1129,13 @@ void handleHttpOpenThermTrafficRequest()
 
     Html.writeDivEnd();
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 
 void handleHttpOpenThermLogRequest()
 {
     Tracer tracer(F("handleHttpOpenThermLogRequest"));
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     Html.writeHeader(F("OpenTherm log"), Nav);
     
@@ -1205,40 +1154,19 @@ void handleHttpOpenThermLogRequest()
     int n = 0;
     for (auto i = OpenThermLog.at(currentPage * OT_LOG_PAGE_SIZE); i != OpenThermLog.end(); ++i)
     {
-        OpenThermLogEntry& otLogEntry = *i;
-
-        Html.writeRowStart();
-        Html.writeCell(formatTime("%H:%M:%S", otLogEntry.time));
-        Html.writeCell(OTGW.getMasterStatus(otLogEntry.boilerStatus));
-        Html.writeCell(OTGW.getSlaveStatus(otLogEntry.boilerStatus));
-        Html.writeCell(OpenThermGateway::getInteger(otLogEntry.thermostatMaxRelModulation));
-        Html.writeCell(OpenThermGateway::getInteger(otLogEntry.thermostatTSet));
-        Html.writeCell(OpenThermGateway::getInteger(otLogEntry.boilerTSet));
-        Html.writeCell(OpenThermGateway::getDecimal(otLogEntry.tBoiler));
-        Html.writeCell(OpenThermGateway::getDecimal(otLogEntry.tReturn));
-        Html.writeCell(OpenThermGateway::getDecimal(otLogEntry.tBuffer));
-        Html.writeCell(OpenThermGateway::getDecimal(otLogEntry.tOutside));
-        Html.writeCell(OpenThermGateway::getDecimal(otLogEntry.pHeatPump), F("%0.2f"));
-        Html.writeCell(OpenThermGateway::getDecimal(otLogEntry.pressure), F("%0.2f"));
-        Html.writeCell(OpenThermGateway::getInteger(otLogEntry.boilerRelModulation));
-        Html.writeCell(OpenThermGateway::getDecimal(otLogEntry.flowRate));
-        Html.writeCell(OpenThermGateway::getDecimal(otLogEntry.tRoom));
-        Html.writeCell(otLogEntry.deviationHours, F("%0.2f"));
-        Html.writeRowEnd();
-
+        i->writeRow(Html);
         if (++n == OT_LOG_PAGE_SIZE) break;
     }
 
     Html.writeTableEnd();
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 
 void handleHttpFTPSyncRequest()
 {
     Tracer tracer(F("handleHttpFTPSyncRequest"));
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     Html.writeHeader(F("FTP Sync"), Nav);
 
@@ -1269,8 +1197,6 @@ void handleHttpFTPSyncRequest()
     Html.writePreEnd();
 
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 
@@ -1292,6 +1218,7 @@ void handleHttpOTGWMessageLogRequest()
 void handleHttpEventLogRequest()
 {
     Tracer tracer(F("handleHttpEventLogRequest"));
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     if (WiFiSM.shouldPerformAction(F("clear")))
     {
@@ -1307,14 +1234,13 @@ void handleHttpEventLogRequest()
     Html.writeActionLink(F("clear"), F("Clear event log"), currentTime, ButtonClass);
 
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 
 void handleHttpCommandFormRequest()
 {
     Tracer tracer(F("handleHttpCommandFormRequest"));
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     String cmd = WebServer.arg(F("cmd"));
     String value = WebServer.arg(F("value"));
@@ -1350,8 +1276,6 @@ void handleHttpCommandFormRequest()
     Html.writeFooter();
 
     otgwResponse = String();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 
@@ -1381,6 +1305,7 @@ void handleHttpCommandFormPost()
 void handleHttpConfigFormRequest()
 {
     Tracer tracer(F("handleHttpConfigFormRequest"));
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     Html.writeHeader(F("Settings"), Nav);
 
@@ -1398,8 +1323,6 @@ void handleHttpConfigFormRequest()
         Html.writeActionLink(F("reset"), F("Reset ESP"), currentTime, ButtonClass);
 
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 
