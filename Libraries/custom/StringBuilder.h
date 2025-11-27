@@ -12,10 +12,7 @@ class StringBuilder : public Print
     StringBuilder(size_t capacity, MemoryType memoryType = MemoryType::Auto)
         :  _memoryType(memoryType), _capacity(capacity) {}
 
-    ~StringBuilder()
-    {
-        if (_buffer) free(_buffer);
-    }
+    ~StringBuilder();
 
     size_t capacity() const { return _capacity; }
     size_t length() const { return _length; }

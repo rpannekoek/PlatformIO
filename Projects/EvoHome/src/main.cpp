@@ -55,9 +55,9 @@ SimpleLED BuiltinLED(LED_BUILTIN);
 ESPWebServer WebServer(80); // Default HTTP port
 WiFiNTP TimeServer;
 WiFiFTPClient FTPClient(FTP_TIMEOUT_MS);
-StringBuilder HttpResponse(12 * 1024);
-HtmlWriter Html(HttpResponse, Files[Logo], Files[Styles], MAX_BAR_LENGTH);
-StringLog EventLog(MAX_EVENT_LOG_SIZE, 128);
+StringBuilder HttpResponse(8 * 1024); // 8 kB HTTP response buffer (we use chunked responses)
+HtmlWriter Html(HttpResponse, Files[Logo], Files[Styles]);
+StringLog EventLog(MAX_EVENT_LOG_SIZE, 96);
 WiFiStateMachine WiFiSM(BuiltinLED, TimeServer, WebServer, EventLog);
 Navigation Nav;
 CC1101 Radio(HSPI, CC1101_SCK_PIN, CC1101_MISO_PIN, CC1101_MOSI_PIN, CC1101_CSN_PIN, CC1101_GDO2_PIN, CC1101_GDO0_PIN);
@@ -84,7 +84,7 @@ void onPacketReceived(const RAMSES2Packet* packetPtr)
     if ((currentTime / SECONDS_PER_DAY) > (lastPacketReceivedTime / SECONDS_PER_DAY))
     {
         PacketStats.resetRSSI();
-        EvoHome.resetZoneStatistics();
+        EvoHome.resetZoneStatistics(currentTime);
         WiFiSM.logEvent("Reset stats");
     }
     lastPacketReceivedTime = currentTime;
@@ -195,6 +195,7 @@ void onWiFiInitialized()
 void handleHttpSyncFTPRequest()
 {
     Tracer tracer("handleHttpSyncFTPRequest");
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     Html.writeHeader("FTP Sync", Nav);
 
@@ -211,14 +212,13 @@ void handleHttpSyncFTPRequest()
         Html.writeParagraph("Failed: %s", FTPClient.getLastError());
 
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 
 void handleHttpEventLogRequest()
 {
     Tracer tracer("handleHttpEventLogRequest");
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     Html.writeHeader("Event log", Nav);
 
@@ -234,14 +234,13 @@ void handleHttpEventLogRequest()
     Html.writeActionLink("clear", "Clear event log", currentTime, ButtonClass);
 
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 
 void handleHttpConfigFormRequest()
 {
     Tracer tracer("handleHttpConfigFormRequest");
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     Html.writeHeader("Settings", Nav);
 
@@ -259,8 +258,6 @@ void handleHttpConfigFormRequest()
         Html.writeActionLink("reset", "Reset ESP", currentTime, ButtonClass);
 
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 
@@ -282,10 +279,7 @@ void handleHttpConfigFormPost()
 void handleHttpZoneDataLogRequest()
 {
     Tracer tracer("handleHttpZoneDataLogRequest");
-
-    // Use chunked response
-    WebServer.setContentLength(CONTENT_LENGTH_UNKNOWN);
-    WebServer.send(200, ContentTypeHtml, "");
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     Html.writeHeader("Zone Data Log", Nav);
 
@@ -317,25 +311,18 @@ void handleHttpZoneDataLogRequest()
     for (auto i = EvoHome.zoneDataLog.at(currentPage * PAGE_SIZE); i != EvoHome.zoneDataLog.end(); ++i)
     {
         i->writeRow(Html, EvoHome.zoneCount);
-        if (HttpResponse.length() >= HTTP_CHUNK_SIZE)
-        {
-            WebServer.sendContent(HttpResponse.c_str(), HttpResponse.length());
-            HttpResponse.clear();
-        }
         if (++n == PAGE_SIZE) break;
     }
 
     Html.writeTableEnd();
     Html.writeFooter();
-
-    WebServer.sendContent(HttpResponse.c_str(), HttpResponse.length());
-    WebServer.sendContent("");
 }
 
 
 void handleHttpPacketStatsRequest()
 {
     Tracer tracer("handleHttpPacketStatsRequest");
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     Html.writeHeader("Packet statistics", Nav);
 
@@ -349,48 +336,30 @@ void handleHttpPacketStatsRequest()
 
     Html.writeActionLink("clear", "Clear statistics", currentTime, ButtonClass);
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 
 void handleHttpPacketLogRequest()
 {
     Tracer tracer("handleHttpPacketLogRequest");
-
-    // Use chunked response
-    WebServer.setContentLength(CONTENT_LENGTH_UNKNOWN);
-    WebServer.send(200, ContentTypeHtml, "");
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     Html.writeHeader("Packet Log", Nav);
 
     Html.writePreStart();
 
     for (const RAMSES2Packet* packetPtr : PacketLog)
-    {
         packetPtr->print(HttpResponse, "%T");
-        if (HttpResponse.length() >= HTTP_CHUNK_SIZE)
-        {
-            WebServer.sendContent(HttpResponse.c_str(), HttpResponse.length());
-            HttpResponse.clear();
-        }
-    }
 
     Html.writePreEnd();
     Html.writeFooter();
-
-    WebServer.sendContent(HttpResponse.c_str(), HttpResponse.length());
-    WebServer.sendContent("");
 }
 
 
 void handleHttpPacketLogJsonRequest()
 {
     Tracer tracer("handleHttpPacketLogJsonRequest");
-
-    // Use chunked response
-    WebServer.setContentLength(CONTENT_LENGTH_UNKNOWN);
-    WebServer.send(200, ContentTypeJson, "");
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeJson);
 
     HttpResponse.clear();
     HttpResponse.print("[ ");
@@ -402,17 +371,8 @@ void handleHttpPacketLogJsonRequest()
         else HttpResponse.print(", ");
 
         packetPtr->printJson(HttpResponse);
-
-        if (HttpResponse.length() >= HTTP_CHUNK_SIZE)
-        {
-            WebServer.sendContent(HttpResponse.c_str(), HttpResponse.length());
-            HttpResponse.clear();
-        }
     }
     HttpResponse.println(" ]");
-
-    WebServer.sendContent(HttpResponse.c_str(), HttpResponse.length());
-    WebServer.sendContent("");
 }
 
 
@@ -440,6 +400,7 @@ void hexDump(Print& output, const uint8_t* dataPtr, size_t size)
 void handleHttpSendPacketRequest()
 {
     Tracer tracer("handleHttpSendPacketRequest");
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     if (PacketToSend.payloadPtr == nullptr)
         PacketToSend.payloadPtr = PacketToSend.createPayload();
@@ -489,8 +450,6 @@ void handleHttpSendPacketRequest()
     sendResult.clear();
 
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 
@@ -545,6 +504,8 @@ const char* asBinary(uint8_t data)
 
 void handleHttpFrameErrorsRequest()
 {
+    Tracer tracer("handleHttpFrameErrorsRequest");
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
     RAMSES2ErrorInfo& errors = RAMSES.errors;
 
     Html.writeHeader("Frame Errors", Nav);
@@ -633,8 +594,6 @@ void handleHttpFrameErrorsRequest()
     Html.writeTableEnd();
 
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 
@@ -648,6 +607,7 @@ void handleHttpRootRequest()
         return;
     }
     
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
     Html.writeHeader("Home", Nav);
 
     String ftpSync;
@@ -692,8 +652,6 @@ void handleHttpRootRequest()
 
     Html.writeDivEnd();
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 

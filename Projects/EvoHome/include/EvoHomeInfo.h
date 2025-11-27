@@ -1,4 +1,5 @@
 #include <map>
+#include <algorithm>
 #include <Log.h>
 #include <HtmlWriter.h>
 #include <RAMSES2.h>
@@ -101,6 +102,7 @@ struct ZoneDataLogEntry
 struct DeviceInfo
 {
     RAMSES2Address address;
+    time_t lastSeen;
     int domainId = -1;
     float batteryLevel = -1;
 
@@ -230,6 +232,7 @@ struct ZoneInfo
                 html.writeCell("");
             else
                 html.writeCell(batteryLevel, F("%0.0f %%"));
+            html.writeCell(formatTime("%H:%M", deviceInfoPtr->lastSeen));
             html.writeRowEnd();
         }
     }
@@ -247,7 +250,7 @@ struct ZoneInfo
         html.writeRowEnd();
     }
 
-    void resetStatistics()
+    void resetStatistics(time_t time)
     {
         // Don't reset lastOff
         lastOn = 0;
@@ -255,6 +258,14 @@ struct ZoneInfo
         deviationHours = 0;
         minTemperature = 666;
         maxTemperature = 0;
+
+        // Detach devices which haven't been seen in the last day
+        devices.erase(
+            std::remove_if(
+                devices.begin(),
+                devices.end(),
+                [time](DeviceInfo* deviceInfoPtr) { return deviceInfoPtr->lastSeen < (time - SECONDS_PER_DAY); }),
+            devices.end());
     }
 
     void writeJson(Print& output)
@@ -320,6 +331,7 @@ class EvoHomeInfo
                 if (senderAddr.deviceType != RAMSES2DeviceType::CTL)
                 {
                     DeviceInfo* deviceInfoPtr = getDeviceInfo(senderAddr);
+                    deviceInfoPtr->lastSeen = packetPtr->timestamp;
                     if (deviceInfoPtr->domainId < 0)
                         zoneInfoPtr->attachDevice(deviceInfoPtr);
                 }
@@ -356,6 +368,7 @@ class EvoHomeInfo
             html.writeHeaderCell("Zone");
             html.writeHeaderCell("Address");
             html.writeHeaderCell("Battery");
+            html.writeHeaderCell("Last");
             html.writeRowEnd();
             for (auto const& [zoneId, zoneInfoPtr] : _zoneInfoById)
                 zoneInfoPtr->writeDeviceInfo(html);
@@ -382,10 +395,10 @@ class EvoHomeInfo
             html.writeTableEnd();
         }
 
-        void resetZoneStatistics()
+        void resetZoneStatistics(time_t time)
         {
             for (auto const& [zoneId, zoneInfoPtr] : _zoneInfoById)
-                zoneInfoPtr->resetStatistics();
+                zoneInfoPtr->resetStatistics(time);
         }
 
         void writeZoneInfoJson(Print& output)

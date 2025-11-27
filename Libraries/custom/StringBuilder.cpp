@@ -1,6 +1,16 @@
 #include <Arduino.h>
 #include "StringBuilder.h"
 
+StringBuilder::~StringBuilder()
+{
+    if (_buffer) 
+    {
+        TRACE(F("StringBuilder::~StringBuilder() free %p\n"), _buffer);
+        free(_buffer);
+    }
+}
+
+
 
 void StringBuilder::clear()
 {

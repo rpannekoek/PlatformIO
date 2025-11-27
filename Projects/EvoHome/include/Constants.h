@@ -6,11 +6,9 @@
 constexpr int DEBUG_BAUDRATE = 115200;
 
 constexpr int MAX_EVENT_LOG_SIZE = 50;
-constexpr int MAX_BAR_LENGTH = 50;
 
 constexpr size_t RAMSES_PACKET_LOG_SIZE = 100;
 constexpr size_t PAGE_SIZE = 50;
-constexpr size_t HTTP_CHUNK_SIZE = 8 * 1024;
 
 constexpr int FTP_RETRY_INTERVAL = 15 * SECONDS_PER_MINUTE;
 constexpr int FTP_TIMEOUT_MS = 5000;
