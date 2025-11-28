@@ -66,4 +66,19 @@ struct PowerLogEntry
         }
         return true;
     }
+
+    void writeRow(HtmlWriter& html, std::vector<size_t> dcChannels)
+    {
+        html.writeRowStart();
+        html.writeCell(formatTime("%a %H:%M", time));
+        for (int inv = 0; inv < dcChannels.size(); inv++)
+        {
+            size_t dcChannelCount = dcChannels[inv];
+            for (int ch = 0; ch < dcChannelCount; ch++)
+                html.writeCell(dcPower[inv][ch]);
+            html.writeCell(acPower[inv]);
+            html.writeCell(acVoltage[inv]);
+        }
+        html.writeRowEnd();
+    }
 };

@@ -167,61 +167,18 @@ void SmartHomeClass::writeHtml(HtmlWriter& html)
 
     html.writeSectionStart("Devices");
     html.writeTableStart();
-    html.writeRowStart();
-    html.writeHeaderCell("Name");
-    html.writeHeaderCell("State");
-    html.writeHeaderCell("Switch");
-    html.writeHeaderCell("P (W)");
-    html.writeHeaderCell("E (kWh)");
-    html.writeHeaderCell("Info");
-    html.writeHeaderCell("Last on");
-    html.writeHeaderCell("Duration");
-    html.writeHeaderCell("ΔE (Wh)");
-    html.writeRowEnd();
+    SmartDevice::writeHeader(html);
     int i = 0;
     for (SmartDevice* smartDevicePtr : devices)
-    {
-        String name = (i++ ==_currentDeviceIndex) ? "&bull; " : ""; 
-        name += smartDevicePtr->name;
-
-        html.writeRowStart();
-        html.writeCell(name);
-        html.writeCell(smartDevicePtr->getStateLabel());
-        html.writeCell(smartDevicePtr->getSwitchStateLabel());
-        html.writeCell(smartDevicePtr->power, F("%0.2f"));
-        html.writeCell(smartDevicePtr->energy / 1000, F("%0.3f"));
-        html.writeCell(smartDevicePtr->info);
-        html.writeCell(formatTime("%a %H:%M", smartDevicePtr->energyLogEntry.start));
-        html.writeCell(formatTimeSpan(smartDevicePtr->energyLogEntry.getDuration()));
-        html.writeCell(smartDevicePtr->energyLogEntry.energyDelta, F("%0.0f"));
-        html.writeRowEnd();
-    }
+        smartDevicePtr->writeRow(html, i++ ==_currentDeviceIndex);
     html.writeTableEnd();
     html.writeSectionEnd();
 
     html.writeSectionStart("Energy log");
     html.writeTableStart();
-    html.writeRowStart();
-    html.writeHeaderCell("Device");
-    html.writeHeaderCell("Start");
-    html.writeHeaderCell("Duration");
-    html.writeHeaderCell("P<sub>max</sub> (W)");
-    html.writeHeaderCell("P<sub>avg</sub> (W)");
-    html.writeHeaderCell("E (Wh)");
-    html.writeRowEnd();
+    SmartDeviceEnergyLogEntry::writeHeader(html);
     for (SmartDeviceEnergyLogEntry& logEntry : energyLog)
-    {
-        float avgPower = logEntry.energyDelta * SECONDS_PER_HOUR / logEntry.getDuration();
-
-        html.writeRowStart();
-        html.writeCell(logEntry.devicePtr->name);
-        html.writeCell(formatTime("%a %H:%M", logEntry.start));
-        html.writeCell(formatTimeSpan(logEntry.getDuration()));
-        html.writeCell(logEntry.maxPower, F("%0.0f"));
-        html.writeCell(avgPower, F("%0.0f"));
-        html.writeCell(logEntry.energyDelta, F("%0.0f"));
-        html.writeRowEnd();
-    }
+        logEntry.writeRow(html);
     html.writeTableEnd();
     html.writeSectionEnd();
 
@@ -480,6 +437,34 @@ void SmartDeviceEnergyLogEntry::writeCsv(Print& output)
 }
 
 
+void SmartDeviceEnergyLogEntry::writeRow(HtmlWriter& html)
+{
+        float avgPower = energyDelta * SECONDS_PER_HOUR / getDuration();
+
+        html.writeRowStart();
+        html.writeCell(devicePtr->name);
+        html.writeCell(formatTime("%a %H:%M", start));
+        html.writeCell(formatTimeSpan(getDuration()));
+        html.writeCell(maxPower, F("%0.0f"));
+        html.writeCell(avgPower, F("%0.0f"));
+        html.writeCell(energyDelta, F("%0.0f"));
+        html.writeRowEnd();
+}
+
+
+void SmartDeviceEnergyLogEntry::writeHeader(HtmlWriter& html)
+{
+    html.writeRowStart();
+    html.writeHeaderCell("Device");
+    html.writeHeaderCell("Start");
+    html.writeHeaderCell("Duration");
+    html.writeHeaderCell("P<sub>max</sub> (W)");
+    html.writeHeaderCell("P<sub>avg</sub> (W)");
+    html.writeHeaderCell("E (Wh)");
+    html.writeRowEnd();
+}
+
+
 const char* SmartDevice::getStateLabel()
 {
     return _smartDeviceStateLabels[(int)state];
@@ -532,6 +517,41 @@ bool SmartDevice::update(time_t currentTime)
     }
 
     return true;
+}
+
+
+void SmartDevice::writeRow(HtmlWriter& html, bool isCurrent)
+{
+    String label = isCurrent ? "&bull; " : ""; 
+    label += name;
+
+    html.writeRowStart();
+    html.writeCell(label);
+    html.writeCell(getStateLabel());
+    html.writeCell(getSwitchStateLabel());
+    html.writeCell(power, F("%0.2f"));
+    html.writeCell(energy / 1000, F("%0.3f"));
+    html.writeCell(info);
+    html.writeCell(formatTime("%a %H:%M", energyLogEntry.start));
+    html.writeCell(formatTimeSpan(energyLogEntry.getDuration()));
+    html.writeCell(energyLogEntry.energyDelta, F("%0.0f"));
+    html.writeRowEnd();
+}
+
+
+void SmartDevice::writeHeader(HtmlWriter& html)
+{
+    html.writeRowStart();
+    html.writeHeaderCell("Name");
+    html.writeHeaderCell("State");
+    html.writeHeaderCell("Switch");
+    html.writeHeaderCell("P (W)");
+    html.writeHeaderCell("E (kWh)");
+    html.writeHeaderCell("Info");
+    html.writeHeaderCell("Last on");
+    html.writeHeaderCell("Duration");
+    html.writeHeaderCell("ΔE (Wh)");
+    html.writeRowEnd();
 }
 
 

@@ -23,11 +23,7 @@ class ChunkedResponse
             _webServer.setContentLength(CONTENT_LENGTH_UNKNOWN);
             _webServer.send(200, contentType, String());
 
-            _builder.onLowSpace([this](size_t) {
-                TRACE(F("Chunk: %d\n"), _builder.length());
-                _webServer.sendContent(_builder.c_str(), _builder.length());
-                _builder.clear();
-                });
+            _builder.onLowSpace([this](size_t) { sendChunk(); });
         }
 
         ~ChunkedResponse()
@@ -37,6 +33,13 @@ class ChunkedResponse
             _webServer.sendContent("");
   
             _builder.onLowSpace(nullptr);
+            _builder.clear();
+        }
+
+        void sendChunk()
+        {
+            TRACE(F("Chunk: %d\n"), _builder.length());
+            _webServer.sendContent(_builder.c_str(), _builder.length());
             _builder.clear();
         }
 

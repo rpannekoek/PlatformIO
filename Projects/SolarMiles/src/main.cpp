@@ -67,8 +67,8 @@ WiFiNTP TimeServer;
 WiFiFTPClient FTPClient(FTP_TIMEOUT_MS);
 StringBuilder HoymilesOutput(HOYMILES_OUTPUT_BUFFER_SIZE);
 StringBuilder HttpResponse(HTTP_RESPONSE_BUFFER_SIZE);
-HtmlWriter Html(HttpResponse, Files[Logo], Files[Styles], MAX_BAR_LENGTH);
-StringLog EventLog(MAX_EVENT_LOG_SIZE, 128);
+HtmlWriter Html(HttpResponse, Files[Logo], Files[Styles]);
+StringLog EventLog(MAX_EVENT_LOG_SIZE, 96);
 WiFiStateMachine WiFiSM(BuiltinLED, TimeServer, WebServer, EventLog);
 Navigation Nav;
 SPIClass NRFSPI;
@@ -154,21 +154,24 @@ void handleSerialRequest()
         }
         powerLogEntriesToSync = 10;
 
-        InverterLog* inverterLogPtr = InverterLogPtrs[0];
-        inverterLogPtr->acEnergyLogPtr->init(currentTime);
-        inverterLogPtr->dcEnergyLogPtrs.push_back(new EnergyLog(currentTime));
-        inverterLogPtr->dcEnergyLogPtrs.push_back(new EnergyLog(currentTime));
-        for (int i = 0; i < 20; i++)
+        if (InverterLogPtrs.size() > 0)
         {
-            time_t time = currentTime + i * TODAY_LOG_INTERVAL;
-            int power1 = i * 10;
-            int power2 = (20 - i) * 20;
-            TotalEnergyLog.update(time, (power1 + power2));
-            inverterLogPtr->acEnergyLogPtr->update(time, power1);
-            if (i < 18)
-                inverterLogPtr->dcEnergyLogPtrs[0]->update(time, power1);
-            if (i > 1)
-                inverterLogPtr->dcEnergyLogPtrs[1]->update(time, power2);
+            InverterLog* inverterLogPtr = InverterLogPtrs[0];
+            inverterLogPtr->acEnergyLogPtr->init(currentTime);
+            inverterLogPtr->dcEnergyLogPtrs.push_back(new EnergyLog(currentTime));
+            inverterLogPtr->dcEnergyLogPtrs.push_back(new EnergyLog(currentTime));
+            for (int i = 0; i < 20; i++)
+            {
+                time_t time = currentTime + i * TODAY_LOG_INTERVAL;
+                int power1 = i * 10;
+                int power2 = (20 - i) * 20;
+                TotalEnergyLog.update(time, (power1 + power2));
+                inverterLogPtr->acEnergyLogPtr->update(time, power1);
+                if (i < 18)
+                    inverterLogPtr->dcEnergyLogPtrs[0]->update(time, power1);
+                if (i > 1)
+                    inverterLogPtr->dcEnergyLogPtrs[1]->update(time, power2);
+            }
         }
     }
     else if (cmd.startsWith("ftp"))
@@ -937,6 +940,7 @@ void writeEnergyLogs(int inverter, ChannelType_t channel,  EnergyLogType logType
 void handleHttpSyncFTPRequest()
 {
     Tracer tracer("handleHttpSyncFTPRequest");
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     Html.writeHeader("FTP Sync", Nav);
 
@@ -975,13 +979,13 @@ void handleHttpSyncFTPRequest()
 
     Html.writeFooter();
 
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 
 void handleHttpPowerLogRequest()
 {
     Tracer tracer(F("handleHttpOpenThermLogRequest"));
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     std::vector<size_t> dcChannels;
 
@@ -1016,33 +1020,19 @@ void handleHttpPowerLogRequest()
     int n = 0;
     for (auto i = PowerLog.at(currentPage * POWER_LOG_PAGE_SIZE); i != PowerLog.end(); ++i)
     {
-        PowerLogEntry& powerLogEntry = *i;
-
-        Html.writeRowStart();
-        Html.writeCell(formatTime("%a %H:%M", powerLogEntry.time));
-        for (int inv = 0; inv < dcChannels.size(); inv++)
-        {
-            int dcChannelCount = dcChannels[inv];
-            for (int ch = 0; ch < dcChannelCount; ch++)
-                Html.writeCell(powerLogEntry.dcPower[inv][ch]);
-            Html.writeCell(powerLogEntry.acPower[inv]);
-            Html.writeCell(powerLogEntry.acVoltage[inv]);
-        }
-        Html.writeRowEnd();
-
+        i->writeRow(Html, dcChannels);
         if (++n == POWER_LOG_PAGE_SIZE) break;
     }
 
     Html.writeTableEnd();
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 
 void handleHttpEventLogRequest()
 {
     Tracer tracer("handleHttpEventLogRequest");
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     Html.writeHeader("Event log", Nav);
 
@@ -1053,21 +1043,18 @@ void handleHttpEventLogRequest()
     }
 
     for (const char* event : EventLog)
-    {
         Html.writeDiv("%s", event);
-    }
 
     Html.writeActionLink("clear", "Clear event log", currentTime, ButtonClass);
 
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 
 void handleHttpConfigFormRequest()
 {
     Tracer tracer("handleHttpConfigFormRequest");
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     Html.writeHeader("Settings", Nav);
 
@@ -1085,8 +1072,6 @@ void handleHttpConfigFormRequest()
         Html.writeActionLink("reset", "Reset ESP", currentTime, ButtonClass);
 
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 
@@ -1105,6 +1090,7 @@ void handleHttpConfigFormPost()
 void handleHttpInvertersFormRequest()
 {
     Tracer tracer("handleHttpInvertersFormRequest");
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     Html.writeHeader("Inverters", Nav);
 
@@ -1195,8 +1181,6 @@ void handleHttpInvertersFormRequest()
     Html.writeSubmitButton("Save");
     Html.writeFormEnd();
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 void handleHttpInvertersFormPost()
@@ -1261,6 +1245,7 @@ void handleHttpInvertersFormPost()
 void handleHttpGridProfileRequest()
 {
     Tracer tracer("handleHttpGridProfileRequest");
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     int inverter = WebServer.hasArg("inverter") ? WebServer.arg("inverter").toInt() : 0;
 
@@ -1290,14 +1275,13 @@ void handleHttpGridProfileRequest()
     }
 
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 
 void handleHttpSmartMeterRequest()
 {
     Tracer tracer("handleHttpSmartMeterRequest");
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     int currentPage = WebServer.hasArg("page") ? WebServer.arg("page").toInt() : 0;
 
@@ -1316,25 +1300,23 @@ void handleHttpSmartMeterRequest()
     else
         Html.writeParagraph("Smart Meter is not initialized.");
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 
 void handleHttpSmartHomeRequest()
 {
     Tracer tracer("handleHttpSmartHomeRequest");
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     Html.writeHeader("Smart Home", Nav);
     SmartHome.writeHtml(Html);
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 
 void handleHttpDebugRequest()
 {
     Tracer tracer("handleHttpDebugRequest");
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
     if (WiFiSM.shouldPerformAction("clear"))
     {
@@ -1350,12 +1332,11 @@ void handleHttpDebugRequest()
     Html.writeTableEnd();
 
     Html.writePreStart();
+    response.sendChunk();
     HttpResponse.println(HoymilesOutput.c_str());
     Html.writePreEnd();
 
     Html.writeActionLink("clear", "Clear", currentTime, ButtonClass);
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 
@@ -1369,6 +1350,7 @@ void handleHttpRootRequest()
         return;
     }
     
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
     Html.writeHeader("Home", Nav);
 
     String ftpSync;
@@ -1414,8 +1396,6 @@ void handleHttpRootRequest()
 
     Html.writeDivEnd();
     Html.writeFooter();
-
-    WebServer.send(200, ContentTypeHtml, HttpResponse.c_str());
 }
 
 

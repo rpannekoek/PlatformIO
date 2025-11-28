@@ -45,6 +45,8 @@ struct SmartDeviceEnergyLogEntry
     }
 
     void writeCsv(Print& output);
+    void writeRow(HtmlWriter& html);
+    static void writeHeader(HtmlWriter& html);
 };
 
 class SmartDevice
@@ -64,6 +66,9 @@ class SmartDevice
         const char* getStateLabel();
         const char* getSwitchStateLabel();
         virtual bool update(time_t currentTime);
+
+        void writeRow(HtmlWriter& html, bool isCurrent);
+        static void writeHeader(HtmlWriter& html);
 
     protected:
         ILogger& _logger;

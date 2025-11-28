@@ -36,6 +36,7 @@ MemoryStream::MemoryStream(const String& str)
 
 MemoryStream::~MemoryStream()
 {
+    TRACE(F("MemoryStream::~MemoryStream() free %p\n"), _buffer);
     free(_buffer);
 }
 
