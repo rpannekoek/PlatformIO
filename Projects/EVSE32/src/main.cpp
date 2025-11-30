@@ -1,10 +1,4 @@
-#include <Arduino.h>
-#include <math.h>
-#include <ESPWiFi.h>
-#include <ESPWebServer.h>
-#include <ESPFileSystem.h>
 #include <WiFiStateMachine.h>
-#include <WiFiNTP.h>
 #include <WiFiFTP.h>
 #include <Ticker.h>
 #include <TimeUtils.h>
