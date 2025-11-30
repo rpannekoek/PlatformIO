@@ -16,6 +16,7 @@
 #include <EnergyMeter.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
+#include <Ticker.h>
 #include "PersistentData.h"
 #include "MonitoredTopics.h"
 #include "DayStatsEntry.h"
@@ -73,6 +74,7 @@ Navigation Nav;
 
 OneWire OneWireBus(D7);
 DallasTemperature TempSensors(&OneWireBus);
+Ticker TempTicker;
 FlowSensor Flow_Sensor(D6);
 EnergyMeter Energy_Meter(D2);
 
@@ -103,9 +105,10 @@ void logSensorInfo(TopicId sensorId)
         snprintf(
             message,
             sizeof(message),
-            "%s sensor address: %02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X. Offset: %0.2f",
+            "%s sensor: %02X:%02X:%02X:%02X:%02X:%02X:%02X:%02X. %d bits. Offset: %0.2f",
             topic.label,
             addr[0], addr[1], addr[2], addr[3], addr[4], addr[5], addr[6], addr[7],
+            TempSensors.getResolution(addr),
             PersistentData.tempSensorOffset[sensorId]
             );
     }
@@ -150,13 +153,44 @@ void initTempSensors()
                 WiFiSM.logEvent(F("ERROR: Unable to obtain sensor address for %s"), topic.label);
             }
         }
-
     }
 
     if (newSensorFound)
         PersistentData.writeToEEPROM();
+
+    TempSensors.setResolution(12);
 }
 
+
+void readTempSensors()
+{
+    if (TempSensors.isConversionComplete())
+    {
+        BuiltinLED.setOn(true);
+        for (int i = 0; i < 3; i++)
+        {
+            float tMeasured = TempSensors.getTempC(PersistentData.tempSensorAddress[i]);
+            if (tMeasured != DEVICE_DISCONNECTED_C)
+            {
+                if ((tMeasured == DS18_INIT_VALUE_C) && (abs(tMeasured - currentValues[i]) > 5.0F))
+                    WiFiSM.logEvent(F("Invalid %s sensor value"), MonitoredTopics[i].label);
+                else
+                    currentValues[i] = tMeasured + PersistentData.tempSensorOffset[i];
+            }
+        }
+        TempSensors.requestTemperatures();
+        BuiltinLED.setOn(false);
+    }
+
+    if (!maxTempValveOverride && (PersistentData.tBufferMax != 0))
+    {
+        if ((currentValues[TopicId::TBuffer] > PersistentData.tBufferMax) && !maxTempValveActivated)
+            setMaxTempValve(true);
+
+        if ((currentValues[TopicId::TBuffer] < (PersistentData.tBufferMax - PersistentData.tBufferMaxDelta)) && maxTempValveActivated)
+            setMaxTempValve(false);
+    }
+}
 
 void newHeatLogEntry()
 {
@@ -989,7 +1023,11 @@ void setup()
         setMaxTempValve(false);
     }
 
-    TempSensors.requestTemperatures();
+    if (TempSensors.getDS18Count() != 0)
+    {
+        TempSensors.requestTemperatures();
+        TempTicker.attach(1.0F, readTempSensors);
+    }
 
     memset(testOverrides, 0, sizeof(testOverrides));
 
@@ -1012,32 +1050,5 @@ void loop()
     {
         String message = Serial.readStringUntil('\n');
         test(message);
-    }
-
-    if (TempSensors.getDS18Count() > 0 && TempSensors.isConversionComplete())
-    {
-        BuiltinLED.setOn(true);
-        for (int i = 0; i < 3; i++)
-        {
-            float tMeasured = TempSensors.getTempC(PersistentData.tempSensorAddress[i]);
-            if (tMeasured != DEVICE_DISCONNECTED_C)
-            {
-                if ((tMeasured == DS18_INIT_VALUE_C) && (abs(tMeasured - currentValues[i]) > 5.0F))
-                    WiFiSM.logEvent(F("Invalid %s sensor value"), MonitoredTopics[i].label);
-                else
-                    currentValues[i] = tMeasured + PersistentData.tempSensorOffset[i];
-            }
-        }
-        TempSensors.requestTemperatures();
-        BuiltinLED.setOn(false);
-    }
-
-    if (!maxTempValveOverride && (PersistentData.tBufferMax != 0))
-    {
-        if ((currentValues[TopicId::TBuffer] > PersistentData.tBufferMax) && !maxTempValveActivated)
-            setMaxTempValve(true);
-
-        if ((currentValues[TopicId::TBuffer] < (PersistentData.tBufferMax - PersistentData.tBufferMaxDelta)) && maxTempValveActivated)
-            setMaxTempValve(false);
     }
 }
