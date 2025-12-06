@@ -2,7 +2,7 @@
 #include <Arduino.h>
 #include <ArduinoOTA.h>
 #include <ESPWiFi.h>
-#include <LittleFS.h>
+#include <ESPFileSystem.h>
 #include <ESPCoreDump.h>
 #include <Tracer.h>
 #include <StringBuilder.h>
@@ -12,9 +12,10 @@
     #include <esp_wifi.h>
     #include <esp_task_wdt.h>
     constexpr int TASK_WDT_TIMEOUT = 30;
-    #define U_FS U_SPIFFS
 
     SemaphoreHandle_t WiFiStateMachine::_logMutex = xSemaphoreCreateMutex();
+#else
+    #define U_SPIFFS U_FS
 #endif
 
 constexpr uint32_t CONNECT_TIMEOUT_MS = 10000;
@@ -40,9 +41,9 @@ void WiFiStateMachine::on(WiFiInitState state, void (*handler)(void))
 
 void WiFiStateMachine::registerStaticFiles(PGM_P* files, size_t count)
 {
-    if (!LittleFS.begin())
+    if (!SPIFFS.begin())
     {
-        logEvent(F("Starting LittleFS failed"));
+        logEvent(F("Starting SPIFFS failed"));
         return;
     }
 
@@ -50,7 +51,7 @@ void WiFiStateMachine::registerStaticFiles(PGM_P* files, size_t count)
     {
         String path = F("/");
         path += FPSTR(files[i]);
-        _webServer.serveStatic(path.c_str(), LittleFS, path.c_str(), "max-age=86400, public");
+        _webServer.serveStatic(path.c_str(), SPIFFS, path.c_str(), "max-age=86400, public");
     }
 }
 
@@ -90,8 +91,8 @@ void WiFiStateMachine::begin(String ssid, String password, String hostName, uint
         [this]() 
         {
             TRACE(F("OTA start %d\n"), ArduinoOTA.getCommand());
-            if (ArduinoOTA.getCommand() == U_FS)
-                LittleFS.end();
+            if (ArduinoOTA.getCommand() == U_SPIFFS)
+                SPIFFS.end();
 #ifdef ESP32
             disableLoopWDT();
 #endif                

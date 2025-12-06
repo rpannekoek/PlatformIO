@@ -1,10 +1,16 @@
-#include <WiFiStateMachine.h>
+#include <Arduino.h>
+#include <ESPCoreDump.h>
+#include <ESPWiFi.h>
+#include <ESPWebServer.h>
+#include <ESPFileSystem.h>
+#include <WiFiNTP.h>
 #include <WiFiFTP.h>
 #include <TimeUtils.h>
 #include <Tracer.h>
 #include <StringBuilder.h>
 #include <LED.h>
 #include <Log.h>
+#include <WiFiStateMachine.h>
 #include <HtmlWriter.h>
 #include <Navigation.h>
 #include "Constants.h"
