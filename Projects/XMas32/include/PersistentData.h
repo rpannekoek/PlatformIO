@@ -32,9 +32,10 @@ struct Settings : public BasicWiFiSettings
 {
     ScheduleEntry scheduleEntries[MAX_SCHEDULES][MAX_SCHEDULE_ENTRIES];
     uint8_t ledSchedules[RGB_LED_COUNT];
+    int selectedMidiTrack;
 
     Settings() 
-        : BasicWiFiSettings("XMas32", sizeof(scheduleEntries) + sizeof(ledSchedules))
+        : BasicWiFiSettings("XMas32", sizeof(scheduleEntries) + sizeof(ledSchedules) + sizeof(selectedMidiTrack))
     {}
 
     void initialize() override
@@ -43,6 +44,7 @@ struct Settings : public BasicWiFiSettings
 
         memset(scheduleEntries, 0, sizeof(scheduleEntries));
         memset(ledSchedules, 0, sizeof(ledSchedules));
+        selectedMidiTrack = -1;
     }
 };
 

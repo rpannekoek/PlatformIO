@@ -14,12 +14,17 @@
 #include <FastLED.h>
 #include <Ticker.h>
 #include "PersistentData.h"
+#include "MIDI.h"
 
 constexpr uint8_t RGB_LED_PIN = 32; // TODO
+
+constexpr uint32_t UPDATE_SCHEDULE_INTERVAL = 51; // 2*255*0.1
 constexpr int BLINK_INTERVAL = 5;
 
 constexpr size_t LIGHT_FX_COUNT = 4;
 const char* LightFXNames[] = { "None", "Flame", "Blink", "Spectrum" };
+
+const char* MIDI_FILE = "/Let_It_Snow.mid";
 
 const char* ButtonClass = "button";
 const char* ContentTypeHtml = "text/html";
@@ -51,6 +56,7 @@ HtmlWriter Html(HttpResponse, Files[Logo], Files[Styles]);
 StringLog EventLog(50, 96);
 WiFiStateMachine WiFiSM(BuiltinLED, TimeServer, WebServer, EventLog);
 Navigation Nav;
+MIDI::File MidiFile;
 Ticker LightFXTicker;
 CRGB LEDColors[RGB_LED_COUNT];
 CHSV LEDColorsHSV[RGB_LED_COUNT];
@@ -153,19 +159,125 @@ void runLightFX()
 }
 
 
+void showNote(uint8_t note, uint8_t velocity)
+{
+    static uint8_t ledIndexPerKey[] =
+    {
+        0, // C
+        0, // C#
+        1, // D
+        1, // D#
+        2, // E
+        3, // F
+        3, // F#
+        4, // G
+        4, // G#
+        5, // A
+        5, // A#
+        6  // B
+    };
+
+    static CRGB ledColors[] = 
+    {
+        CRGB::Gray,     // Octave 3
+        CRGB::Gray,     // Octave 3#
+        CRGB::Blue,     // Octave 4
+        CRGB::Cyan,     // Octave 4#
+        CRGB::Green,    // Octave 5 (middle C)
+        CRGB::Yellow,   // Octave 5#
+        CRGB::Red,      // Octave 6
+        CRGB::Magenta,  // Octave 6#
+        CRGB::Gray,     // Octave 7
+        CRGB::Gray,     // Octave 7#
+    };
+
+    uint8_t octave = note / 12;
+    if (octave < 3 || octave > 7) return;
+
+    uint8_t key = note % 12;
+    uint8_t ledIndex = ledIndexPerKey[key];
+    uint8_t colorIndex = (octave - 3) * 2;
+    if (key > 0 && ledIndexPerKey[key - 1] == ledIndex) colorIndex++; // sharp
+    CRGB ledColor = ledColors[colorIndex];
+    LEDColors[ledIndex] = ledColor.scale8(velocity * 2);
+    FastLED.show();
+
+    TRACE(
+        "showNote(%u, %u) - octave: %u, key: %u, led: %u, color: %u\n",
+        note,
+        velocity,
+        octave,
+        key,
+        ledIndex,
+        colorIndex);
+}
+
+
+void onMidiEvent(const MIDI::Event& midiEvent)
+{
+    MIDI::EventType eventType = midiEvent.getType();
+    if (eventType == MIDI::EventType::NoteOn)
+        showNote(midiEvent.getNote(), midiEvent.getVelocity());
+    else if (eventType == MIDI::EventType::NoteOff)
+        showNote(midiEvent.getNote(), 0);
+}
+
+
+void midiPlayTask(void* parameter)
+{
+    Tracer tracer("midiPlayTask");
+
+    LightFXTicker.detach();
+    for (int i = 0; i < RGB_LED_COUNT; i++)
+        LEDColors[i] = CRGB::Black;
+    FastLED.show();
+
+    MidiFile.play(PersistentData.selectedMidiTrack, onMidiEvent);
+
+    LightFXTicker.attach_ms(100, runLightFX);
+
+    vTaskDelete(nullptr);
+}
+
+
+void playMidiTrack()
+{
+    Tracer tracer("playMidiTrack");
+
+    if (PersistentData.selectedMidiTrack < 0 || 
+        PersistentData.selectedMidiTrack >= MidiFile.getTracks().size())
+    {
+        WiFiSM.logEvent("Invalid MIDI track selection: %d", PersistentData.selectedMidiTrack);
+        return;
+    }
+    
+    xTaskCreate(
+        midiPlayTask,                                   // Task function
+        "MidiPlayTask",                                 // Task name
+        4096,                                           // Stack size (bytes)
+        nullptr,                                        // Parameter passed to task
+        1,                                              // Priority
+        nullptr                                         // Task handle (not needed)
+    );
+}
+
+
 void onTimeServerSynced()
 {
     updateSchedule();
     updateLEDs();
     LightFXTicker.attach_ms(100, runLightFX);
+
+    if (!MidiFile.load(MIDI_FILE))
+        WiFiSM.logEvent("Error loading MIDI file: %s", MidiFile.getError().c_str());    
 }
 
 
 void onWiFiInitialized()
 {
-    if (currentTime >= updateScheduleTime)
+    if (currentTime >= updateScheduleTime && !MidiFile.getCurrentlyPlaying())
     {
-        updateScheduleTime = currentTime + SECONDS_PER_MINUTE;
+        updateScheduleTime = currentTime + UPDATE_SCHEDULE_INTERVAL;
         updateSchedule();
         updateLEDs();
     }
@@ -384,6 +496,83 @@ void handleHttpScheduleFormPost()
     handleHttpRootRequest();
 }
 
+void handleHttpMidiConfigRequest()
+{
+    Tracer tracer("handleHttpMidiConfigRequest");
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
+
+    Html.writeHeader("MIDI config", Nav);
+    Html.writeHeading(MIDI_FILE, 1);
+
+    if (MidiFile.getError().isEmpty())
+    {
+        Html.writeTableStart();
+        Html.writeRow("Duration", "%s", formatTimeSpan(MidiFile.getDurationSeconds(), false));
+        Html.writeRow("Tempo", "%0.0f BPM", MidiFile.getBPM());
+        Html.writeRow("Tracks", "%u", MidiFile.getTracks().size());
+        Html.writeRow("Notes", "%u", MidiFile.getTotalNotes());
+        Html.writeTableEnd();
+
+        Html.writeHeading("Tracks", 2);
+        Html.writeFormStart("/midi");
+
+        int i = 0;
+        for (const MIDI::Track& track : MidiFile.getTracks())
+        {
+            uint32_t notes = track.getTotalNotes();
+            if (notes != 0)
+            {
+                const char* checked = (PersistentData.selectedMidiTrack == i) ? "checked" : "";
+                HttpResponse.printf(
+                    F("<div><input type=\"radio\" id=\"track%d\" name=\"track\" value=\"%d\" %s><label for=\"track%d\">'%s' - %u notes</label></div>"), 
+                    i,
+                    i,
+                    checked,
+                    i,
+                    track.getName().c_str(),
+                    notes);
+            }
+            i++;
+        }
+        
+        Html.writeSubmitButton("Save");
+        Html.writeFormEnd();
+
+        MIDI::Track* playingTrackPtr = MidiFile.getCurrentlyPlaying();
+        if (playingTrackPtr == nullptr)
+        {
+            if (WiFiSM.shouldPerformAction("play"))
+            {
+                Html.writeParagraph("Starting to play...");
+                playMidiTrack();
+            }
+            else
+                Html.writeActionLink("play", "Play", currentTime, ButtonClass);
+        }
+        else
+        {
+            Html.writeParagraph(
+                "Currently playing: '%s' - %s",
+                playingTrackPtr->getName().c_str(),
+                formatTimeSpan(playingTrackPtr->getPlayingForSeconds(), false));
+        }
+    }
+    else
+        Html.writeParagraph(MidiFile.getError().c_str());
+
+    Html.writeFooter();
+}
+
+void handleHttpMidiConfigPost()
+{
+    Tracer tracer("handleHttpMidiConfigPost");
+
+    PersistentData.selectedMidiTrack = WebServer.arg("track").toInt();
+    PersistentData.writeToEEPROM();
+
+    handleHttpMidiConfigRequest();
+}
+
 
 void handleSerialRequest()
 {
@@ -440,6 +629,14 @@ void setup()
         MenuItem
         {
             .icon = Files[SettingsIcon],
+            .label = "MIDI Config",
+            .urlPath ="midi",
+            .handler = handleHttpMidiConfigRequest,
+            .postHandler = handleHttpMidiConfigPost
+        },
+        MenuItem
+        {
+            .icon = Files[SettingsIcon],
             .label = "Settings",
             .urlPath ="config",
             .handler = handleHttpConfigFormRequest,
@@ -453,17 +650,6 @@ void setup()
     WiFiSM.on(WiFiInitState::Initialized, onWiFiInitialized);
     WiFiSM.scanAccessPoints();
     WiFiSM.begin(PersistentData.wifiSSID, PersistentData.wifiKey, PersistentData.hostName);
-
-    /*
-    pinMode(RGB_LED_PIN, OUTPUT);
-    uint8_t pinState = 0;
-    for (int i = 0; i < 99; i++)
-    {
-        digitalWrite(RGB_LED_PIN, pinState);
-        delay(10);
-        pinState ^= HIGH;
-    }
-    */
 
     for (int i = 0; i < RGB_LED_COUNT; i++)
         LEDColors[i] = CRGB::Gray;
