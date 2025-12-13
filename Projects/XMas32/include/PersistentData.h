@@ -10,7 +10,10 @@ enum struct LightFX
     None = 0,
     Flame,
     Blink,
-    Spectrum
+    Rainbow,
+    Demo,
+    TwinkleFox,
+    Fire
 };
 
 struct ScheduleEntry

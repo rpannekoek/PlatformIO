@@ -12,6 +12,9 @@
 #include <HtmlWriter.h>
 #include <Navigation.h>
 #include <FastLED.h>
+#include "fx/1d/demoreel100.h"
+#include "fx/1d/twinklefox.h"
+#include "fx/1d/fire2012.h"
 #include <Ticker.h>
 #include "PersistentData.h"
 #include "MIDI.h"
@@ -22,8 +25,8 @@ constexpr uint32_t UPDATE_SCHEDULE_INTERVAL = 51; // 2*255*0.1
 constexpr int BLINK_INTERVAL = 5;
 constexpr int METRONOME_LED = 7;
 
-constexpr size_t LIGHT_FX_COUNT = 4;
-const char* LightFXNames[] = { "None", "Flame", "Blink", "Spectrum" };
+constexpr size_t LIGHT_FX_COUNT = 7;
+const char* LightFXNames[] = { "None", "Flame", "Blink", "Rainbow", "Demo", "TwinkleFox", "Fire" };
 
 const char* MIDI_FILE = "/Let_It_Snow.mid";
 
@@ -61,6 +64,7 @@ WiFiStateMachine WiFiSM(BuiltinLED, TimeServer, WebServer, EventLog);
 Navigation Nav;
 MIDI::File MidiFile;
 Ticker LightFXTicker;
+std::unique_ptr<fl::Fx1d> GlobalLightFXPtr = nullptr;
 CRGB LEDColors[RGB_LED_COUNT];
 CHSV LEDColorsHSV[RGB_LED_COUNT];
 int scheduleIndexes[MAX_SCHEDULES];
@@ -69,29 +73,6 @@ time_t currentTime = 0;
 time_t startOfDay = 0;
 time_t updateScheduleTime = 0;
 int blinkCounter = 0;
-
-
-void updateSchedule()
-{
-    if (currentTime >= startOfDay + SECONDS_PER_DAY)
-    {
-        startOfDay = getStartOfDay(currentTime);
-        for (int i = 0; i < MAX_SCHEDULES; i++)
-            scheduleIndexes[i] = -1;
-    }
-
-    uint16_t currentScheduleTime = (currentTime - startOfDay) / 60;
-    for (int i = 0; i < MAX_SCHEDULES; i++)
-    {
-        for (int n = scheduleIndexes[i] + 1; n < MAX_SCHEDULE_ENTRIES; n++)
-        {
-            ScheduleEntry& scheduleEntry = PersistentData.scheduleEntries[i][n];
-            if (scheduleEntry.time == 0 || currentScheduleTime < scheduleEntry.time)
-                break;
-            scheduleIndexes[i] = n;
-        }
-    }
-}
 
 
 void updateLEDs()
@@ -111,7 +92,31 @@ void updateLEDs()
 }
 
 
-void runLightFX()
+void startGlobalLightFX(LightFX lightFX, uint8_t fxParam)
+{
+    Tracer tracer("startGlobalLightFX");
+
+    if (lightFX == LightFX::Demo)
+        GlobalLightFXPtr = std::make_unique<fl::DemoReel100>(RGB_LED_COUNT);
+    else if (lightFX == LightFX::TwinkleFox)
+        GlobalLightFXPtr = std::make_unique<fl::TwinkleFox>(RGB_LED_COUNT);
+    else if (lightFX == LightFX::Fire)
+        GlobalLightFXPtr = std::make_unique<fl::Fire2012>(RGB_LED_COUNT, 55, fxParam);
+    else
+        return;
+
+    LightFXTicker.attach_ms(
+        10,
+        []() {
+            if (!GlobalLightFXPtr) return;
+            GlobalLightFXPtr->draw(fl::Fx::DrawContext(millis(), LEDColors));
+            FastLED.show();
+        }
+    );
+}
+
+
+void runBackgroundLightFX()
 {
     bool colorsChanged = false;
     for (int i = 0; i < RGB_LED_COUNT; i++)
@@ -150,17 +155,97 @@ void runLightFX()
                 break;
             }
 
-            case LightFX::Spectrum:
+            case LightFX::Rainbow:
             {
                 LEDColorsHSV[i].hue += scheduleEntry.lightFXparam;
                 ledColor = LEDColorsHSV[i];
                 colorsChanged = true;
                 break;
             }
+
+            case LightFX::Demo:
+            case LightFX::TwinkleFox:
+            case LightFX::Fire:
+                // If any schedule uses those global FX, detach runBackgroundLightFX.
+                // It will be re-attached in UpdateSchedule
+                startGlobalLightFX(scheduleEntry.lightFX, scheduleEntry.lightFXparam);
+                return;
         }
     }
 
     if (colorsChanged) FastLED.show();
+}
+
+
+void startBackgroundLightFX()
+{
+    Tracer tracer("startBackgroundLightFX");
+
+    LightFXTicker.attach_ms(100, runBackgroundLightFX);
+}
+
+
+void stopGlobalLightFX()
+{
+    Tracer tracer("stopGlobalLightFX");
+
+    startBackgroundLightFX();
+    delay(50); // Ensure GlobalLightFXPtr is no longer used
+    GlobalLightFXPtr = nullptr;
+}
+
+
+void resetSchedules()
+{
+    Tracer tracer("resetSchedules");
+
+    for (int i = 0; i < MAX_SCHEDULES; i++)
+        scheduleIndexes[i] = -1;
+
+    if (GlobalLightFXPtr) stopGlobalLightFX();
+}
+
+
+void updateSchedule()
+{
+    Tracer tracer("updateSchedule");
+
+    if (currentTime >= startOfDay + SECONDS_PER_DAY)
+    {
+        startOfDay = getStartOfDay(currentTime);
+        resetSchedules();
+    }
+
+    bool globalLightFX = false;
+    uint16_t currentScheduleTime = (currentTime - startOfDay) / 60;
+    for (int i = 0; i < MAX_SCHEDULES; i++)
+    {
+        int scheduleIndex = scheduleIndexes[i];
+
+        // Advance schedule to the next entry, if applicable.
+        for (int n = scheduleIndex + 1; n < MAX_SCHEDULE_ENTRIES; n++)
+        {
+            ScheduleEntry& nextScheduleEntry = PersistentData.scheduleEntries[i][n];
+            if (nextScheduleEntry.time == 0 || currentScheduleTime < nextScheduleEntry.time)
+                break;
+            scheduleIndex = n;
+        }
+        scheduleIndexes[i] = scheduleIndex;
+
+        // Check if any global light FX are pending
+        if (scheduleIndex >= 0)
+        {
+            ScheduleEntry& scheduleEntry = PersistentData.scheduleEntries[i][scheduleIndex];
+            if (scheduleEntry.time != 0 && scheduleEntry.lightFX >= LightFX::Demo)
+                globalLightFX = true;
+        }
+    }
+
+    if (!globalLightFX)
+    {
+        if (GlobalLightFXPtr) stopGlobalLightFX();
+        updateLEDs();
+    }
 }
 
 
@@ -254,7 +339,7 @@ void midiPlayTask(void* parameter)
 
     MidiFile.play(PersistentData.selectedMidiTrack, onMidiEvent);
 
-    LightFXTicker.attach_ms(100, runLightFX);
+    startBackgroundLightFX();
 
     vTaskDelete(nullptr);
 }
@@ -285,8 +370,7 @@ void playMidiTrack()
 void onTimeServerSynced()
 {
     updateSchedule();
-    updateLEDs();
-    LightFXTicker.attach_ms(100, runLightFX);
+    startBackgroundLightFX();
 
     if (!MidiFile.load(MIDI_FILE))
         WiFiSM.logEvent("Error loading MIDI file: %s", MidiFile.getError().c_str());    
@@ -299,7 +383,6 @@ void onWiFiInitialized()
     {
         updateScheduleTime = currentTime + UPDATE_SCHEDULE_INTERVAL;
         updateSchedule();
-        updateLEDs();
     }
 }
 
@@ -403,6 +486,7 @@ void handleHttpRootRequest()
     Html.writeRow("Free Heap", "%0.1f kB", float(ESP.getFreeHeap()) / 1024);
     Html.writeRow("Uptime", "%0.1f days", float(WiFiSM.getUptime()) / SECONDS_PER_DAY);
     Html.writeRow("LEDs", "%d FPS", FastLED.getFPS());
+    Html.writeRow("Global FX", GlobalLightFXPtr ? GlobalLightFXPtr->fxName().c_str() : "(None)");
     Html.writeTableEnd();
     Html.writeSectionEnd();
 
@@ -488,6 +572,8 @@ void handleHttpScheduleFormPost()
 {
     Tracer tracer("handleHttpScheduleFormPost");
 
+    resetSchedules();
+
     for (int i = 0; i < MAX_SCHEDULES; i++)
     {
         for (int n = 0; n < MAX_SCHEDULE_ENTRIES; n++)
@@ -512,7 +598,6 @@ void handleHttpScheduleFormPost()
     PersistentData.writeToEEPROM();
 
     updateSchedule();
-    updateLEDs();
 
     handleHttpRootRequest();
 }
@@ -601,15 +686,6 @@ void handleSerialRequest()
     String cmd = Serial.readStringUntil('\n');
     cmd.trim();
     Serial.println(cmd);
-
-    if (cmd.startsWith("L"))
-    {
-        for (int i = 0; i < 1000; i++)
-        {
-            FastLED.show();
-            delay(1);
-        }
-    }
 }
 
 
