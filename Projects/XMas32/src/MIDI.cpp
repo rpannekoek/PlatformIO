@@ -14,7 +14,7 @@ bool File::parse(const uint8_t* data, size_t size)
 
     if (!data || size < 14)
     {
-        setError("Invalid data or size too small");
+        _error = "Invalid data or size too small";
         return false;
     }
     
@@ -24,24 +24,33 @@ bool File::parse(const uint8_t* data, size_t size)
     _format = 0;
     _trackCount = 0;
     _division = 480;
-    _tempo = 500000;
     _tracks.clear();
     _error.clear();
     
     if (!parseHeader()) return false;
 
     TRACE("Format: %u. %u tracks. Division: %u\n", _format, _trackCount, _division);
+
+    uint32_t globalTempo = 0;
+    uint8_t globalBeatsPerBar = 0;
     
     _tracks.reserve(_trackCount);
     for (uint16_t i = 1; i <= _trackCount; i++)
     {
-        Track track(this);
+        Track track(_division, globalTempo, globalBeatsPerBar);
+        
         if (!parseTrack(track)) return false;
+
+        globalTempo = track._tempo;
+        globalBeatsPerBar = track._beatsPerBar;
+        TRACE("Tempo: %u. Beats per bar: %u\n", globalTempo, globalBeatsPerBar);
+        
         if (track._name.isEmpty())
         {
             track._name = "Track #";
             track._name += i;            
         }
+
         _tracks.push_back(std::move(track));
 
         Tracer::traceFreeHeap();
@@ -56,7 +65,7 @@ bool File::load(const char* filename)
 
     if (!SPIFFS.exists(filename))
     {
-        setError("Failed to open file");
+        _error = "Failed to open file";
         return false;
     }
     
@@ -71,7 +80,7 @@ bool File::load(const char* filename)
         success = parse(bufferPtr, fileSize); 
     else
     {
-        setError("Failed to read complete file");
+        _error = "Failed to read complete file";
         success = false;
     }
 
@@ -83,21 +92,21 @@ bool File::parseHeader()
 {
     if (!checkBytes("MThd", 4))
     {
-        setError("Invalid MIDI header signature");
+        _error = "Invalid MIDI header signature";
         return false;
     }
     
     uint32_t headerLength = readDWord();
     if (headerLength != 6)
     {
-        setError("Invalid MIDI header length");
+        _error = "Invalid MIDI header length";
         return false;
     }
     
     _format = readWord();
     if (_format > 2)
     {
-        setError("Unsupported MIDI format");
+        _error = "Unsupported MIDI format";
         return false;
     }
     
@@ -112,7 +121,7 @@ bool File::parseTrack(Track& outTrack)
 
     if (!checkBytes("MTrk", 4))
     {
-        setError("Invalid track signature");
+        _error = "Invalid track signature";
         return false;
     }
     
@@ -120,7 +129,7 @@ bool File::parseTrack(Track& outTrack)
     size_t trackEnd = _pos + length;
     if (trackEnd > _size)
     {
-        setError("Track extends beyond end of file");
+        _error = "Track extends beyond end of file";
         return false;
     }
     _currentTrackEnd = trackEnd;
@@ -169,7 +178,7 @@ bool File::parseEvent(uint8_t& runningStatus, Track& track, Event& outEvent)
         size_t remaining = (_currentTrackEnd > _pos) ? (_currentTrackEnd - _pos) : 0;
         if (length > remaining)
         {
-            setError("Meta event length exceeds track bounds");
+            _error = "Meta event length exceeds track bounds";
             length = static_cast<uint32_t>(remaining);
         }
 
@@ -191,10 +200,26 @@ bool File::parseEvent(uint8_t& runningStatus, Track& track, Event& outEvent)
                 uint8_t b0 = readByte();
                 uint8_t b1 = readByte();
                 uint8_t b2 = readByte();
-                _tempo = (b0 << 16) | (b1 << 8) | b2;
+                track._tempo = (b0 << 16) | (b1 << 8) | b2;
                 if (length > 3)
                     skipBytes(length - 3);
-                TRACE("Tempo: %u\n", _tempo);
+                TRACE("Tempo: %u\n", track._tempo);
+            }
+            else
+            {
+                skipBytes(length);
+            }
+        }
+        else if (metaType == MetaEventType::TimeSignature)
+        {
+            if (length >= 2)
+            {
+                track._beatsPerBar = readByte();  // numerator
+                uint8_t denominatorPower = readByte(); // denominator as power of 2
+                uint8_t denominator = 1 << denominatorPower; // actual denominator = 2^denominatorPower
+                if (length > 2)
+                    skipBytes(length - 2);
+                TRACE("Time Signature: %u/%u\n", track._beatsPerBar, denominator);
             }
             else
             {
@@ -277,7 +302,7 @@ uint32_t File::readVariableLength()
     {
         byte = readByte();
         value = (value << 7) | (byte & 0x7F);
-    } while ((byte & 0x80) && !isEOF());
+    } while ((byte & 0x80) && _pos < _size);
     
     return value;
 }
@@ -296,18 +321,11 @@ bool File::checkBytes(const char* expected, size_t length)
     return match;
 }
 
-void File::setError(const String& error)
-{
-    _error = error;
-}
-
 uint32_t File::getTotalEvents() const
 {
     uint32_t total = 0;
-    for (const auto& track : _tracks)
-    {
+    for (const Track& track : _tracks)
         total += track.getEvents().size();
-    }
     return total;
 }
 
@@ -348,34 +366,49 @@ void Track::play(std::function<void(const Event&)> midiEventFunc)
 
     uint32_t startTime = millis();
     uint32_t absoluteTicks = 0;
-    
+    uint32_t nextMetronomeTicks = 0; // First metronome beat is immediate
+    uint8_t beat = 0; // Beat counter for metronome (0 to _beatsPerBar-1)
+
     for (const Event& event : _events)
     {
         _playingForMs = millis() - startTime;
         absoluteTicks += event.getDeltaTicks();
-        uint32_t eventTimeMs = uint32_t(_filePtr->ticksToMs(absoluteTicks));
+        uint32_t eventTimeMs = uint32_t(ticksToMs(absoluteTicks));
         
+        // Emit metronome events for any beats before this event, with proper timing
+        while (nextMetronomeTicks < absoluteTicks)
+        {
+            uint32_t metronomeTimeMs = uint32_t(ticksToMs(nextMetronomeTicks));
+            if (_playingForMs < metronomeTimeMs)
+            {
+                uint32_t delayMs = static_cast<uint32_t>(metronomeTimeMs - _playingForMs);
+                delay(delayMs);
+                _playingForMs = millis() - startTime;
+            }
+            Event metronomeEvent(0xF8, beat);
+            midiEventFunc(metronomeEvent);
+            nextMetronomeTicks += _division;
+            beat = (beat + 1) % _beatsPerBar;
+        }
+        
+        // Await the next event
         if (_playingForMs < eventTimeMs)
         {
             uint32_t delayMs = static_cast<uint32_t>(eventTimeMs - _playingForMs);
             delay(delayMs);
         }
         
+        // Emit the event
         midiEventFunc(event);
     }
-    
-    _playingForMs = 0; // Done playing.
 }
 
 float Track::getDurationSeconds() const
 {
     uint32_t absoluteTicks = 0;
-    for (const auto& event : _events)
-    {
+    for (const Event& event : _events)
         absoluteTicks += event.getDeltaTicks();
-    }
-    
-    return _filePtr->ticksToMs(absoluteTicks) / 1000.0f;
+    return ticksToMs(absoluteTicks) / 1000.0f;
 }
 
 uint32_t Track::getTotalNotes() const

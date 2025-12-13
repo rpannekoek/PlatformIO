@@ -16,6 +16,7 @@ This is a PlatformIO/Arduino project for an ESP32-based device with embedded sys
 
 ### Layout
 - Use Allman style for curly braces
+- Curly braces can be omitted if there is only one statement in the block
 - Use proper formatting with 4-space indentation
 - Keep fields and methods together. Fields first.
 

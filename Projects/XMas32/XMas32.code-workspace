@@ -65,6 +65,7 @@
 			"typeinfo": "cpp",
 			"compare": "cpp",
 			"span": "cpp"
-		}
+		},
+		"powershell.cwd": "XMas32"
 	}
 }

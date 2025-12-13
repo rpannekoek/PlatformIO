@@ -16,10 +16,11 @@
 #include "PersistentData.h"
 #include "MIDI.h"
 
-constexpr uint8_t RGB_LED_PIN = 32; // TODO
+constexpr uint8_t RGB_LED_PIN = 32;
 
 constexpr uint32_t UPDATE_SCHEDULE_INTERVAL = 51; // 2*255*0.1
 constexpr int BLINK_INTERVAL = 5;
+constexpr int METRONOME_LED = 7;
 
 constexpr size_t LIGHT_FX_COUNT = 4;
 const char* LightFXNames[] = { "None", "Flame", "Blink", "Spectrum" };
@@ -35,6 +36,7 @@ enum FileId
     Styles,
     HomeIcon,
     LogFileIcon,
+    MusicIcon,
     SettingsIcon,
     _LastFile
 };
@@ -45,6 +47,7 @@ const char* Files[] =
     "styles.css",
     "Home.svg",
     "LogFile.svg",
+    "Music.svg",
     "Settings.svg",
 };
 
@@ -80,11 +83,13 @@ void updateSchedule()
     uint16_t currentScheduleTime = (currentTime - startOfDay) / 60;
     for (int i = 0; i < MAX_SCHEDULES; i++)
     {
-        int scheduleIndex = scheduleIndexes[i];
-        if (scheduleIndex == MAX_SCHEDULE_ENTRIES - 1) continue;
-        ScheduleEntry& scheduleEntry = PersistentData.scheduleEntries[i][scheduleIndex + 1];
-        if (scheduleEntry.time != 0 && currentScheduleTime >= scheduleEntry.time)
-            scheduleIndexes[i] = ++scheduleIndex;
+        for (int n = scheduleIndexes[i] + 1; n < MAX_SCHEDULE_ENTRIES; n++)
+        {
+            ScheduleEntry& scheduleEntry = PersistentData.scheduleEntries[i][n];
+            if (scheduleEntry.time == 0 || currentScheduleTime < scheduleEntry.time)
+                break;
+            scheduleIndexes[i] = n;
+        }
     }
 }
 
@@ -212,6 +217,19 @@ void showNote(uint8_t note, uint8_t velocity)
         colorIndex);
 }
 
+void showMetronome(uint8_t beat)
+{
+    TRACE("showMetronome(%u)\n", beat);
+
+    LEDColors[METRONOME_LED] = (beat == 0) ? CRGB::White : CRGB::Gray25;
+    FastLED.show();
+    LightFXTicker.once_ms(
+        100, 
+        []() {
+            LEDColors[METRONOME_LED] = CRGB::Black;
+            FastLED.show();
+        });
+}
 
 void onMidiEvent(const MIDI::Event& midiEvent)
 {
@@ -220,6 +238,8 @@ void onMidiEvent(const MIDI::Event& midiEvent)
         showNote(midiEvent.getNote(), midiEvent.getVelocity());
     else if (eventType == MIDI::EventType::NoteOff)
         showNote(midiEvent.getNote(), 0);
+    else if (eventType == MIDI::EventType::Metronome)
+        showMetronome(midiEvent.getBeat());
 }
 
 
@@ -382,6 +402,7 @@ void handleHttpRootRequest()
     Html.writeRow("WiFi RSSI", "%d dBm", int(WiFi.RSSI()));
     Html.writeRow("Free Heap", "%0.1f kB", float(ESP.getFreeHeap()) / 1024);
     Html.writeRow("Uptime", "%0.1f days", float(WiFiSM.getUptime()) / SECONDS_PER_DAY);
+    Html.writeRow("LEDs", "%d FPS", FastLED.getFPS());
     Html.writeTableEnd();
     Html.writeSectionEnd();
 
@@ -496,19 +517,18 @@ void handleHttpScheduleFormPost()
     handleHttpRootRequest();
 }
 
-void handleHttpMidiConfigRequest()
+void handleHttpMidiRequest()
 {
-    Tracer tracer("handleHttpMidiConfigRequest");
+    Tracer tracer("handleHttpMidiRequest");
     ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
-    Html.writeHeader("MIDI config", Nav);
+    Html.writeHeader("MIDI music", Nav);
     Html.writeHeading(MIDI_FILE, 1);
 
     if (MidiFile.getError().isEmpty())
     {
         Html.writeTableStart();
         Html.writeRow("Duration", "%s", formatTimeSpan(MidiFile.getDurationSeconds(), false));
-        Html.writeRow("Tempo", "%0.0f BPM", MidiFile.getBPM());
         Html.writeRow("Tracks", "%u", MidiFile.getTracks().size());
         Html.writeRow("Notes", "%u", MidiFile.getTotalNotes());
         Html.writeTableEnd();
@@ -570,7 +590,7 @@ void handleHttpMidiConfigPost()
     PersistentData.selectedMidiTrack = WebServer.arg("track").toInt();
     PersistentData.writeToEEPROM();
 
-    handleHttpMidiConfigRequest();
+    handleHttpMidiRequest();
 }
 
 
@@ -628,10 +648,10 @@ void setup()
         },
         MenuItem
         {
-            .icon = Files[SettingsIcon],
-            .label = "MIDI Config",
+            .icon = Files[MusicIcon],
+            .label = "MIDI",
             .urlPath ="midi",
-            .handler = handleHttpMidiConfigRequest,
+            .handler = handleHttpMidiRequest,
             .postHandler = handleHttpMidiConfigPost
         },
         MenuItem

@@ -18,7 +18,8 @@ enum class EventType : uint8_t
     ProgramChange = 0xC0,
     ChannelPressure = 0xD0,
     PitchBend = 0xE0,
-    SystemExclusive = 0xF0
+    SystemExclusive = 0xF0,
+    Metronome = 0xF0
 };
 
 enum class MetaEventType : uint8_t
@@ -45,6 +46,9 @@ class Event
     friend class File;
     
 public:
+    Event() = default;
+    Event(uint8_t statusByte, uint8_t beat) : _statusByte(statusByte), _byte1(beat) {}
+    
     uint32_t getDeltaTicks() const { return _deltaTicks; }
     EventType getType() const { return static_cast<EventType>(_statusByte & 0xF0); }
     uint8_t getChannel() const { return _statusByte & 0x0F; }
@@ -52,6 +56,7 @@ public:
     uint8_t getVelocity() const { return _byte2; }
     uint8_t getController() const { return _byte1; }
     uint8_t getControllerValue() const { return _byte2; }
+    uint8_t getBeat() const { return _byte1; }
     uint16_t getPitchBend() const { return (_byte2 << 7) | _byte1; }
 
 private:
@@ -76,8 +81,6 @@ public:
     uint16_t getTrackCount() const { return _trackCount; }
     uint16_t getDivision() const { return _division; }
     const std::vector<Track>& getTracks() const { return _tracks; }
-    uint32_t getTempo() const { return _tempo; }
-    float getBPM() const { return 60000000.0f / (float)_tempo; }
     Track* getCurrentlyPlaying() const { return _currentlyPlayingPtr; }
     
     uint32_t getTotalEvents() const;
@@ -85,21 +88,10 @@ public:
     float getDurationSeconds() const;
     void play(uint16_t trackIndex, std::function<void(const Event&)> midiEventFunc);
     
-    float getMillisecondsPerTick() const
-    {
-        return (float)_tempo / (float)_division / 1000.0f;
-    }
-    
-    float ticksToMs(uint32_t ticks) const
-    {
-        return ticks * getMillisecondsPerTick();
-    }
-    
 private:
     uint16_t _format = 0;
     uint16_t _trackCount = 0;
     uint16_t _division = 480;
-    uint32_t _tempo = 500000;
     std::vector<Track> _tracks;
     Track* _currentlyPlayingPtr = nullptr;
     
@@ -118,8 +110,6 @@ private:
     uint32_t readVariableLength();
     void skipBytes(size_t count);
     bool checkBytes(const char* expected, size_t length);
-    bool isEOF() const { return _pos >= _size; }
-    void setError(const String& error);
 };
 
 class Track
@@ -129,17 +119,34 @@ class Track
 public:
     const std::vector<Event>& getEvents() const { return _events; }
     const String& getName() const { return _name; }
+    uint32_t getTempo() const { return _tempo; }
+    float getBPM() const { return 60000000.0f / (float)_tempo; }
     uint32_t getTotalNotes() const;
     float getDurationSeconds() const;
     uint32_t getPlayingForSeconds() const { return _playingForMs / 1000; }
     
+    float getMillisecondsPerTick() const
+    {
+        return (float)_tempo / (float)_division / 1000.0f;
+    }
+    
+    float ticksToMs(uint32_t ticks) const
+    {
+        return ticks * getMillisecondsPerTick();
+    }
+    
 private:
     std::vector<Event> _events;
     String _name;
-    File* _filePtr;
+    uint16_t _division = 480;
+    uint32_t _tempo = 500000;
+    uint8_t _beatsPerBar = 4;
     uint32_t _playingForMs = 0;
 
-    Track(File* file) : _filePtr(file) {}
+    Track(uint16_t division, uint32_t tempo, uint8_t beatsPerBar) 
+        : _division(division), _tempo(tempo), _beatsPerBar(beatsPerBar)
+    {}
+
     void play(std::function<void(const Event&)> midiEventFunc);
 };
 
