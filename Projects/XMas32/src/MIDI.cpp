@@ -360,6 +360,12 @@ void File::play(uint16_t trackIndex, std::function<void(const Event&)> midiEvent
     _currentlyPlayingPtr = nullptr;
 }
 
+void File::stop()
+{
+    // Best-effort: indicate not playing; task deletion handled by caller.
+    _currentlyPlayingPtr = nullptr;
+}
+
 void Track::play(std::function<void(const Event&)> midiEventFunc)
 {
     Tracer tracer("Track::play");

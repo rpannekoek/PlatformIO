@@ -68,6 +68,7 @@ std::unique_ptr<fl::Fx1d> GlobalLightFXPtr = nullptr;
 CRGB LEDColors[RGB_LED_COUNT];
 CHSV LEDColorsHSV[RGB_LED_COUNT];
 int scheduleIndexes[MAX_SCHEDULES];
+TaskHandle_t MidiPlayTaskHandle = nullptr;
 
 time_t currentTime = 0;
 time_t startOfDay = 0;
@@ -328,26 +329,27 @@ void onMidiEvent(const MIDI::Event& midiEvent)
 }
 
 
-void midiPlayTask(void* parameter)
+void midiPlayTask(void* taskParam)
 {
     Tracer tracer("midiPlayTask");
 
-    LightFXTicker.detach();
-    for (int i = 0; i < RGB_LED_COUNT; i++)
-        LEDColors[i] = CRGB::Black;
-    FastLED.show();
+    uint32_t delayMs = (uint32_t)taskParam;
+    if (delayMs != 0) delay(delayMs);
 
     MidiFile.play(PersistentData.selectedMidiTrack, onMidiEvent);
 
     startBackgroundLightFX();
-
+    
+    MidiPlayTaskHandle = nullptr;
     vTaskDelete(nullptr);
 }
 
 
-void playMidiTrack()
+void playMidiTrack(uint32_t delayMs = 0)
 {
     Tracer tracer("playMidiTrack");
+
+    if (MidiFile.getCurrentlyPlaying()) return;
 
     if (PersistentData.selectedMidiTrack < 0 || 
         PersistentData.selectedMidiTrack >= MidiFile.getTracks().size())
@@ -355,15 +357,36 @@ void playMidiTrack()
         WiFiSM.logEvent("Invalid MIDI track selection: %d", PersistentData.selectedMidiTrack);
         return;
     }
-    
+
+    if (GlobalLightFXPtr) stopGlobalLightFX();   
+
+    LightFXTicker.detach();
+    for (int i = 0; i < RGB_LED_COUNT; i++)
+        LEDColors[i] = CRGB::Black;
+    FastLED.show();
+
     xTaskCreate(
         midiPlayTask,                                   // Task function
         "MidiPlayTask",                                 // Task name
         4096,                                           // Stack size (bytes)
-        nullptr,                                        // Parameter passed to task
+        (void*)delayMs,                                 // Parameter passed to task
         1,                                              // Priority
-        nullptr                                         // Task handle (not needed)
+        &MidiPlayTaskHandle                             // Task handle
     );
+}
+
+void stopMidiTrack()
+{
+    Tracer tracer("stopMidiTrack");
+
+    if (MidiPlayTaskHandle)
+    {
+        vTaskDelete(MidiPlayTaskHandle);
+        MidiPlayTaskHandle = nullptr;
+    }
+
+    MidiFile.stop();
+    startBackgroundLightFX();
 }
 
 
@@ -476,8 +499,15 @@ void handleHttpRootRequest()
 
     int identify = WebServer.hasArg("identify") ? WebServer.arg("identify").toInt() : -1;
 
-    Html.writeHeader("Home", Nav);
+    String globalFX;
+    if (GlobalLightFXPtr)
+        globalFX = GlobalLightFXPtr->fxName().c_str();
+    else if (MidiFile.getCurrentlyPlaying())
+        globalFX = String("MIDI ") + formatTimeSpan(MidiFile.getCurrentlyPlaying()->getPlayingForSeconds(), false);
+    else
+        globalFX = "(None)";
 
+    Html.writeHeader("Home", Nav);
     Html.writeDivStart("flex-container");
 
     Html.writeSectionStart("Status");
@@ -486,7 +516,7 @@ void handleHttpRootRequest()
     Html.writeRow("Free Heap", "%0.1f kB", float(ESP.getFreeHeap()) / 1024);
     Html.writeRow("Uptime", "%0.1f days", float(WiFiSM.getUptime()) / SECONDS_PER_DAY);
     Html.writeRow("LEDs", "%d FPS", FastLED.getFPS());
-    Html.writeRow("Global FX", GlobalLightFXPtr ? GlobalLightFXPtr->fxName().c_str() : "(None)");
+    Html.writeRow("Global FX", globalFX.c_str());
     Html.writeTableEnd();
     Html.writeSectionEnd();
 
@@ -660,6 +690,14 @@ void handleHttpMidiRequest()
                 "Currently playing: '%s' - %s",
                 playingTrackPtr->getName().c_str(),
                 formatTimeSpan(playingTrackPtr->getPlayingForSeconds(), false));
+
+            if (WiFiSM.shouldPerformAction("stop"))
+            {
+                Html.writeParagraph("Stopping...");
+                stopMidiTrack();
+            }
+            else
+                Html.writeActionLink("stop", "Stop", currentTime, ButtonClass);
         }
     }
     else
@@ -676,6 +714,24 @@ void handleHttpMidiConfigPost()
     PersistentData.writeToEEPROM();
 
     handleHttpMidiRequest();
+}
+
+
+void handleHttpMidiStartRequest()
+{
+    Tracer tracer("handleHttpMidiStartRequest");
+
+    String result;
+    if (MidiFile.getCurrentlyPlaying())
+        result = "Already playing";
+    else
+    {
+        uint32_t delayMs = WebServer.hasArg("delay") ? WebServer.arg("delay").toInt() : 0;
+        playMidiTrack(delayMs);
+        result = String("Started. Delay=") + delayMs;
+    }
+
+    WebServer.send(200, "text/plain", result);
 }
 
 
@@ -740,6 +796,12 @@ void setup()
         },
     };
     Nav.registerHttpHandlers(WebServer);
+
+    WebServer.on("/midi/start", handleHttpMidiStartRequest);
+    WebServer.on("/midi/stop", [](){
+        stopMidiTrack();
+        WebServer.send(200, "text/plain", "Stopped");
+        });
 
     WiFiSM.registerStaticFiles(Files, _LastFile);
     WiFiSM.on(WiFiInitState::TimeServerSynced, onTimeServerSynced);

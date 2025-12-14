@@ -87,6 +87,7 @@ public:
     uint32_t getTotalNotes() const;
     float getDurationSeconds() const;
     void play(uint16_t trackIndex, std::function<void(const Event&)> midiEventFunc);
+    void stop();
     
 private:
     uint16_t _format = 0;
