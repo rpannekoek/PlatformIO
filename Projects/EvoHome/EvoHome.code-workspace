@@ -7,8 +7,7 @@
 			"path": "../../Libraries"
 		},
 		{
-			"name": "EvoHome",
-			"path": "../EvoHome"
+			"path": "../../Shared"
 		}
 	],
 	"settings": {

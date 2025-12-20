@@ -5,6 +5,9 @@
 		},
 		{
 			"path": "../../Libraries"
+		},
+		{
+			"path": "../../Shared"
 		}
 	],
 	"settings": {
