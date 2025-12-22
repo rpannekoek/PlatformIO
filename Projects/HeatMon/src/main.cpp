@@ -1,17 +1,10 @@
 #include <Arduino.h>
-#include <ESPWiFi.h>
-#include <ESPWebServer.h>
-#include <ESPFileSystem.h>
 #include <WiFiStateMachine.h>
-#include <WiFiNTP.h>
 #include <WiFiFTP.h>
 #include <TimeUtils.h>
 #include <Tracer.h>
-#include <StringBuilder.h>
 #include <HtmlWriter.h>
 #include <Navigation.h>
-#include <LED.h>
-#include <Log.h>
 #include <FlowSensor.h>
 #include <EnergyMeter.h>
 #include <OneWire.h>
@@ -707,19 +700,20 @@ void handleHttpEventLogRequest()
 {
     Tracer tracer(F("handleHttpEventLogRequest"));
     ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
+    Action clearAction = { F("clear"), F("Clear event log") };
 
-    if (WiFiSM.shouldPerformAction(F("clear")))
+    Html.writeHeader(F("Event log"), Nav);
+
+    if (WiFiSM.shouldPerform(clearAction))
     {
         EventLog.clear();
         WiFiSM.logEvent(F("Event log cleared."));
     }
 
-    Html.writeHeader(F("Event log"), Nav);
-
     for (const char* event : EventLog)
         Html.writeDiv(F("%s"), event);
 
-    Html.writeActionLink(F("clear"), F("Clear event log"), currentTime, ButtonClass);
+    Html.writeActionLink(clearAction);
 
     Html.writeFooter();
 }
@@ -729,6 +723,7 @@ void handleHttpConfigFormRequest()
 {
     Tracer tracer(F("handleHttpConfigFormRequest"));
     ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
+    Action resetAction = { F("reset"), F("Reset ESP") };
 
     Html.writeHeader(F("Settings"), Nav);
 
@@ -740,13 +735,13 @@ void handleHttpConfigFormRequest()
     if (!TempSensors.isConnected(PersistentData.tempSensorAddress[TopicId::TBuffer]))
         Html.writeParagraph(F("NOTE: No buffer sensor is connected. Leave 'T<sub>buffer, max</sub>' zero to suppress buffer temperature in UI."));
 
-    if (WiFiSM.shouldPerformAction(F("reset")))
+    if (WiFiSM.shouldPerform(resetAction))
     {
         Html.writeParagraph(F("Resetting..."));
         WiFiSM.reset();
     }
     else
-        Html.writeActionLink(F("reset"), F("Reset ESP"), currentTime, ButtonClass);
+        Html.writeActionLink(resetAction);
 
     Html.writeFooter();
 }

@@ -1,21 +1,13 @@
 #include <Arduino.h>
-#include <math.h>
-#include <ESPWiFi.h>
-#include <ESPWebServer.h>
-#include <ESPFileSystem.h>
 #include <WiFiStateMachine.h>
-#include <WiFiNTP.h>
 #include <WiFiFTP.h>
 #include <Ticker.h>
 #include <TimeUtils.h>
 #include <Tracer.h>
-#include <StringBuilder.h>
 #include <Navigation.h>
 #include <HtmlWriter.h>
 #include <HomeWizardP1Client.h>
-#include <LED.h>
 #include <Localization.h>
-#include <Log.h>
 #include <BLE.h>
 #include <OneWire.h>
 #include <DallasTemperature.h>
@@ -980,13 +972,14 @@ void onWiFiInitialized()
 void handleHttpBluetoothRequest()
 {
     Tracer tracer(F(__func__));
+    Action startDiscoveryAction = { .name = "startDiscovery", .label = "Scan for devices", .reloadAfterSeconds = 5 };
 
     BluetoothState btState = Bluetooth.getState();
     uint16_t refreshInterval = (btState == BluetoothState::Discovering) ? 5 : 0;
 
     Html.writeHeader(L10N("Bluetooth"), Nav, refreshInterval);
 
-    if (WiFiSM.shouldPerformAction("startDiscovery"))
+    if (WiFiSM.shouldPerform(startDiscoveryAction))
     {
         if (Bluetooth.startDiscovery())
         {
@@ -997,7 +990,7 @@ void handleHttpBluetoothRequest()
             Html.writeParagraph("Scanning for devices failed.");
     }
     else if (btState == BluetoothState::Initialized || btState == BluetoothState::DiscoveryComplete)
-        Html.writeActionLink("startDiscovery", "Scan for devices", currentTime, ButtonClass);
+        Html.writeActionLink(startDiscoveryAction);
 
     if (Bluetooth.isDeviceDetected())
         Html.writeParagraph("Registered device detected");
@@ -1155,8 +1148,9 @@ void handleHttpChargeLogRequest()
 void handleHttpEventLogRequest()
 {
     Tracer tracer(F(__func__));
+    Action clearAction = { .name = "clear", .label = "Clear event log" };
 
-    if (WiFiSM.shouldPerformAction("clear"))
+    if (WiFiSM.shouldPerform(clearAction))
     {
         EventLog.clear();
         WiFiSM.logEvent("Event log cleared.");
@@ -1165,11 +1159,9 @@ void handleHttpEventLogRequest()
     Html.writeHeader(L10N("Event log"), Nav);
 
     for (const char* event : EventLog)
-    {
         Html.writeDiv("%s", event);
-    }
 
-    Html.writeActionLink("clear", "Clear event log", currentTime, ButtonClass);
+    Html.writeActionLink(clearAction);
 
     Html.writeFooter();
 
@@ -1369,12 +1361,14 @@ void handleHttpCalibrateRequest()
 void handleHttpConfigFormRequest()
 {
     Tracer tracer(F(__func__));
+    Action p1TokenAction = { .name = "p1Token", .label = "Get P1 Token" };
+    Action resetAction = { .name = "reset", .label = "Reset ESP" };
 
     Html.writeHeader(L10N("Settings"), Nav);
 
     if ((PersistentData.p1Meter[0] != 0) && (PersistentData.p1BearerToken[0] == 0))
     {
-        if (WiFiSM.shouldPerformAction("p1Token"))
+        if (WiFiSM.shouldPerform(p1TokenAction))
         {
             String bearerToken = SmartMeter.getBearerToken(PersistentData.hostName);
             if (bearerToken.length() > 0)
@@ -1385,7 +1379,7 @@ void handleHttpConfigFormRequest()
                     SmartMeter.getLastError().c_str());
         }
         else
-            Html.writeActionLink("p1Token", "Get P1 Token", currentTime, ButtonClass);
+            Html.writeActionLink(p1TokenAction);
     }
 
     Html.writeFormStart("/config", "grid");
@@ -1393,10 +1387,13 @@ void handleHttpConfigFormRequest()
     Html.writeSubmitButton("Save");
     Html.writeFormEnd();
 
-    if (WiFiSM.shouldPerformAction("reset"))
+    if (WiFiSM.shouldPerform(resetAction))
+    {
+        Html.writeParagraph("Resetting...");
         WiFiSM.reset();
+    }
     else
-        Html.writeActionLink("reset", "Reset ESP", currentTime, ButtonClass);
+        Html.writeActionLink(resetAction);
 
     Html.writeFooter();
 
@@ -1441,35 +1438,43 @@ int determineMinChargeTimeOptions()
 }
 
 
-void writeActions()
+void writeActions(
+    Action& selftestAction,
+    Action& authorizeAction,
+    Action& suspendAction,
+    Action& resumeAction)
 {
+    // Actions which require a reload are passed in as parameters. These don't:
+    Action autoSuspendAction = { .name = "autoSuspend", .label = L10N("Solar off")};
+    Action autoResumeAction = { .name = "autoResume", .label = L10N("Solar on")};
+
     Html.writeDivStart("actions");
     switch (state)
     {
         case EVSEState::Ready:
         case EVSEState::Failure:
-            if (WiFiSM.shouldPerformAction("selftest"))
+            if (WiFiSM.shouldPerform(selftestAction))
             {
                 setState(EVSEState::SelfTest);
                 Html.writeParagraph(L10N("Performing self-test..."));
             }
             else
-                Html.writeActionLink("selftest", L10N("Self Test"), currentTime, ActionClass, Files[CalibrateIcon]);
+                Html.writeActionLink(selftestAction, ActionClass, Files[CalibrateIcon]);
             break;
 
         case EVSEState::Authorize:
-            if (WiFiSM.shouldPerformAction("authorize"))
+            if (WiFiSM.shouldPerform(authorizeAction))
             {
                 isWebAuthorized = true;
                 Html.writeParagraph(L10N("Start charging..."));
             }
             else if (!isWebAuthorized)
-                Html.writeActionLink("authorize", L10N("Start"), currentTime, ActionClass, Files[FlashIcon]);
+                Html.writeActionLink(authorizeAction, ActionClass, Files[FlashIcon]);
             break;
 
         case EVSEState::AwaitCharging:
         case EVSEState::Charging:
-        if (WiFiSM.shouldPerformAction("autoSuspend"))
+        if (WiFiSM.shouldPerform(autoSuspendAction))
         {
             int selected = determineMinChargeTimeOptions();
             Html.writeFormStart("/");
@@ -1489,9 +1494,9 @@ void writeActions()
             autoSuspendMinTime = currentTime + hours * SECONDS_PER_HOUR;
         }
         else if (autoSuspendMinTime == 0)
-            Html.writeActionLink("autoSuspend", L10N("Solar off"), currentTime, ActionClass, Files[MeterIcon]);
+            Html.writeActionLink(autoSuspendAction, ActionClass, Files[MeterIcon]);
 
-        if (WiFiSM.shouldPerformAction("suspend"))
+        if (WiFiSM.shouldPerform(suspendAction))
             {
                 if (stopCharging(true))
                     Html.writeParagraph(L10N("Suspending charging..."));
@@ -1499,17 +1504,17 @@ void writeActions()
                     Html.writeParagraph(L10N("Suspend charging failed."));
             }
             else
-                Html.writeActionLink("suspend", L10N("Suspend"), currentTime, ActionClass, Files[CancelIcon]);
+                Html.writeActionLink(suspendAction, ActionClass, Files[CancelIcon]);
 
             break;
 
         case EVSEState::ChargeSuspended:
-            if (WiFiSM.shouldPerformAction("autoResume"))
+            if (WiFiSM.shouldPerform(autoResumeAction))
                 autoResumeTime = currentTime;
             else if (autoResumeTime == 0)
-                Html.writeActionLink("autoResume", L10N("Solar on"), currentTime, ActionClass, Files[MeterIcon]);
+                Html.writeActionLink(autoResumeAction, ActionClass, Files[MeterIcon]);
 
-            if (WiFiSM.shouldPerformAction("resume"))
+            if (WiFiSM.shouldPerform(resumeAction))
             {
                 if (startCharging())
                     Html.writeParagraph(L10N("Resuming charging..."));
@@ -1517,7 +1522,7 @@ void writeActions()
                     Html.writeParagraph(L10N("Resume charging failed."));
             }
             else
-                Html.writeActionLink("resume", L10N("Resume"), currentTime, ActionClass, Files[FlashIcon]);
+                Html.writeActionLink(resumeAction, ActionClass, Files[FlashIcon]);
             break;
 
         case EVSEState::ChargeCompleted:
@@ -1555,6 +1560,10 @@ void writeChargingSessions()
 void handleHttpRootRequest()
 {
     Tracer tracer(F(__func__));
+    Action selftestAction = { .name = "selftest", .label = L10N("Self Test"), .reloadAfterSeconds = 2 };
+    Action authorizeAction = { .name = "authorize", .label = L10N("Start"), .reloadAfterSeconds = 2 };
+    Action suspendAction = { .name = "suspend", .label = L10N("Suspend"), .reloadAfterSeconds = 2 };
+    Action resumeAction = { .name = "resume", .label = L10N("Resume"), .reloadAfterSeconds = 2 };
 
     if (WiFiSM.isInAccessPointMode())
     {
@@ -1581,9 +1590,9 @@ void handleHttpRootRequest()
         EVSEStateColors[state],
         L10N(EVSEStateNames[state]));
 
-    Html.writeHeader("Home", Nav, HTTP_POLL_INTERVAL);
+    Html.writeHeader("Home", Nav, WiFiSM.getReloadInterval({selftestAction, authorizeAction, suspendAction, resumeAction}));
 
-    writeActions();
+    writeActions(selftestAction, authorizeAction, suspendAction, resumeAction);
 
     Html.writeDivStart("flex-container");
 

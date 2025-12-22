@@ -1,16 +1,9 @@
-#include <math.h>
-#include <ESPWiFi.h>
-#include <ESPWebServer.h>
-#include <ESPFileSystem.h>
+#include <Arduino.h>
 #include <WiFiStateMachine.h>
-#include <WiFiNTP.h>
 #include <WiFiFTP.h>
 #include <TimeUtils.h>
 #include <Tracer.h>
-#include <StringBuilder.h>
 #include <HtmlWriter.h>
-#include <Log.h>
-#include <LED.h>
 #include <AsyncHTTPRequest_Generic.h>
 #include "PersistentData.h"
 #include "Aquarea.h"
@@ -604,17 +597,24 @@ void handleHttpTestRequest()
 {
     Tracer tracer(F("handleHttpTestRequest"));
     ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
+    Action antiFreezeAction = { F("antiFreeze"), F("Test anti-freeze (switch)") };
+    Action defrostAction = { F("defrost"), F("Test defrost (switch)") };
+    Action solarPwmAction = { F("solarPWM"), F("Test solar pump PWM") };
+    Action pumpAction = { F("pump"), F("Pump"), 1 };
+    Action fillDayStatsAction  = { F("fillDayStats"), F("Fill Day Stats") };
+    Action fillTopicLogAction = { F("fillTopicLog"), F("Fill Topic Log") };
+    Action fillEventLogAction = { F("fillEventLog"), F("Fill Event Log") };
 
     Html.writeHeader(F("Test"), Nav);
 
-    if (WiFiSM.shouldPerformAction(F("antiFreeze")))
+    if (WiFiSM.shouldPerform(antiFreezeAction))
     {
         testAntiFreeze = !testAntiFreeze;
         const char* switchState = testAntiFreeze ? "on" : "off"; 
         Html.writeParagraph(F("Anti-freeze test: %s"), switchState);
     }
 
-    if (WiFiSM.shouldPerformAction(F("defrost")))
+    if (WiFiSM.shouldPerform(defrostAction))
     {
         testDefrost = !testDefrost;
         handleNewAquareaData();
@@ -622,7 +622,7 @@ void handleHttpTestRequest()
         Html.writeParagraph(F("Defrost test: %s"), switchState);
     }
 
-    if (WiFiSM.shouldPerformAction(F("solarPWM")))
+    if (WiFiSM.shouldPerform(solarPwmAction))
     {
         const int testSolarOnDeltaT = 7;
         const int testSolarOffDeltaT = 3;
@@ -645,19 +645,19 @@ void handleHttpTestRequest()
         Html.writeTableEnd();
     }
     
-    Html.writeActionLink(F("antiFreeze"), F("Test anti-freeze (switch)"), currentTime, ButtonClass);
-    Html.writeActionLink(F("defrost"), F("Test defrost (switch)"), currentTime, ButtonClass);
-    Html.writeActionLink(F("solarPWM"), F("Test solar pump PWM"), currentTime, ButtonClass);
+    Html.writeActionLink(antiFreezeAction);
+    Html.writeActionLink(defrostAction);
+    Html.writeActionLink(solarPwmAction);
 
-    if (WiFiSM.shouldPerformAction("pump"))
+    if (WiFiSM.shouldPerform(pumpAction))
     {
         bool success = otgwSetPump(true);
         Html.writeParagraph("%d", success);
     }
     else
-        Html.writeActionLink("pump", "Pump", currentTime, ButtonClass);
+        Html.writeActionLink(pumpAction);
 
-    if (WiFiSM.shouldPerformAction(F("fillDayStats")))
+    if (WiFiSM.shouldPerform(fillDayStatsAction))
     {
         for (int i = 0; i < 6; i++)
         {
@@ -669,9 +669,9 @@ void handleHttpTestRequest()
         Html.writeParagraph(F("Day Stats filled."));
     }
     else
-        Html.writeActionLink(F("fillDayStats"), F("Fill Day Stats"), currentTime, ButtonClass);
+        Html.writeActionLink(fillDayStatsAction);
 
-    if (WiFiSM.shouldPerformAction(F("fillTopicLog")))
+    if (WiFiSM.shouldPerform(fillTopicLogAction))
     {
         for (int i = 0; i < TOPIC_LOG_SIZE; i++)
         {
@@ -681,9 +681,9 @@ void handleHttpTestRequest()
         Html.writeParagraph(F("Topic Log filled."));
     }
     else
-        Html.writeActionLink(F("fillTopicLog"), F("Fill Topic Log"), currentTime, ButtonClass);
+        Html.writeActionLink(fillTopicLogAction);
 
-    if (WiFiSM.shouldPerformAction(F("fillEventLog")))
+    if (WiFiSM.shouldPerform(fillEventLogAction))
     {
         for (int i = 0; i < EVENT_LOG_LENGTH; i++)
         {
@@ -692,7 +692,7 @@ void handleHttpTestRequest()
         Html.writeParagraph(F("Event Log filled."));
     }
     else
-        Html.writeActionLink(F("fillEventLog"), F("Fill Event Log"), currentTime, ButtonClass);
+        Html.writeActionLink(fillEventLogAction);
 
     Html.writeFooter();
 }
@@ -765,10 +765,11 @@ void handleHttpEventLogRequest()
 {
     Tracer tracer(F("handleHttpEventLogRequest"));
     ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
+    Action clearAction = { F("clear"), F("Clear event log") };
 
     Html.writeHeader(F("Event log"), Nav);
 
-    if (WiFiSM.shouldPerformAction(F("clear")))
+    if (WiFiSM.shouldPerform(clearAction))
     {
         EventLog.clear();
         WiFiSM.logEvent(F("Event log cleared."));
@@ -777,7 +778,7 @@ void handleHttpEventLogRequest()
     for (const char* event : EventLog)
         Html.writeDiv(F("%s"), event);
 
-    Html.writeActionLink(F("clear"), F("Clear event log"), currentTime, ButtonClass);
+    Html.writeActionLink(clearAction);
 
     Html.writeFooter();
 }
@@ -787,6 +788,7 @@ void handleHttpConfigFormRequest()
 {
     Tracer tracer(F("handleHttpConfigFormRequest"));
     ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
+    Action resetAction = { F("reset"), F("Reset ESP") };
 
     Html.writeHeader(F("Settings"), Nav);
 
@@ -795,13 +797,13 @@ void handleHttpConfigFormRequest()
     Html.writeSubmitButton(F("Save"));
     Html.writeFormEnd();
 
-    if (WiFiSM.shouldPerformAction(F("reset")))
+    if (WiFiSM.shouldPerform(resetAction))
     {
         Html.writeParagraph(F("Resetting..."));
         WiFiSM.reset();
     }
     else
-        Html.writeActionLink(F("reset"), F("Reset ESP"), currentTime, ButtonClass);
+        Html.writeActionLink(resetAction);
 
     Html.writeFooter();
 }

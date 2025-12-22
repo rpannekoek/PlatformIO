@@ -19,7 +19,7 @@ void HtmlWriter::setTitlePrefix(const String& prefix)
 }
 
 
-void HtmlWriter::writeHeader(const String& title, bool includeHomePageLink, bool includeHeading, uint16_t refreshInterval)
+void HtmlWriter::writeHeader(const String& title, const Navigation& navigation, uint16_t refreshInterval)
 {
     _output.clear();
     _output.println(F("<!DOCTYPE html>"));
@@ -36,16 +36,6 @@ void HtmlWriter::writeHeader(const String& title, bool includeHomePageLink, bool
     _output.println(F("</head>"));
     
     _output.println(F("<body>"));
-    if (includeHomePageLink)
-        _output.printf(F("<a href=\"/\"><img src=\"%s\"></a>"), _icon.c_str());
-    if (includeHeading)
-        _output.printf(F("<h1>%s</h1>\r\n"), title.c_str());
-}
-
-
-void HtmlWriter::writeHeader(const String& title, const Navigation& navigation, uint16_t refreshInterval)
-{
-    writeHeader(title, false, false, refreshInterval);
 
     _output.println(F("<script>"));
     _output.println(F("function setNavWidth(w) { document.getElementById(\"nav\").style.width = w; }"));

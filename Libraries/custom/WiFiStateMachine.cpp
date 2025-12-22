@@ -585,7 +585,7 @@ void WiFiStateMachine::scanForBetterAccessPoint()
 
 void WiFiStateMachine::reset()
 {
-    _resetMillis = millis() + 1000;
+    _resetMillis = millis() + 100;
 }
 
 
@@ -620,18 +620,37 @@ String WiFiStateMachine::getResetReason()
 }
 
 
-bool WiFiStateMachine::shouldPerformAction(String name)
+bool WiFiStateMachine::shouldPerformAction(String name, bool evaluateOnly)
 {
     if (!_webServer.hasArg(name))
         return false; // Action not requested
 
     time_t actionTime = _webServer.arg(name).toInt();
 
-    if (actionTime <= _actionPerformedTime)
-        return false; // Action already performed
+    if (actionTime == _actionPerformedTime)
+    {
+        TRACE("Action '%s' (%u) already performed earlier.\n", name.c_str(), actionTime);
+        return false;
+    }
 
-    _actionPerformedTime = actionTime;
+    if (!evaluateOnly)
+    {
+        TRACE("Perform action '%s' (%u)\n", name.c_str(), actionTime);
+        _actionPerformedTime = actionTime;
+    }
+
     return true;
+}
+
+
+uint16_t WiFiStateMachine::getReloadInterval(const std::vector<Action>& actions)
+{
+    for (const Action& action : actions)
+    {
+        if (shouldPerformAction(action.name, true))
+            return action.reloadAfterSeconds;
+    }
+    return 0;
 }
 
 

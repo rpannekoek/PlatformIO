@@ -1,6 +1,6 @@
-#ifndef HTMLWRITER_H
-#define HTMLWRITER_H
+#pragma once
 
+#include <Action.h>
 #include <StringBuilder.h>
 #include <Navigation.h>
 
@@ -12,7 +12,6 @@ class HtmlWriter
 
         void setTitlePrefix(const String& prefix);
 
-        void writeHeader(const String& title, bool includeHomePageLink, bool includeHeading, uint16_t refreshInterval = 0);
         void writeHeader(const String& title, const Navigation& navigation, uint16_t refreshInterval = 0);
         void writeFooter();
 
@@ -67,12 +66,21 @@ class HtmlWriter
         void writeParagraph(const String& format, ...);
 
         void writeLink(const String& href, const String& label, const String& cssClass = String());
+
         void writeActionLink(
             const String& action,
             const String& label,
             time_t currentTime,
             const String& cssClass = String("actionLink"),
             const String& icon = String());
+
+        void writeActionLink(
+            const Action& action,
+            const String& cssClass = String("button"),
+            const String& icon = String())
+        {
+            writeActionLink(action.name, action.label, millis(), cssClass, icon);            
+        }
 
     private:
         StringBuilder& _output;
@@ -82,5 +90,3 @@ class HtmlWriter
         char _strBuffer[256];
         size_t _maxBarLength;
 };
-
-#endif

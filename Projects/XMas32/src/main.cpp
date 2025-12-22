@@ -1,13 +1,6 @@
 #include <Arduino.h>
-#include <ESPWiFi.h>
-#include <ESPWebServer.h>
-#include <ESPFileSystem.h>
-#include <WiFiNTP.h>
 #include <TimeUtils.h>
 #include <Tracer.h>
-#include <StringBuilder.h>
-#include <LED.h>
-#include <Log.h>
 #include <WiFiStateMachine.h>
 #include <HtmlWriter.h>
 #include <Navigation.h>
@@ -413,10 +406,11 @@ void onWiFiInitialized()
 void handleHttpEventLogRequest()
 {
     Tracer tracer("handleHttpEventLogRequest");
+    Action clearAction = Action { .name = "clear", .label = "Clear event log" };
 
     Html.writeHeader("Event log", Nav);
 
-    if (WiFiSM.shouldPerformAction("clear"))
+    if (WiFiSM.shouldPerform(clearAction))
     {
         EventLog.clear();
         WiFiSM.logEvent("Event log cleared.");
@@ -425,8 +419,7 @@ void handleHttpEventLogRequest()
     for (const char* event : EventLog)
         Html.writeDiv("%s", event);
 
-
-    Html.writeActionLink("clear", "Clear event log", currentTime, ButtonClass);
+    Html.writeActionLink(clearAction);
 
     Html.writeFooter();
 
@@ -438,6 +431,9 @@ void handleHttpConfigFormRequest()
 {
     Tracer tracer("handleHttpConfigFormRequest");
 
+    // Do not use .reloadAfterSeconds, because that will keep resetting (the reset makes it forget the earlier action)
+    Action resetAction = Action { .name = "reset", .label = "Reset ESP" };
+
     Html.writeHeader("Settings", Nav);
 
     Html.writeFormStart("/config", "grid");
@@ -445,13 +441,13 @@ void handleHttpConfigFormRequest()
     Html.writeSubmitButton("Save");
     Html.writeFormEnd();
 
-    if (WiFiSM.shouldPerformAction("reset"))
+    if (WiFiSM.shouldPerform(resetAction))
     {
         Html.writeParagraph("Resetting...");
         WiFiSM.reset();
     }
     else
-        Html.writeActionLink("reset", "Reset ESP", currentTime, ButtonClass);
+        Html.writeActionLink(resetAction);
 
     Html.writeFooter();
 
@@ -636,8 +632,10 @@ void handleHttpMidiRequest()
 {
     Tracer tracer("handleHttpMidiRequest");
     ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
+    Action playAction = Action { .name = "play", .label = "Play", .reloadAfterSeconds = 1 };
+    Action stopAction = Action { .name = "stop", .label = "Stop", .reloadAfterSeconds = 1 };
 
-    Html.writeHeader("MIDI music", Nav);
+    Html.writeHeader("MIDI music", Nav, WiFiSM.getReloadInterval({ playAction, stopAction }));
     Html.writeHeading(MIDI_FILE, 1);
 
     if (MidiFile.getError().isEmpty())
@@ -676,13 +674,13 @@ void handleHttpMidiRequest()
         MIDI::Track* playingTrackPtr = MidiFile.getCurrentlyPlaying();
         if (playingTrackPtr == nullptr)
         {
-            if (WiFiSM.shouldPerformAction("play"))
+            if (WiFiSM.shouldPerform(playAction))
             {
                 Html.writeParagraph("Starting to play...");
                 playMidiTrack();
             }
             else
-                Html.writeActionLink("play", "Play", currentTime, ButtonClass);
+                Html.writeActionLink(playAction);
         }
         else
         {
@@ -691,13 +689,13 @@ void handleHttpMidiRequest()
                 playingTrackPtr->getName().c_str(),
                 formatTimeSpan(playingTrackPtr->getPlayingForSeconds(), false));
 
-            if (WiFiSM.shouldPerformAction("stop"))
+            if (WiFiSM.shouldPerform(stopAction))
             {
                 Html.writeParagraph("Stopping...");
                 stopMidiTrack();
             }
             else
-                Html.writeActionLink("stop", "Stop", currentTime, ButtonClass);
+                Html.writeActionLink(stopAction);
         }
     }
     else

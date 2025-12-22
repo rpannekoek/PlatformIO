@@ -1,17 +1,10 @@
-#include <math.h>
-#include <ESPWiFi.h>
-#include <ESPWebServer.h>
-#include <ESPFileSystem.h>
+#include <Arduino.h>
 #include <WiFiStateMachine.h>
-#include <WiFiNTP.h>
 #include <WiFiFTP.h>
 #include <TimeUtils.h>
 #include <Tracer.h>
-#include <StringBuilder.h>
 #include <Navigation.h>
 #include <HtmlWriter.h>
-#include <LED.h>
-#include <Log.h>
 #include <Wire.h>
 #include "PersistentData.h"
 #include "OpenThermLogEntry.h"
@@ -1219,8 +1212,9 @@ void handleHttpEventLogRequest()
 {
     Tracer tracer(F("handleHttpEventLogRequest"));
     ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
+    Action clearAction = Action { .name = F("clear"), .label = F("Clear event log") };
 
-    if (WiFiSM.shouldPerformAction(F("clear")))
+    if (WiFiSM.shouldPerform(clearAction))
     {
         EventLog.clear();
         WiFiSM.logEvent(F("Event log cleared."));
@@ -1231,7 +1225,7 @@ void handleHttpEventLogRequest()
     for (const char* event : EventLog)
         Html.writeDiv(F("%s"), event);
 
-    Html.writeActionLink(F("clear"), F("Clear event log"), currentTime, ButtonClass);
+    Html.writeActionLink(clearAction);
 
     Html.writeFooter();
 }
@@ -1306,21 +1300,22 @@ void handleHttpConfigFormRequest()
 {
     Tracer tracer(F("handleHttpConfigFormRequest"));
     ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
+    Action resetAction = { F("reset"), F("Reset ESP") };
 
     Html.writeHeader(F("Settings"), Nav);
 
-    Html.writeFormStart(F("/config"));
+    Html.writeFormStart(F("/config"), F("grid"));
     PersistentData.writeHtmlForm(Html);
     Html.writeSubmitButton(F("Save"));
     Html.writeFormEnd();
 
-    if (WiFiSM.shouldPerformAction(F("reset")))
+    if (WiFiSM.shouldPerform(resetAction))
     {
         Html.writeParagraph(F("Resetting..."));
         WiFiSM.reset();
     }
     else
-        Html.writeActionLink(F("reset"), F("Reset ESP"), currentTime, ButtonClass);
+        Html.writeActionLink(resetAction);
 
     Html.writeFooter();
 }

@@ -1,7 +1,7 @@
-#ifndef WIFI_STATE_MACHINE_H
-#define WIFI_STATE_MACHINE_H
+#pragma once
 
 #include <stdint.h>
+#include <Action.h>
 #include <ESPWiFi.h>
 #include <ESPWebServer.h>
 #include <WiFiNTP.h>
@@ -28,7 +28,6 @@ enum struct WiFiInitState
     Updating = 14
 };
 
-
 class WiFiStateMachine : public ILogger
 {
     public:
@@ -50,7 +49,14 @@ class WiFiStateMachine : public ILogger
         virtual void logEvent(String format, ...) override;
         virtual void logEvent(const char* msg) override;
         time_t getCurrentTime();
-        bool shouldPerformAction(String name);
+
+        bool shouldPerformAction(String name, bool evaluateOnly = false);
+        bool shouldPerform(const Action& action) { return shouldPerformAction(action.name); }
+        uint16_t getReloadInterval(const Action& action)
+        {
+            return shouldPerformAction(action.name, true) ? action.reloadAfterSeconds : 0;
+        }
+        uint16_t getReloadInterval(const std::vector<Action>& actions);
 
         time_t getInitTime() { return _initTime; }
         uint32_t getUptime() { return getCurrentTime() - _initTime; }
@@ -113,5 +119,3 @@ class WiFiStateMachine : public ILogger
         static SemaphoreHandle_t _logMutex;
 #endif
 };
-
-#endif
