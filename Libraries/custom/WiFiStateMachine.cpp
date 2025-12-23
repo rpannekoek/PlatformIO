@@ -209,7 +209,7 @@ void WiFiStateMachine::logEvent(const char* msg)
     if (_isTimeServerAvailable)
     {
         time_t currentTime = _timeServer.getCurrentTime();
-        strftime(event, timestamp_size, "%F %H:%M:%S : ", localtime(&currentTime));
+        strftime(event, timestamp_size, _logTimestampFormat, localtime(&currentTime));
     }
     else
         snprintf(event, timestamp_size, "@ %lu ms : ", static_cast<uint32_t>(millis()));

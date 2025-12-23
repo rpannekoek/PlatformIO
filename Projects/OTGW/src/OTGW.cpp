@@ -23,6 +23,15 @@ OpenThermGateway::OpenThermGateway(Stream& serial, uint8_t resetPin)
 }
 
 
+void OpenThermGateway::resetErrorStats()
+{
+    Tracer tracer(F("OpenThermGateway::resetErrorStats"));
+
+    memset(errors, 0, sizeof(errors));
+    invalidStatus = 0;
+}
+
+
 bool OpenThermGateway::begin(uint32_t responseTimeoutMs, uint32_t setpointOverrideTimeout)
 {
     Tracer tracer(F("OpenThermGateway::begin"));
@@ -30,7 +39,7 @@ bool OpenThermGateway::begin(uint32_t responseTimeoutMs, uint32_t setpointOverri
     _responseTimeoutMs = responseTimeoutMs;
     _setpointOverrideTimeout = setpointOverrideTimeout;
 
-    memset(errors, 0, sizeof(errors));
+    resetErrorStats();
 
     Wire.begin();
     watchdogResets = initWatchdog(WATCHDOG_TIMEOUT) ? readWatchdogData(14) : -20;
@@ -45,6 +54,12 @@ bool OpenThermGateway::begin(uint32_t responseTimeoutMs, uint32_t setpointOverri
 
 bool OpenThermGateway::run(time_t currentTime)
 {
+    if (currentTime / SECONDS_PER_DAY != _currentTime / SECONDS_PER_DAY)
+    {
+        // Reset stats each day (at 00:00 UTC)
+        resetErrorStats();
+        messageStats.clear();
+    }
     _currentTime = currentTime;
 
     if ((_feedWatchdogTime != 0) && (currentTime >= _feedWatchdogTime))
@@ -68,12 +83,18 @@ bool OpenThermGateway::run(time_t currentTime)
     if (_serial.available())
     {
         if (_ledPtr != nullptr) _ledPtr->setColor(LED_GREEN);
+
         OpenThermGatewayMessage otgwMessage = readMessage();
         MessageLog.add(otgwMessage.message.c_str());
+        messageStats[otgwMessage.direction][otgwMessage.dataId]++;
+
+        if (otgwMessage.isInvalidStatus()) invalidStatus++;
+
         if (_messageReceivedHandler != nullptr) 
             _messageReceivedHandler(otgwMessage);
         else
             TRACE(F("No message received handler registered\n"));
+
         if (_ledPtr != nullptr) _ledPtr->setOff();
     }
 

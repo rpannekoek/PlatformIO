@@ -187,9 +187,6 @@ float pwmDutyCycle = 1;
 
 String otgwResponse;
 
-// Forward defines
-void handleHttpConfigFormRequest();
-
 
 void initBoilerLevels()
 {
@@ -208,6 +205,38 @@ void resetOtgwTraffic()
     memset(boilerResponses, 0xFF, sizeof(boilerResponses));
     memset(otgwRequests, 0xFF, sizeof(otgwRequests));
     memset(otgwResponses, 0xFF, sizeof(otgwResponses));
+}
+
+
+void cleanupOtgwTraffic(uint32_t threshold)
+{
+    Tracer tracer(F(__func__));
+
+    auto cleanTable = [&](uint16_t* tablePtr, OpenThermGatewayDirection direction)
+    {
+        auto directionEntry = OTGW.messageStats.find(direction);
+        const std::map<OpenThermDataId, uint32_t>* statsForDirection =
+            (directionEntry != OTGW.messageStats.end()) ? &directionEntry->second : nullptr;
+
+        for (int i = 0; i < 256; i++)
+        {
+            uint32_t count = 0;
+            if (statsForDirection != nullptr)
+            {
+                auto dataIdEntry = statsForDirection->find(static_cast<OpenThermDataId>(i));
+                if (dataIdEntry != statsForDirection->end())
+                    count = dataIdEntry->second;
+            }
+
+            if (count < threshold)
+                tablePtr[i] = DATA_VALUE_NONE;
+        }
+    };
+
+    cleanTable(thermostatRequests, OpenThermGatewayDirection::FromThermostat);
+    cleanTable(boilerResponses, OpenThermGatewayDirection::FromBoiler);
+    cleanTable(otgwRequests, OpenThermGatewayDirection::ToBoiler);
+    cleanTable(otgwResponses, OpenThermGatewayDirection::ToThermostat);
 }
 
 
@@ -577,15 +606,15 @@ bool handleThermostatLowLoadMode(bool switchedOn)
 
 bool checkInvalidStatus(const OpenThermGatewayMessage& otFrame)
 {
-    bool result = (otFrame.dataId == OpenThermDataId::Status) && (otFrame.dataValue & 0xFCF0); 
-    if (result)
+    if (!otFrame.isInvalidStatus()) return false;
+    if (PersistentData.logOpenThermErrors)
     {
-        const char* source = otFrame.direction == OpenThermGatewayDirection::FromThermostat
+        const char* source = (otFrame.direction == OpenThermGatewayDirection::FromThermostat)
             ? "thermostat"
             : "boiler";
         WiFiSM.logEvent(F("Invalid status from %s: 0x%04X"), source, otFrame.dataValue);
     }
-    return result;
+    return true;
 }
 
 
@@ -678,7 +707,6 @@ void handleBoilerResponse(const OpenThermGatewayMessage& otFrame)
     Tracer tracer(F("handleBoilerResponse"));
 
     if (otFrame.msgType == OpenThermMsgType::UnknownDataId) return;
-
     if (checkInvalidStatus(otFrame)) return;
 
     if (otFrame.dataId == OpenThermDataId::Status)
@@ -737,9 +765,9 @@ void handleThermostatResponse(const OpenThermGatewayMessage& otFrame)
 }
 
 
-void onMessageReceived(const OpenThermGatewayMessage& otgwMessage)
+void otgwMessageReceived(const OpenThermGatewayMessage& otgwMessage)
 {
-    Tracer tracer(F("onMessageReceived"), otgwMessage.message.c_str());
+    Tracer tracer(F("otgwMessageReceived"), otgwMessage.message.c_str());
 
     otgwTimeout = currentTime + OTGW_TIMEOUT;
 
@@ -770,7 +798,8 @@ void onMessageReceived(const OpenThermGatewayMessage& otgwMessage)
             [[fallthrough]];
 
         case OpenThermGatewayDirection::Error:
-            WiFiSM.logEvent(F("OTGW: '%s'"), otgwMessage.message.c_str());
+            if (PersistentData.logOpenThermErrors)
+                WiFiSM.logEvent(F("OTGW: '%s'"), otgwMessage.message.c_str());
     }
 }
 
@@ -919,56 +948,47 @@ void writeStatisticsPerDay()
 }
 
 
-void handleHttpRootRequest()
+void writeHtmlOpenThermDataTable(const String& title, uint16_t* otDataTable, OpenThermGatewayDirection direction)
 {
-    Tracer tracer(F("handleHttpRootRequest"));
+    Html.writeSectionStart(title);
+    Html.writeTableStart();
 
-    if (WiFiSM.isInAccessPointMode())
+    Html.writeRowStart();
+    Html.writeHeaderCell(F("ID"));
+    Html.writeHeaderCell(F("Hex value"));
+    Html.writeHeaderCell(F("Dec value"));
+    Html.writeHeaderCell(F("Count"));
+    Html.writeRowEnd();
+
+    // Look up the direction map once before the loop
+    auto directionEntry = OTGW.messageStats.find(direction);
+    const std::map<OpenThermDataId, uint32_t>* statsForDirection = 
+        (directionEntry != OTGW.messageStats.end()) ? &directionEntry->second : nullptr;
+
+    for (int i = 0; i < 256; i++)
     {
-        handleHttpConfigFormRequest();
-        return;
+        uint16_t dataValue = otDataTable[i];
+        if (dataValue == DATA_VALUE_NONE) continue;
+        Html.writeRowStart();
+        Html.writeCell(i);
+        Html.writeCell(F("%04X"), dataValue);
+        Html.writeCell(F("%0.2f"), OpenThermGateway::getDecimal(dataValue));
+        
+        // Get message count for this dataId
+        uint32_t count = 0;
+        if (statsForDirection != nullptr)
+        {
+            auto dataIdEntry = statsForDirection->find(static_cast<OpenThermDataId>(i));
+            if (dataIdEntry != statsForDirection->end())
+                count = dataIdEntry->second;
+        }
+        Html.writeCell(count);
+        
+        Html.writeRowEnd();
     }
 
-    uint32_t otgwErrors = 0;
-    for (int i = 0; i <= 4; i++)
-        otgwErrors += OTGW.errors[i];
-
-    String ftpSyncTime;
-    if (!PersistentData.isFTPEnabled())
-        ftpSyncTime = F("Disabled");
-    else if (lastFTPSyncTime == 0)
-        ftpSyncTime = F("Not yet");
-    else
-        ftpSyncTime = formatTime("%H:%M", lastFTPSyncTime);
-
-    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
-    Html.writeHeader(F("Home"), Nav, HTTP_POLL_INTERVAL);
-
-    Html.writeDivStart(F("flex-container"));
-
-    Html.writeSectionStart(F("Status"));
-    Html.writeTableStart();
-    Html.writeRow(F("WiFi RSSI"), F("%d dBm"), static_cast<int>(WiFi.RSSI()));
-    Html.writeRow(F("Free Heap"), F("%0.1f kB"), float(ESP.getFreeHeap()) / 1024);
-    Html.writeRow(F("Uptime"), F("%0.1f days"), float(WiFiSM.getUptime()) / SECONDS_PER_DAY);
-    Html.writeRow(F("OTGW Errors"), F("%u"), otgwErrors);
-    Html.writeRow(F("OTGW Resets"), F("%u"), OTGW.resets);
-    Html.writeRow(F("FTP Sync"), F("%s"), ftpSyncTime.c_str());
-    Html.writeRow(F("Sync entries"), F("%d / %d"), otLogEntriesToSync, PersistentData.ftpSyncEntries);
-    if (lastHeatmonUpdateTime != 0)
-        Html.writeRow(F("HeatMon"), F("%s"), formatTime("%T", lastHeatmonUpdateTime));
-    if (lastEvoHomeUpdateTime != 0)
-        Html.writeRow(F("EvoHome"), F("%s"), formatTime("%T", lastEvoHomeUpdateTime));
-    if (lastWeatherUpdateTime != 0)
-        Html.writeRow(F("Weather"), F("%s"), formatTime("%T", lastWeatherUpdateTime));
     Html.writeTableEnd();
     Html.writeSectionEnd();
-
-    writeCurrentValues();
-    writeStatisticsPerDay();
-
-    Html.writeDivEnd();
-    Html.writeFooter();
 }
 
 
@@ -976,6 +996,10 @@ void handleHttpOpenThermRequest()
 {
     Tracer tracer(F("handleHttpOpenThermRequest"));
     ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
+    Action cleanupTrafficAction = { F("cleanup"), F("Cleanup OT traffic") };
+
+    if (WiFiSM.shouldPerform(cleanupTrafficAction))
+        cleanupOtgwTraffic(10);
 
     uint16_t burnerStarts = boilerResponses[OpenThermDataId::BoilerBurnerStarts];
     float avgBurnerOnTime;
@@ -1045,36 +1069,16 @@ void handleHttpOpenThermRequest()
 
     Html.writeDivEnd();
 
-    Html.writeLink(F("/traffic"), F("View all OpenTherm traffic"), ButtonClass);
+    Html.writeDivStart(F("flex-container"));
+    writeHtmlOpenThermDataTable(F("Thermostat requests"), thermostatRequests, OpenThermGatewayDirection::FromThermostat);
+    writeHtmlOpenThermDataTable(F("Thermostat overrides"), otgwRequests, OpenThermGatewayDirection::ToBoiler);
+    writeHtmlOpenThermDataTable(F("Boiler responses"), boilerResponses, OpenThermGatewayDirection::FromBoiler);
+    writeHtmlOpenThermDataTable(F("Boiler overrides"), otgwResponses, OpenThermGatewayDirection::ToThermostat);
+    Html.writeDivEnd();
+
+    Html.writeActionLink(cleanupTrafficAction);
 
     Html.writeFooter();
-}
-
-
-void writeHtmlOpenThermDataTable(const String& title, uint16_t* otDataTable)
-{
-    Html.writeSectionStart(title);
-    Html.writeTableStart();
-
-    Html.writeRowStart();
-    Html.writeHeaderCell(F("ID"));
-    Html.writeHeaderCell(F("Hex value"));
-    Html.writeHeaderCell(F("Dec value"));
-    Html.writeRowEnd();
-
-    for (int i = 0; i < 256; i++)
-    {
-        uint16_t dataValue = otDataTable[i];
-        if (dataValue == DATA_VALUE_NONE) continue;
-        Html.writeRowStart();
-        Html.writeCell(i);
-        Html.writeCell(F("%04X"), dataValue);
-        Html.writeCell(F("%0.2f"), OpenThermGateway::getDecimal(dataValue));
-        Html.writeRowEnd();
-    }
-
-    Html.writeTableEnd();
-    Html.writeSectionEnd();
 }
 
 
@@ -1106,23 +1110,6 @@ void handleHttpPumpRequest()
 }
 
 
-void handleHttpOpenThermTrafficRequest()
-{
-    Tracer tracer(F("handleHttpOpenThermTrafficRequest"));
-    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
-
-    Html.writeHeader(F("OpenTherm traffic"), Nav);
-    
-    Html.writeDivStart(F("flex-container"));
-
-    writeHtmlOpenThermDataTable(F("Thermostat requests"), thermostatRequests);
-    writeHtmlOpenThermDataTable(F("Thermostat overrides"), otgwRequests);
-    writeHtmlOpenThermDataTable(F("Boiler responses"), boilerResponses);
-    writeHtmlOpenThermDataTable(F("Boiler overrides"), otgwResponses);
-
-    Html.writeDivEnd();
-    Html.writeFooter();
-}
 
 
 void handleHttpOpenThermLogRequest()
@@ -1212,7 +1199,7 @@ void handleHttpEventLogRequest()
 {
     Tracer tracer(F("handleHttpEventLogRequest"));
     ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
-    Action clearAction = Action { .name = F("clear"), .label = F("Clear event log") };
+    Action clearAction = { .name = F("clear"), .label = F("Clear event log") };
 
     if (WiFiSM.shouldPerform(clearAction))
     {
@@ -1480,6 +1467,60 @@ void onWiFiInitialized()
 }
 
 
+void handleHttpRootRequest()
+{
+    Tracer tracer(F("handleHttpRootRequest"));
+
+    if (WiFiSM.isInAccessPointMode())
+    {
+        handleHttpConfigFormRequest();
+        return;
+    }
+
+    uint32_t otgwErrors = 0;
+    for (int i = 0; i <= 4; i++)
+        otgwErrors += OTGW.errors[i];
+
+    String ftpSyncTime;
+    if (!PersistentData.isFTPEnabled())
+        ftpSyncTime = F("Disabled");
+    else if (lastFTPSyncTime == 0)
+        ftpSyncTime = F("Not yet");
+    else
+        ftpSyncTime = formatTime("%H:%M", lastFTPSyncTime);
+
+    ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
+    Html.writeHeader(F("Home"), Nav, HTTP_POLL_INTERVAL);
+
+    Html.writeDivStart(F("flex-container"));
+
+    Html.writeSectionStart(F("Status"));
+    Html.writeTableStart();
+    Html.writeRow(F("WiFi RSSI"), F("%d dBm"), static_cast<int>(WiFi.RSSI()));
+    Html.writeRow(F("Free Heap"), F("%0.1f kB"), float(ESP.getFreeHeap()) / 1024);
+    Html.writeRow(F("Uptime"), F("%0.1f days"), float(WiFiSM.getUptime()) / SECONDS_PER_DAY);
+    Html.writeRow(F("OTGW Resets"), F("%u"), OTGW.resets);
+    Html.writeRow(F("OTGW Errors"), F("%u"), otgwErrors);
+    Html.writeRow(F("OT status inv"), F("%u"), OTGW.invalidStatus);
+    Html.writeRow(F("FTP Sync"), F("%s"), ftpSyncTime.c_str());
+    Html.writeRow(F("Sync entries"), F("%d / %d"), otLogEntriesToSync, PersistentData.ftpSyncEntries);
+    if (lastHeatmonUpdateTime != 0)
+        Html.writeRow(F("HeatMon"), F("%s"), formatTime("%T", lastHeatmonUpdateTime));
+    if (lastEvoHomeUpdateTime != 0)
+        Html.writeRow(F("EvoHome"), F("%s"), formatTime("%T", lastEvoHomeUpdateTime));
+    if (lastWeatherUpdateTime != 0)
+        Html.writeRow(F("Weather"), F("%s"), formatTime("%T", lastWeatherUpdateTime));
+    Html.writeTableEnd();
+    Html.writeSectionEnd();
+
+    writeCurrentValues();
+    writeStatisticsPerDay();
+
+    Html.writeDivEnd();
+    Html.writeFooter();
+}
+
+
 // Boot code
 void setup() 
 {
@@ -1494,7 +1535,7 @@ void setup()
 
     BuiltinLED.begin();
 
-    OTGW.onMessageReceived(onMessageReceived);
+    OTGW.onMessageReceived(otgwMessageReceived);
     OTGW.begin(OTGW_RESPONSE_TIMEOUT_MS, OTGW_SETPOINT_OVERRIDE_TIMEOUT);
 
     PersistentData.begin();
@@ -1561,9 +1602,9 @@ void setup()
 
     Nav.registerHttpHandlers(WebServer);
     WebServer.on("/pump", handleHttpPumpRequest);
-    WebServer.on("/traffic", handleHttpOpenThermTrafficRequest);
     WebServer.on("/log-otgw", handleHttpOTGWMessageLogRequest);
 
+    WiFiSM.setLogTimestampFormat("%a %H:%M:%S : ");
     WiFiSM.registerStaticFiles(Files, FileId::_Last);
     WiFiSM.on(WiFiInitState::TimeServerInitializing, onTimeServerInit);
     WiFiSM.on(WiFiInitState::TimeServerSynced, onTimeServerSynced);

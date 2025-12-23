@@ -11,26 +11,27 @@ This is a PlatformIO/Arduino project for an ESP32-based device with embedded sys
 - **Local variables**: Use camelCase
 - **Constants**: Use SCREAMING_SNAKE_CASE (all caps with underscores)
 - **Types**: Use PascalCase
-- Use Ptr suffix for fields and variables which are pointers
-- Use nullptr instead of NULL
+- Use `Ptr` suffix for fields and variables which are pointers
 
 ### Layout
 - Use Allman style for curly braces
 - Curly braces can be omitted if there is only one statement in the block
 - Use proper formatting with 4-space indentation
 - Keep fields and methods together. Fields first.
+- Prevent forward declarations; reorder if needed.
 
 ### Type Usage
 - Use `float` instead of `double` for performance on embedded systems
 - Use specific integer types like `uint32_t`, `uint16_t`, `uint8_t`, but also `int` for general integers
 - Use `size_t` for array/buffer sizes
 - Prefer explicit types over `auto`, unless the type name is very complex
+- Use `nullptr` instead of `NULL`
 
 ## Development Practices
 - Use Object-Oriented practices:
   - Keep data and logic together, put the logic as close to the data as possible
   - Minimize visibility of class members.
-  - Fields should always be private; use get/set accessor methods.
+  - Class fields should always be private; use get/set accessor methods.
   - Consider using class inheritance and polymorphism (but mind the memory usage)
 - Minimize memory usage, but not at the expense of readability
 - Try to use const-correctness for all methods

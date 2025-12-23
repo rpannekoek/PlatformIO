@@ -2,6 +2,7 @@
 #define OTGW_H
 
 #include <stdint.h>
+#include <map>
 #include <WString.h>
 #include <Stream.h>
 #include <Log.h>
@@ -74,6 +75,8 @@ struct OpenThermGatewayMessage
     OpenThermMsgType msgType;
     OpenThermDataId dataId;
     uint16_t dataValue;
+
+    bool isInvalidStatus() const { return (dataId == OpenThermDataId::Status) && (dataValue & 0xFCF0); }
 };
 
 
@@ -81,9 +84,11 @@ class OpenThermGateway
 {
     public:
         uint32_t errors[5];
+        uint32_t invalidStatus = 0;
         uint32_t resets = 0;
         int watchdogResets = 0;
         StringLog MessageLog;
+        std::map<OpenThermGatewayDirection, std::map<OpenThermDataId, uint32_t>> messageStats;
 
         OpenThermGateway(Stream& serial, uint8_t resetPin);
 
@@ -92,10 +97,7 @@ class OpenThermGateway
             _messageReceivedHandler = handler;
         }
 
-        void useLED(LED& led)
-        {
-            _ledPtr = &led;
-        }
+        void useLED(LED& led) { _ledPtr = &led; }
 
         bool begin(uint32_t responseTimeoutMs, uint32_t setpointOverrideTimeout);
         bool run(time_t currentTime);
@@ -132,6 +134,7 @@ class OpenThermGateway
         int readWatchdogData(uint8_t addr);
         bool readLine();
         OpenThermGatewayMessage readMessage();
+        void resetErrorStats();
 };
 
 

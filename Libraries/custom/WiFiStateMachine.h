@@ -46,6 +46,7 @@ class WiFiStateMachine : public ILogger
         void forceReconnect(const uint8_t* bssid = nullptr);
 
         void traceDiag();
+        void setLogTimestampFormat(const char* format) { _logTimestampFormat = format; }
         virtual void logEvent(String format, ...) override;
         virtual void logEvent(const char* msg) override;
         time_t getCurrentTime();
@@ -98,6 +99,7 @@ class WiFiStateMachine : public ILogger
         bool _isTimeServerAvailable = false;
         bool _isInAccessPointMode = false;
         IPAddress _ipAddress;
+        const char* _logTimestampFormat = "%F %H:%M:%S : ";
 
         void initializeAP();
         void initializeSTA();

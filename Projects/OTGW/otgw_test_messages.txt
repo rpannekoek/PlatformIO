@@ -19,6 +19,7 @@ LF=B
 
 == From Thermostat ==
 T80000100 - CH on
+T80000F00 - CH on (invalid status)
 T00000000 - CH off
 T10013700 - TSet 55
 T10012800 - TSet 40

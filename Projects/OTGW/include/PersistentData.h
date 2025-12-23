@@ -9,6 +9,7 @@ struct PersistentSettings : WiFiSettingsWithFTP
     int minTSet;
     char heatmonHost[32];
     bool usePumpModulation;
+    bool logOpenThermErrors;
     int boilerOnDelay; // seconds
     int flameTimeout; // seconds
     char evoHomeHost[32];
@@ -23,7 +24,8 @@ struct PersistentSettings : WiFiSettingsWithFTP
         addStringField(weatherLocation, sizeof(weatherLocation), PSTR("Weather location"));
         addIntegerField(maxTSet, PSTR("Max TSet"), 40, 80, 60);
         addIntegerField(minTSet, PSTR("Min TSet"), 20, 40, 40);
-        addBooleanField(usePumpModulation, PSTR("Use pump modulation"), true, 4); // 4 bytes for alignment
+        addBooleanField(usePumpModulation, PSTR("Use pump modulation"), true);
+        addBooleanField(logOpenThermErrors, PSTR("Log OTGW errors"), true, 3); // 3 bytes for alignment
         addTimeSpanField(boilerOnDelay, PSTR("Boiler on delay"), 0, 2 * 3600);
         addTimeSpanField(flameTimeout, PSTR("Flame timeout"), 0, 12 * 3600);
         addFloatField(deviationHoursThreshold, PSTR("Max error"), 1, 0, 10, 1);
