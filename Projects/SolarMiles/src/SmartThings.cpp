@@ -58,6 +58,7 @@ bool SmartThingsClient::request(const String& urlPath, const JsonDocument& filte
     url += urlPath;
 
     HTTPClient httpClient;
+    httpClient.setTimeout(5000);
     httpClient.useHTTP10(true); // Use HTTP 1.0 => prevent chunked encoding
     if (!httpClient.begin(_wifiClientSecure, url))
     {
@@ -90,16 +91,14 @@ bool SmartThingsClient::request(const String& urlPath, const JsonDocument& filte
         return false;
     }
 
-    DeserializationError jsonError = DeserializationError::EmptyInput;
-    if (awaitDataAvailable(httpClient.getStream(), 1000))
-    {
-        jsonError = deserializeJson(
-            jsonDoc,
-            httpClient.getStream(),
-            DeserializationOption::Filter(filterDoc));
-    }
-
+    MemoryStream memStream(httpClient.getSize());
+    httpClient.writeToStream(&memStream);
     httpClient.end();
+
+    DeserializationError jsonError = deserializeJson(
+        jsonDoc,
+        memStream,
+        DeserializationOption::Filter(filterDoc));
 
     if (jsonError != DeserializationError::Ok)
         _logger.logEvent("SmartThings: JSON error %s", jsonError.c_str());
