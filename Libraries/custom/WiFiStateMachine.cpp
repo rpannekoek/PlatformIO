@@ -625,17 +625,17 @@ bool WiFiStateMachine::shouldPerformAction(String name, bool evaluateOnly)
     if (!_webServer.hasArg(name))
         return false; // Action not requested
 
-    time_t actionTime = _webServer.arg(name).toInt();
+    time_t actionTime = static_cast<time_t>(strtoll(_webServer.arg(name).c_str(), nullptr, 10));
 
     if (actionTime == _actionPerformedTime)
     {
-        TRACE("Action '%s' (%u) already performed earlier.\n", name.c_str(), actionTime);
+        TRACE("Action '%s' (%lld) already performed earlier.\n", name.c_str(), (long long)actionTime);
         return false;
     }
 
     if (!evaluateOnly)
     {
-        TRACE("Perform action '%s' (%u)\n", name.c_str(), actionTime);
+        TRACE("Perform action '%s' (%lld)\n", name.c_str(), (long long)actionTime);
         _actionPerformedTime = actionTime;
     }
 

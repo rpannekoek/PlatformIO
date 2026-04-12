@@ -645,10 +645,10 @@ void HtmlWriter::writeActionLink(
     const String& icon)
 {
     _output.printf(
-        F("<a class=\"%s\" href=\"?%s=%u\">"),
+        F("<a class=\"%s\" href=\"?%s=%lld\">"),
         cssClass.c_str(),
         action.c_str(),
-        currentTime);
+        static_cast<long long>(currentTime));
     if (icon.length() != 0)
         _output.printf(F("<img class=\"icon\" src=\"%s\">"), icon.c_str());
     _output.print(F("<span class=\"label\">"));
