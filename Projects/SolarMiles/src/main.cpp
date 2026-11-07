@@ -6,6 +6,7 @@
 #include <WiFiStateMachine.h>
 #include <HtmlWriter.h>
 #include <Navigation.h>
+#include <algorithm>
 #include "Constants.h"
 #include "PersistentData.h"
 #include "EnergyLog.h"
@@ -57,7 +58,6 @@ RGBLED BuiltinLED(LED_BUILTIN);
 ESPWebServer WebServer(80); // Default HTTP port
 WiFiNTP TimeServer;
 WiFiFTPClient FTPClient(FTP_TIMEOUT_MS);
-StringBuilder HoymilesOutput(HOYMILES_OUTPUT_BUFFER_SIZE);
 StringBuilder HttpResponse(HTTP_RESPONSE_BUFFER_SIZE);
 HtmlWriter Html(HttpResponse, Files[Logo], Files[Styles]);
 StringLog EventLog(MAX_EVENT_LOG_SIZE, 96);
@@ -1312,11 +1312,6 @@ void handleHttpDebugRequest()
     Tracer tracer("handleHttpDebugRequest");
     ChunkedResponse response(HttpResponse, WebServer, ContentTypeHtml);
 
-    if (WiFiSM.shouldPerformAction("clear"))
-    {
-        HoymilesOutput.clear();
-    }
-
     Html.writeHeader("Debug", Nav);
 
     Html.writeTableStart();
@@ -1325,12 +1320,6 @@ void handleHttpDebugRequest()
     Html.writeRow("Period", "%u s", (lastMillis - startMillis) / 1000);
     Html.writeTableEnd();
 
-    Html.writePreStart();
-    response.sendChunk();
-    HttpResponse.println(HoymilesOutput.c_str());
-    Html.writePreEnd();
-
-    Html.writeActionLink("clear", "Clear", currentTime, ButtonClass);
 }
 
 
@@ -1489,7 +1478,6 @@ void setup()
     WiFiSM.begin(PersistentData.wifiSSID, PersistentData.wifiKey, PersistentData.hostName);
     WiFiSM.activeDelay = 1; // Hoymiles hops channels every 4 ms, we have to call Hoymiles.loop more frequently.
 
-    Hoymiles.setMessageOutput(&HoymilesOutput);
     Hoymiles.init();
     Hoymiles.setPollInterval(INV_POLL_INTERVAL_ACTIVE);
 

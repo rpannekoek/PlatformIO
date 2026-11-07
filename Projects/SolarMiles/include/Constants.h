@@ -7,7 +7,6 @@ constexpr int DEBUG_BAUDRATE = 115200;
 const char* DEFAULT_DTU_SERIAL = "199990100000";
 
 constexpr size_t HTTP_RESPONSE_BUFFER_SIZE = 8 * 1024;
-constexpr size_t HOYMILES_OUTPUT_BUFFER_SIZE = 7 * 1024;
 
 constexpr uint32_t SMARTHOME_POLL_INTERVAL = 6;
 constexpr uint16_t SMARTHOME_ENERGY_LOG_SIZE = 50;
