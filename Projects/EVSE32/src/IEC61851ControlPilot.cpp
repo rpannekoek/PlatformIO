@@ -63,27 +63,30 @@ int IEC61851ControlPilot::calibrate()
     bool isOff = _dutyCycle == 0; 
     if (isOff) setReady(); // Temporary set 12V output
 
-    int standbyLevel;
+    int measuredVoltage;
     int retries = 0;
     do
     {
         delay(100);
-        standbyLevel = 0;
+        measuredVoltage = 0;
         for (int i = 0; i < OVERSAMPLING; i++)
-            standbyLevel += analogReadMilliVolts(_inputPin);
-        standbyLevel /= OVERSAMPLING;
+            measuredVoltage += analogReadMilliVolts(_inputPin);
+        measuredVoltage /= OVERSAMPLING;
     }
-    while ((standbyLevel < MIN_CP_STANDBY_LEVEL) && (retries++ < 10));
+    while ((measuredVoltage < MIN_CP_STANDBY_LEVEL) && (retries++ < 10));
 
-    if (standbyLevel >= MIN_CP_STANDBY_LEVEL)
+    if (measuredVoltage >= MIN_CP_STANDBY_LEVEL)
     {
-        _scale = 12.0F / standbyLevel;
-        TRACE("Standby level: %d => scale = %0.4f\n", standbyLevel, _scale);
+        // If vehicle is connected, the CP voltage will be approx. 9V. 
+        // If no vehicle is connected, the CP voltage should be 12V.
+        float actualVoltage = (measuredVoltage < 2000) ? 9.0F : 12.0F;
+        _scale = actualVoltage / measuredVoltage;
+        TRACE("Measured: %d mV => scale = %0.4f\n", measuredVoltage, _scale);
     }
  
     if (isOff) setOff();
 
-    return standbyLevel;
+    return measuredVoltage;
 }
 
 

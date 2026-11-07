@@ -1,7 +1,7 @@
 #include <Ticker.h>
 
-constexpr int MIN_CP_STANDBY_LEVEL = 2000;
 constexpr float DEFAULT_SCALE = 0.001F * (82+22) / 22; // 82k/22k voltage divider
+constexpr int MIN_CP_STANDBY_LEVEL = 1600; // mV => 7.5 V (with default scale)
 
 enum struct ControlPilotStatus
 {
