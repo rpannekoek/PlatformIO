@@ -3,6 +3,8 @@
 #include <Log.h>
 #include <Logger.h>
 #include <HtmlWriter.h>
+#include <HomeWizardDiscovery.h>
+#include <HomeWizardEnergySocket.h>
 #include "SmartThings.h"
 #include "OnectaClient.h"
 
@@ -63,6 +65,7 @@ class SmartDevice
         uint32_t powerOffDelay = 0;
         SmartDeviceEnergyLogEntry energyLogEntry; 
 
+        virtual ~SmartDevice() = default;
         const char* getStateLabel();
         const char* getSwitchStateLabel();
         virtual bool update(time_t currentTime);
@@ -131,6 +134,20 @@ class OnectaDevice : public SmartDevice
         OnectaClient* _onectaPtr;
 };
 
+class HomeWizardSmartPlug : public SmartDevice
+{
+    public:
+        HomeWizardSmartPlug(const HomeWizardDevice& device, ILogger& logger)
+            : SmartDevice(device.host, device.name, logger)
+        {}
+
+        bool begin();
+        bool update(time_t currentTime) override;
+
+    private:
+        HomeWizardEnergySocketClient _client;
+};
+
 enum struct SmartHomeState
 {
     Uninitialized = 0,
@@ -164,7 +181,7 @@ class SmartHomeClass
         bool useFritzbox(const char* host, const char* user, const char* password);
         bool useSmartThings(const char* pat);
         bool useOnecta(const char* clientId, const char* clientSecret, char* refreshToken, std::function<void(void)> onTokenRefresh);
-        bool startDiscovery();
+        bool useHomeWizard(const std::vector<HomeWizardDevice>& devices);
         void writeHtml(HtmlWriter& html);
         void writeEnergyLogCsv(Print& output, bool onlyEntriesToSync = true);
 
@@ -181,6 +198,7 @@ class SmartHomeClass
         uint32_t _pollInterval;
         uint32_t _nextActionMillis;
         int _currentDeviceIndex;
+        int _currentFritzDeviceIndex;
 
         void setState(SmartHomeState newState);
         bool discoverFritzSmartPlug(int index);

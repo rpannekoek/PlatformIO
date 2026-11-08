@@ -72,6 +72,30 @@ bool SmartHomeClass::useOnecta(
     return true;
 }
 
+bool SmartHomeClass::useHomeWizard(const std::vector<HomeWizardDevice>& energySockets)
+{
+    Tracer tracer("SmartHomeClass::useHomeWizard");
+
+    bool success = true;
+    for (const HomeWizardDevice& energySocket : energySockets)
+    {
+        HomeWizardSmartPlug* smartPlugPtr = new HomeWizardSmartPlug(energySocket, _logger);
+        if (!smartPlugPtr->begin())
+        {
+            _logger.logEvent(
+                "HomeWizardSmartPlug '%s': initialization failed",
+                energySocket.name.c_str());
+            delete smartPlugPtr;
+            success = false;
+            continue;
+        }
+
+        devices.push_back(smartPlugPtr);
+    }
+
+    return success;
+}
+
 
 bool SmartHomeClass::begin(float powerThreshold, uint32_t powerOffDelay, uint32_t pollInterval)
 {
@@ -81,7 +105,27 @@ bool SmartHomeClass::begin(float powerThreshold, uint32_t powerOffDelay, uint32_
     _powerOffDelay = powerOffDelay;
     _pollInterval = pollInterval;
     _currentDeviceIndex = 0;
+    _currentFritzDeviceIndex = 0;
     _nextActionMillis = 0;
+
+    if (_fritzboxPtr != nullptr)
+        setState(SmartHomeState::ConnectingFritzbox);
+    else if (_smartThingsPtr != nullptr)
+        setState(SmartHomeState::DiscoveringSmartThings);
+    else if (_onectaPtr != nullptr)
+        setState(SmartHomeState::DiscoveringOnectaDevices);
+    else if (!devices.empty())
+    {
+        // Only HomeWizard devices are used, so we can go directly to Ready state
+        for (SmartDevice* devicePtr : devices)
+        {
+            devicePtr->powerThreshold = _powerThreshold;
+            devicePtr->powerOffDelay = _powerOffDelay;
+        }
+        setState(SmartHomeState::Ready);
+    }
+    else
+        setState(SmartHomeState::Initialized);
 
     BaseType_t res = xTaskCreatePinnedToCore(
         run,
@@ -95,48 +139,10 @@ bool SmartHomeClass::begin(float powerThreshold, uint32_t powerOffDelay, uint32_
     if (res != pdPASS)
     {
         _logger.logEvent("SmartHome: xTaskCreate returned %d\n", res);
+        setState(SmartHomeState::Uninitialized);
         return false;
     }
 
-    if (_fritzboxPtr != nullptr)
-    {
-        setState(SmartHomeState::ConnectingFritzbox);
-        return true;
-    }
-
-    if (_smartThingsPtr != nullptr)
-    {
-        setState(SmartHomeState::DiscoveringSmartThings);
-        return true;
-    }
-
-    if (_onectaPtr != nullptr)
-    {
-        setState(SmartHomeState::DiscoveringOnectaDevices);
-        return true;
-    }
-
-    return false;
-}
-
-
-bool SmartHomeClass::startDiscovery()
-{
-    Tracer tracer("SmartHomeClass::startDiscovery");
-
-    if (_state != SmartHomeState::Ready)
-        return false;
-
-    if (_fritzboxPtr != nullptr)
-        setState(SmartHomeState::DiscoveringFritzDevices);
-    else if (_smartThingsPtr != nullptr)
-        setState(SmartHomeState::DiscoveringSmartThings);
-    else
-        return false;
- 
-    _currentDeviceIndex =  0;
-    devices.clear();
-    energyLog.clear();
     return true;
 }
 
@@ -233,10 +239,15 @@ void SmartHomeClass::runStateMachine()
             break;
 
         case SmartHomeState::DiscoveringFritzDevices:
-            if (discoverFritzSmartPlug(devices.size()))
+            if (discoverFritzSmartPlug(_currentFritzDeviceIndex))
             {
                 if (_smartThingsPtr == nullptr)
-                    setState(SmartHomeState::Ready);
+                {
+                    if (_onectaPtr != nullptr)
+                        setState(SmartHomeState::DiscoveringOnectaDevices);
+                    else
+                        setState(SmartHomeState::Ready);
+                }
                 else
                     setState(SmartHomeState::DiscoveringSmartThings);
             }
@@ -288,6 +299,7 @@ bool SmartHomeClass::discoverFritzSmartPlug(int index)
         fritzSmartPlugPtr->powerThreshold = _powerThreshold;
         fritzSmartPlugPtr->powerOffDelay = _powerOffDelay; 
         devices.push_back(fritzSmartPlugPtr);
+        ++_currentFritzDeviceIndex;
         return false;
     }
 
@@ -393,7 +405,6 @@ bool SmartHomeClass::discoverOnectaDevices()
 
     return true;
 }
-
 
 bool SmartHomeClass::updateDevice()
 {
@@ -771,5 +782,30 @@ bool OnectaDevice::update(time_t currentTime)
 
     _onectaPtr->cleanup();
 
+    return SmartDevice::update(currentTime);
+}
+
+
+bool HomeWizardSmartPlug::begin()
+{
+    return _client.begin(id.c_str());
+}
+
+
+bool HomeWizardSmartPlug::update(time_t currentTime)
+{
+    Tracer tracer("HomeWizardSmartPlug::update", id.c_str());
+
+    int httpResult = _client.requestData();
+    if (httpResult == HTTP_REQUEST_PENDING)
+        return false;
+    if (httpResult != HTTP_OK)
+    {
+        _logger.logEvent("HomeWizardSmartPlug '%s': %s", name.c_str(), _client.getLastError().c_str());
+        return false;
+    }
+
+    power = _client.activePowerW;
+    energy = _client.totalPowerImportKwh * 1000;
     return SmartDevice::update(currentTime);
 }

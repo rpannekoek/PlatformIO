@@ -2,6 +2,11 @@
 #include <Tracer.h>
 #include <StreamUtils.h>
 
+#ifndef ESP8266
+QueueHandle_t RESTClient::_requestQueue = nullptr;
+TaskHandle_t RESTClient::_taskHandle = nullptr;
+#endif
+
 
 bool RESTClient::begin(const String& baseUrl, const char* certificate)
 {
@@ -11,20 +16,14 @@ bool RESTClient::begin(const String& baseUrl, const char* certificate)
 #ifdef ESP8266
     isInitialized = true;
 #else
+    isInitialized = ensureWorker();
+    if (!isInitialized) return false;
+
     uint32_t timeoutMs = static_cast<uint32_t>(_timeout) * 1000;
     _httpClient.setTimeout(timeoutMs);
     _httpClient.setConnectTimeout(timeoutMs);
 
-    BaseType_t res = xTaskCreate(
-        run,
-        "RESTClient",
-        4096, // Stack size
-        this,
-        tskIDLE_PRIORITY, // Minimal priority
-        &_taskHandle);
-
-    TRACE("RESTClient::begin: xTaskCreate returned %d\n", res);
-    isInitialized = (res == pdPASS);
+    _asyncRequestJob.clientPtr = this;
 #endif
 
     return isInitialized;
@@ -62,12 +61,28 @@ int RESTClient::requestData(const String& urlSuffix)
     if (_requestMillis == 0)
     {
         String url = _baseUrl + urlSuffix;
+#ifdef ESP8266
         int result = startRequest(url);
         if (result == HTTP_REQUEST_PENDING) _requestMillis = millis();
         return result;
+#else
+        _asyncRequestJob.url = url;
+        _asyncRequestJob.method = RequestMethod::GET;
+        _asyncRequestJob.payload = "";
+        _asyncRequestJob.asynchronous = true;
+        _asyncRequestJob.completed.store(false, std::memory_order_relaxed);
+        _httpResult.store(0, std::memory_order_relaxed);
+
+        if (!enqueueRequest(_asyncRequestJob))
+            return HTTP_SEND_FAILED;
+
+        _requestMillis = 1; // Not actual millis, but indicates that a request is in progress.
+        return HTTP_REQUEST_PENDING;
+#endif
     }
 
-    if (!isResponseAvailable()) return HTTP_REQUEST_PENDING;
+    if (!isResponseAvailable())
+        return HTTP_REQUEST_PENDING;
 
     int httpCode = getResponse();
     int responseSize = _responsePtr ? _responsePtr->size() : -1; 
@@ -103,7 +118,7 @@ int RESTClient::requestData(const String& urlSuffix)
         
     if (jsonError != DeserializationError::Ok)
     {
-        _lastError = F("JSON error: "); 
+        _lastError = F("JSON error: ");
         _lastError += jsonError.c_str();
         return RESPONSE_PARSING_FAILED;
     }
@@ -193,6 +208,87 @@ void RESTClient::resetTLS()
 }
 
 #else
+bool RESTClient::ensureWorker()
+{
+    static SemaphoreHandle_t initMutex = xSemaphoreCreateMutex();
+    if (!initMutex) return false;
+
+    xSemaphoreTake(initMutex, portMAX_DELAY);
+
+    if (!_requestQueue)
+        _requestQueue = xQueueCreate(10, sizeof(RequestJob*));
+
+    BaseType_t taskResult = pdPASS;
+    if (_requestQueue && !_taskHandle)
+    {
+        taskResult = xTaskCreate(
+            run,
+            "RESTClient",
+            4096,
+            nullptr,
+            tskIDLE_PRIORITY,
+            &_taskHandle);
+        if (taskResult != pdPASS)
+            _taskHandle = nullptr;
+    }
+
+    bool success = _requestQueue && _taskHandle;
+    xSemaphoreGive(initMutex);
+    TRACE("RESTClient::ensureWorker: initialized=%d, task result=%d\n", success, taskResult);
+    return success;
+}
+
+
+void RESTClient::run(void* taskParam)
+{
+    (void)taskParam;
+
+    while (true)
+    {
+        RequestJob* requestJobPtr = nullptr;
+        BaseType_t result = xQueueReceive(_requestQueue, &requestJobPtr, portMAX_DELAY);
+        if (result != pdPASS)
+        {
+            TRACE("RESTClient::run: xQueueReceive failed with %d\n", result);
+            continue;
+        }
+
+        if (!requestJobPtr)
+        {
+            TRACE("RESTClient::run: received a null request job\n");
+            continue;
+        }
+
+        if (!requestJobPtr->clientPtr)
+        {
+            TRACE("RESTClient::run: request job has no client\n");
+            continue;
+        }
+
+        requestJobPtr->clientPtr->runRequest(*requestJobPtr);
+    }
+}
+
+
+bool RESTClient::enqueueRequest(RequestJob& requestJob, TickType_t waitTicks)
+{
+    if (!_requestQueue)
+    {
+        setLastError("Request queue is not initialized");
+        return false;
+    }
+
+    RequestJob* requestJobPtr = &requestJob;
+    if (xQueueSend(_requestQueue, &requestJobPtr, waitTicks) != pdPASS)
+    {
+        setLastError("Request queue is full");
+        return false;
+    }
+
+    return true;
+}
+
+
 int RESTClient::startRequest(const String& url)
 {
     TRACE("RESTClient::startRequest(\"%s\")\n", url.c_str());
@@ -215,103 +311,134 @@ int RESTClient::startRequest(const String& url)
 
     if (!success)
     {
-        _lastError = F("Open failed");
+        _lastError = "Open failed";
         return HTTP_OPEN_FAILED;
     }
 
-    _httpResult = 0;
     return HTTP_REQUEST_PENDING;
 }
 
 
 bool RESTClient::isResponseAvailable()
 {
-    return _httpResult != 0;
+    return _httpResult.load(std::memory_order_acquire) != 0;
 }
 
 
 int RESTClient::getResponse()
 {
-    return _httpResult;
+    return _httpResult.load(std::memory_order_acquire);
 }
 
 
-void RESTClient::runHttpRequests()
+void RESTClient::runRequest(RequestJob& requestJob)
 {
-    while (true)
+    uint32_t startedAt = millis();
+    int result = startRequest(requestJob.url);
+    if (result == HTTP_REQUEST_PENDING)
     {
-        if (isRequestPending())
+        switch (requestJob.method)
         {
-            int httpResult = _httpClient.GET();
-            _responseTimeMs = millis() - _requestMillis; 
-            if (httpResult == HTTP_OK)
-            {
-                int size = _httpClient.getSize();
-                if (size < 0) size = 4095;
-                _responsePtr = new MemoryStream(size, _memoryType);
-                _httpClient.writeToStream(_responsePtr);
-            }
-            else if (httpResult < 0)
-                _lastError = HTTPClient::errorToString(httpResult);
-            _httpClient.end();
-            _httpResult = httpResult;
+            case RequestMethod::GET:
+                result = _httpClient.GET();
+                break;
+            case RequestMethod::POST:
+                result = _httpClient.POST(requestJob.payload);
+                break;
+            case RequestMethod::PUT:
+                result = _httpClient.PUT(requestJob.payload);
+                break;
+            case RequestMethod::DELETE:
+                result = _httpClient.sendRequest("DELETE");
+                break;
+            default:
+                result = HTTP_SEND_FAILED;
+                _lastError = "Unsupported request method";
+                break;
         }
-        delay(10);
+
+        if (requestJob.asynchronous && result == HTTP_OK)
+        {
+            int size = _httpClient.getSize();
+            if (size < 0) size = 4095;
+            if (_responsePtr)
+            {
+                delete _responsePtr;
+                _responsePtr = nullptr;
+            }
+            _responsePtr = new MemoryStream(size, _memoryType);
+            _httpClient.writeToStream(_responsePtr);
+        }
+        else if (!requestJob.asynchronous)
+            requestJob.response = _httpClient.getString();
+
+        if (result < 0)
+            _lastError = HTTPClient::errorToString(result);
+        else if (result != HTTP_OK)
+        {
+            _lastError = "HTTP ";
+            _lastError += result;
+            if (!requestJob.asynchronous)
+            {
+                _lastError += ": ";
+                _lastError += requestJob.response;
+            }
+        }
+
+        _httpClient.end();
     }
+
+    _responseTimeMs = millis() - startedAt;
+    requestJob.result = result;
+    if (requestJob.asynchronous)
+    {
+        _httpResult.store(result, std::memory_order_release);
+    }
+    requestJob.completed.store(true, std::memory_order_release);
 }
 
 
 int RESTClient::request(RequestMethod method, const String& urlSuffix, const String& payload, String& response)
 {
-    Tracer tracer(F("RESTClient::request"), urlSuffix.c_str());
+    Tracer tracer("RESTClient::request", urlSuffix.c_str());
 
     String url = urlSuffix.startsWith("http") ? urlSuffix : _baseUrl + urlSuffix;
-    int startResult = startRequest(url);
-    if (startResult != HTTP_REQUEST_PENDING) return startResult;
+    RequestJob requestJob;
+    requestJob.clientPtr = this;
+    requestJob.url = url;
+    requestJob.method = method;
+    requestJob.payload = payload;
+    requestJob.completed.store(false, std::memory_order_relaxed);
 
-    int result = -1;
-    switch (method)
-    {
-        case RequestMethod::GET:
-            result = _httpClient.GET();
-            break;
-        case RequestMethod::POST:
-            result = _httpClient.POST(payload);
-            break;
-        case RequestMethod::PUT:
-            result = _httpClient.PUT(payload);
-            break;
-        default:
-            TRACE("Unexpected Request method");
-            return false;
-    }
-    response = _httpClient.getString();
-    _httpClient.end();
-    TRACE("HTTP %d:\n%s\n", result, response.c_str());
+    if (!enqueueRequest(requestJob))
+        return HTTP_SEND_FAILED;
 
-    if (result != HTTP_OK)
-    {
-        if (result < 0)
-            _lastError = HTTPClient::errorToString(result);
-        else
-        {
-            _lastError = "HTTP ";
-            _lastError += result;
-            _lastError += ": ";
-            _lastError += response;
-        }
-    }
-    return result;
+    while (!requestJob.completed.load(std::memory_order_acquire))
+        delay(1);
+
+    response = requestJob.response;
+    TRACE("HTTP %d:\n%s\n", requestJob.result, response.c_str());
+    return requestJob.result;
 }
 
 void RESTClient::resetTLS() 
 {
-    if (_tlsClientPtr)
+    constexpr uint32_t waitTimeoutMs = 30000;
+    uint32_t waitStartedAt = millis();
+
+    while (isRequestPending() && millis() - waitStartedAt < waitTimeoutMs)
+        delay(1);
+
+    if (isRequestPending())
     {
-        if (_tlsClientPtr->connected()) _tlsClientPtr->stop();
-        delete _tlsClientPtr;
-        _tlsClientPtr = nullptr;
+        setLastError("Timed out waiting for pending request before resetting TLS");
+        return;
     }
+
+    if (!_tlsClientPtr) return;
+    if (_tlsClientPtr->connected()) _tlsClientPtr->stop();
+    delete _tlsClientPtr;
+    _tlsClientPtr = nullptr;
 }
 
 #endif

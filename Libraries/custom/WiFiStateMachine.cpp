@@ -157,6 +157,7 @@ void WiFiStateMachine::traceDiag()
 {
 #ifdef DEBUG_ESP_PORT
     WiFi.printDiag(DEBUG_ESP_PORT);
+    TRACE("IP address: %s\n", getIPAddress().c_str());
 
 #ifdef ESP32
     wifi_config_t wifiConfig;
@@ -424,9 +425,9 @@ void WiFiStateMachine::run()
             break;
 
         case WiFiInitState::Connected:
+            _ipAddress = WiFi.localIP();
             traceDiag();
             _staDisconnected = false;
-            _ipAddress = WiFi.localIP();
             logEvent(F("WiFi connected. Access Point %s"), WiFi.BSSIDstr().c_str());
             ArduinoOTA.begin();
             _webServer.begin();

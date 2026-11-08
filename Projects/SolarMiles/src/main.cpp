@@ -6,6 +6,7 @@
 #include <WiFiStateMachine.h>
 #include <HtmlWriter.h>
 #include <Navigation.h>
+#include <HomeWizardDiscovery.h>
 #include <algorithm>
 #include "Constants.h"
 #include "PersistentData.h"
@@ -66,6 +67,7 @@ Navigation Nav;
 SPIClass NRFSPI;
 SmartHomeClass SmartHome(WiFiSM, SMARTHOME_ENERGY_LOG_SIZE);
 P1MonitorClass P1Monitor(WiFiSM, P1_LOG_SIZE);
+HomeWizardDiscovery HomeWizard;
 
 StaticLog<PowerLogEntry> PowerLog(POWER_LOG_SIZE);
 PowerLogEntry* lastPowerLogEntryPtr = nullptr;
@@ -504,15 +506,33 @@ void onTimeServerSynced()
                 [](){ PersistentData.writeToEEPROM(); }
                 );
 
+        String p1MonitorHost = PersistentData.p1MonitorHost;
+        if (HomeWizard.begin())
+        {
+            std::vector<HomeWizardDevice> energySockets = HomeWizard.getDevices("HWE-SKT");
+            if (!energySockets.empty())
+                SmartHome.useHomeWizard(energySockets);
+
+            std::vector<HomeWizardDevice> p1Devices = HomeWizard.getDevices("HWE-P1");
+            if (!p1Devices.empty())
+            {
+                p1MonitorHost = p1Devices.front().host;
+                WiFiSM.logEvent("Found HomeWizard P1 Meter: %s", p1MonitorHost.c_str());
+            }
+        }
+        else
+            WiFiSM.logEvent("HomeWizard: %s", HomeWizard.getLastError().c_str());
+
+        if (!p1MonitorHost.isEmpty())
+        {
+            if (!P1Monitor.begin(p1MonitorHost.c_str(), P1_POLL_INTERVAL, 10, 1))
+                WiFiSM.logEvent("Unable to initialize P1 Monitor");
+        }
+
         SmartHome.isHostReady = []() { return canUseWiFi() && !P1Monitor.isResponsePending(); };
         if (!SmartHome.begin(PersistentData.powerThreshold, PersistentData.idleDelay, SMARTHOME_POLL_INTERVAL))
             WiFiSM.logEvent("Unable to initialize SmartHome");
 
-        if (PersistentData.p1MonitorHost[0] != 0)
-        {
-            if (!P1Monitor.begin(PersistentData.p1MonitorHost, P1_POLL_INTERVAL, 10, 1))
-                WiFiSM.logEvent("Unable to initialize P1 Monitor");
-        }
     }
 }
 

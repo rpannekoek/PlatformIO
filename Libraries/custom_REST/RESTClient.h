@@ -3,6 +3,7 @@
 
 #include <ArduinoJson.h>
 #include <StreamUtils.h>
+#include <atomic>
 
 #ifdef ESP8266
 #include <AsyncHTTPRequest_Generic.hpp>
@@ -59,17 +60,29 @@ class RESTClient
 #ifdef ESP8266    
         AsyncHTTPRequest _asyncHttpRequest;
 #else
-        TaskHandle_t _taskHandle;
+        struct RequestJob
+        {
+            RESTClient* clientPtr = nullptr;
+            String url;
+            RequestMethod method = RequestMethod::GET;
+            String payload;
+            String response;
+            int result = HTTP_REQUEST_PENDING;
+            bool asynchronous = false;
+            std::atomic<bool> completed{false};
+        };
+
+        static QueueHandle_t _requestQueue;
+        static TaskHandle_t _taskHandle;
         NetworkClientSecure* _tlsClientPtr = nullptr;
         HTTPClient _httpClient;
-        volatile int _httpResult;
+        std::atomic<int> _httpResult{0};
+        RequestJob _asyncRequestJob;
 
-        void runHttpRequests();
-        inline static void run(void* taskParam)
-        {
-            RESTClient* instancePtr = static_cast<RESTClient*>(taskParam);
-            instancePtr->runHttpRequests();
-        }
+        static bool ensureWorker();
+        static void run(void* taskParam);
+        bool enqueueRequest(RequestJob& requestJob, TickType_t waitTicks = 0);
+        void runRequest(RequestJob& requestJob);
 #endif
         const char* _certificate = nullptr;
         String _baseUrl;
